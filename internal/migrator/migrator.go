@@ -1,3 +1,7 @@
+// Package migrator applies SQL migrations (golang-migrate). Unlike other packages it has no fx Module
+// and must stay outside the fx lifecycle: fx calls os.Exit when its start timeout expires, which would
+// interrupt a migration midway and leave the database "dirty". Migrations are run by cmd/migrate only,
+// with no start timeout and a graceful stop on SIGINT/SIGTERM.
 package migrator
 
 import (

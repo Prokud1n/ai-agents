@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-stage Dockerfile with a distroless non-root runtime image.
 - Providers for PostgreSQL (pgxpool), Redis (go-redis) and S3 (minio-go) with connection checks on start.
 - SQL migrations with golang-migrate (`migrations/NNN_name.up.sql` / `.down.sql`): `make migrate` (up) and
-  `make migrate-down` (one step); optional run on app start (`MIGRATIONS_RUN_ON_START`, off by default).
+  `make migrate-down` (one step); applied only by `cmd/migrate`, outside the fx lifecycle and with no start timeout.
 - HTTP endpoints `/healthz` (liveness) and `/readyz` (statuses of dependencies registered in the `readiness` fx group).
 - HTTP server timeouts and fx start/stop timeouts in config; the app exits with code 1 if the HTTP server fails.
 - `TELEGRAM_BOT_API_URL` config for the upcoming Telegram integration.
@@ -26,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Migration file naming in CODE_STYLE.md: `NNN_description.up.sql` + `NNN_description.down.sql`.
-- Migrations are applied only by `cmd/migrate` (the `migrate` service); `MIGRATIONS_RUN_ON_START` is removed.
 - `/readyz` dependencies are registered in `internal/readiness`; providers no longer import `internal/health`.
 - docker compose builds the app image once (in `migrate`); `app` reuses it.
 - `make run` reads `.env.local` after `.env` to run the app on the host (see README).

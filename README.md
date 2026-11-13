@@ -56,7 +56,7 @@ cat > .env.local <<'ENV'                      # в .gitignore; make run чита
 POSTGRES_HOST=localhost
 REDIS_ADDRESS=localhost:6379
 S3_ENDPOINT=localhost:9000
-HTTP_ADDRESS=127.0.0.1:8081
+HTTP_ADDRESS=127.0.0.1:8082
 ENV
 
 docker compose up -d --wait postgres redis s3
@@ -64,8 +64,8 @@ make migrate                                  # миграции применя�
 make run
 ```
 
-`POSTGRES_PORT` в `.env.local` нужен, только если `POSTGRES_HOST_PORT` не 5432. `HTTP_ADDRESS` — порт, отличный от `app`
-в compose, чтобы оба могли работать одновременно. Bot API на хосте недоступен: для него опубликуй порт 8081 так же
+`POSTGRES_PORT` в `.env.local` нужен, только если `POSTGRES_HOST_PORT` не 5432. `HTTP_ADDRESS` — порт, не занятый `app` из compose (8080)
+и Bot API (8081), чтобы всё могло работать одновременно. Bot API на хосте недоступен: для него опубликуй порт 8081 так же
 и задай `TELEGRAM_BOT_API_URL=http://localhost:8081`, либо используй публичный API.
 Когда override не нужен, удали его: иначе `make up` тоже опубликует Redis и S3.
 

@@ -13,8 +13,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Prokud1n/ai-agents/internal"
 	"github.com/Prokud1n/ai-agents/internal/config"
+	"github.com/Prokud1n/ai-agents/internal/logger"
 	"github.com/Prokud1n/ai-agents/internal/migrator"
 )
 
@@ -48,7 +48,7 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 
-	log, err := internal.NewLogger(cfg.Logging)
+	log, err := logger.New(cfg.Logging)
 	if err != nil {
 		return err
 	}

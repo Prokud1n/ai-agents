@@ -90,13 +90,8 @@ jobs:
       # main itself is skipped: by the time this runs, main may have moved past the tested commit.
       - name: Require the branch to contain the current main
         if: github.ref != 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          # The repository is private and checkout does not persist credentials,
-          # so the token is passed to this one fetch only.
-          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git -c "http.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags origin main
+          # origin/main is already here: checkout with fetch-depth 0 fetches all branches.
           if ! git merge-base --is-ancestor origin/main HEAD; then
             echo "::error::rebase on main: the branch does not contain origin/main ($(git rev-parse --short origin/main))"
             exit 1

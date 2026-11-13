@@ -20,8 +20,8 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
-    # On SIGTERM migrate finishes the migration in progress (it is never interrupted midway);
-    # give it time instead of the default 10s before SIGKILL, which would leave the database dirty.
+    # On SIGTERM migrate finishes the migration in progress and exits. It is not interrupted only
+    # within stop_grace_period (5m): after that docker sends SIGKILL and the database may stay dirty.
     stop_grace_period: 5m
 
   app:
