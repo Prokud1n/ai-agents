@@ -1,0 +1,9 @@
+.git
+.github
+.claude
+.githooks
+.idea
+.env
+bin
+*.md
+docker-compose.yml

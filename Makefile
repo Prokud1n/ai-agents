@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check
+.PHONY: setup run build test lint fmt check up down logs migrate
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -21,3 +21,15 @@ fmt:
 	$(GOLANGCI_LINT) fmt ./...
 
 check: lint test
+
+up:
+	docker compose up -d --build --wait
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f
+
+migrate:
+	docker compose run --rm --build --entrypoint /app/migrate app

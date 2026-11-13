@@ -20,3 +20,31 @@ jobs:
 
       - name: Test
         run: make test
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare env
+        run: cp .env.dist .env
+
+      - name: Start stack
+        run: docker compose up -d --build --wait --wait-timeout 300
+
+      - name: Check readiness
+        run: curl -fsS http://localhost:8080/readyz
+
+      - name: Check liveness
+        run: curl -fsS http://localhost:8080/healthz
+
+      - name: Run migrations again (idempotent)
+        run: make migrate
+
+      - name: Show logs
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v
