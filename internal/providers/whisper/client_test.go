@@ -114,6 +114,7 @@ type fakeAPI struct {
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	err := r.ParseMultipartForm(1 << 20)
 	assert.NoError(f.t, err)
 

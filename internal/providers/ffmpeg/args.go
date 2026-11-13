@@ -18,6 +18,8 @@ const (
 	silenceNoiseLevel  = "-30dB"
 	silenceMinDuration = "0.5"
 
+	inputFlag = "-i"
+
 	timePrecision = 3  // milliseconds are enough for ffmpeg time arguments
 	float64Bits   = 64 // bit size for strconv
 )
@@ -38,7 +40,7 @@ func encodeArgs() []string {
 }
 
 func inputArgs(path string) []string {
-	return []string{"-i", path}
+	return []string{inputFlag, path}
 }
 
 func extractAudioArgs(src, dst string) []string {

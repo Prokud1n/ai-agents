@@ -16,6 +16,14 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/providers/whisper"
 )
 
+const (
+	langRU     = "ru"
+	langEN     = "en"
+	videoPath  = "video.mp4"
+	textOneTwo = "One two."
+	textThree  = "Three."
+)
+
 type cutCall struct {
 	start    float64
 	duration float64
@@ -79,7 +87,7 @@ func (f *fakeTranscriber) Transcribe(_ context.Context, data whisper.TranscribeD
 }
 
 func newTestService(audio audioProcessor, tr transcriber) *Service {
-	return NewService(audio, tr, &config.Whisper{Language: "ru"}, slog.New(slog.DiscardHandler))
+	return NewService(audio, tr, &config.Whisper{Language: langRU}, slog.New(slog.DiscardHandler))
 }
 
 func TestServiceTranscribe(t *testing.T) {
@@ -97,54 +105,54 @@ func TestServiceTranscribe(t *testing.T) {
 	}{
 		{
 			name:  "short video is one request without cutting",
-			input: TranscribeData{Path: "video.mp4"},
+			input: TranscribeData{Path: videoPath},
 			audio: &fakeAudio{duration: 4.2104},
 			transcripts: []whisper.Transcript{{
-				Language: "russian", Text: " Привет!",
-				Words:    []whisper.Word{{Word: "Привет", Start: 0, End: 0.86}},
-				Segments: []whisper.Segment{{Start: 0, End: 1.1, Text: " Привет!"}},
+				Language: "russian", Text: segmentHello,
+				Words:    []whisper.Word{{Word: wordHello, Start: 0, End: 0.86}},
+				Segments: []whisper.Segment{{Start: 0, End: 1.1, Text: segmentHello}},
 			}},
 			expected: &Result{
-				Language: "ru", Duration: 4.21, Text: "Привет!",
-				Words:    []Word{{Word: "Привет", Start: 0, End: 0.86}},
-				Segments: []Segment{{Start: 0, End: 1.1, Text: "Привет!"}},
+				Language: langRU, Duration: 4.21, Text: textHello,
+				Words:    []Word{{Word: wordHello, Start: 0, End: 0.86}},
+				Segments: []Segment{{Start: 0, End: 1.1, Text: textHello}},
 			},
 			expectedPrompts:  []string{""},
-			expectedLanguage: "ru",
+			expectedLanguage: langRU,
 		},
 		{
 			name:  "long video is cut in pauses and merged with shifted times",
-			input: TranscribeData{Path: "video.mp4", Language: "en"},
+			input: TranscribeData{Path: videoPath, Language: langEN},
 			audio: &fakeAudio{duration: 1000, silences: []ffmpeg.Silence{{Start: 499, End: 501}}},
 			transcripts: []whisper.Transcript{
-				{Text: "One two.", Words: []whisper.Word{{Word: "One", Start: 10, End: 10.5}}, Segments: []whisper.Segment{{Start: 10, End: 11, Text: "One two."}}},
-				{Text: "Three.", Words: []whisper.Word{{Word: "Three", Start: 5, End: 5.5}}, Segments: []whisper.Segment{{Start: 5, End: 6, Text: "Three."}}},
+				{Text: textOneTwo, Words: []whisper.Word{{Word: "One", Start: 10, End: 10.5}}, Segments: []whisper.Segment{{Start: 10, End: 11, Text: textOneTwo}}},
+				{Text: textThree, Words: []whisper.Word{{Word: "Three", Start: 5, End: 5.5}}, Segments: []whisper.Segment{{Start: 5, End: 6, Text: textThree}}},
 			},
 			expected: &Result{
-				Language: "en", Duration: 1000, Text: "One two. Three.",
+				Language: langEN, Duration: 1000, Text: "One two. Three.",
 				Words:    []Word{{Word: "One", Start: 10, End: 10.5}, {Word: "Three", Start: 505, End: 505.5}},
-				Segments: []Segment{{Start: 10, End: 11, Text: "One two."}, {Start: 505, End: 506, Text: "Three."}},
+				Segments: []Segment{{Start: 10, End: 11, Text: textOneTwo}, {Start: 505, End: 506, Text: textThree}},
 			},
 			expectedCuts:     []cutCall{{start: 0, duration: 500}, {start: 500, duration: 500}},
-			expectedPrompts:  []string{"", "One two."},
-			expectedLanguage: "en",
+			expectedPrompts:  []string{"", textOneTwo},
+			expectedLanguage: langEN,
 		},
 		{
 			name:  "silence detection failure falls back to fixed cuts",
-			input: TranscribeData{Path: "video.mp4"},
+			input: TranscribeData{Path: videoPath},
 			audio: &fakeAudio{duration: 700, silencesErr: errors.New("boom")},
 			transcripts: []whisper.Transcript{
 				{Text: "A.", Words: []whisper.Word{{Word: "A", Start: 1, End: 2}}},
 				{Text: "B.", Words: []whisper.Word{{Word: "B", Start: 50, End: 51}}},
 			},
 			expected: &Result{
-				Language: "ru", Duration: 700, Text: "",
+				Language: langRU, Duration: 700, Text: "",
 				Words:    []Word{{Word: "A", Start: 1, End: 2}, {Word: "B", Start: 648, End: 649}},
 				Segments: []Segment{},
 			},
 			expectedCuts:     []cutCall{{start: 0, duration: 600}, {start: 598, duration: 102}},
 			expectedPrompts:  []string{"", "A."},
-			expectedLanguage: "ru",
+			expectedLanguage: langRU,
 		},
 	}
 

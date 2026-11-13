@@ -10,6 +10,14 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/providers/whisper"
 )
 
+const (
+	wordHello    = "Привет"
+	textHello    = "Привет!"
+	segmentHello = " Привет!"
+	wordSquat    = "присед"
+	wordKnees    = "колени"
+)
+
 func TestChunkDurationLimit(t *testing.T) {
 	t.Parallel()
 
@@ -98,14 +106,14 @@ func TestMergeChunks(t *testing.T) {
 				Chunk: chunk{Start: 0, End: 4},
 				Transcript: whisper.Transcript{
 					Text:     " Привет! Сегодня присед. ",
-					Words:    []whisper.Word{{Word: " Привет", Start: 0, End: 0.8}, {Word: "Сегодня", Start: 1.5, End: 2}, {Word: "присед", Start: 2, End: 2.6}},
-					Segments: []whisper.Segment{{Start: 0, End: 1, Text: " Привет!"}, {Start: 1.5, End: 2.6, Text: " Сегодня присед."}},
+					Words:    []whisper.Word{{Word: " Привет", Start: 0, End: 0.8}, {Word: "Сегодня", Start: 1.5, End: 2}, {Word: wordSquat, Start: 2, End: 2.6}},
+					Segments: []whisper.Segment{{Start: 0, End: 1, Text: segmentHello}, {Start: 1.5, End: 2.6, Text: " Сегодня присед."}},
 				},
 			}},
 			expected: Result{
 				Text:     "Привет! Сегодня присед.",
-				Words:    []Word{{Word: "Привет", Start: 0, End: 0.8}, {Word: "Сегодня", Start: 1.5, End: 2}, {Word: "присед", Start: 2, End: 2.6}},
-				Segments: []Segment{{Start: 0, End: 1, Text: "Привет!"}, {Start: 1.5, End: 2.6, Text: "Сегодня присед."}},
+				Words:    []Word{{Word: wordHello, Start: 0, End: 0.8}, {Word: "Сегодня", Start: 1.5, End: 2}, {Word: wordSquat, Start: 2, End: 2.6}},
+				Segments: []Segment{{Start: 0, End: 1, Text: textHello}, {Start: 1.5, End: 2.6, Text: "Сегодня присед."}},
 			},
 		},
 		{
@@ -143,7 +151,7 @@ func TestMergeChunks(t *testing.T) {
 					Transcript: whisper.Transcript{
 						Words: []whisper.Word{
 							{Word: "делаем", Start: 597.0, End: 597.6},
-							{Word: "присед", Start: 597.7, End: 598.9},
+							{Word: wordSquat, Start: 597.7, End: 598.9},
 							{Word: "медленно", Start: 599.2, End: 599.9}, // past the boundary: the next chunk owns it
 						},
 						Segments: []whisper.Segment{{Start: 590, End: 598.9, Text: " Делаем присед"}},
@@ -168,7 +176,7 @@ func TestMergeChunks(t *testing.T) {
 				Text: "Делаем присед Медленно, вниз.",
 				Words: []Word{
 					{Word: "делаем", Start: 597, End: 597.6},
-					{Word: "присед", Start: 597.7, End: 598.9},
+					{Word: wordSquat, Start: 597.7, End: 598.9},
 					{Word: "Медленно,", Start: 599.1, End: 599.9},
 					{Word: "вниз", Start: 600, End: 600.4},
 				},
@@ -181,15 +189,15 @@ func TestMergeChunks(t *testing.T) {
 			input: []chunkTranscript{
 				{
 					Chunk:      chunk{Start: 0, End: 600},
-					Transcript: whisper.Transcript{Words: []whisper.Word{{Word: "колени", Start: 598.8, End: 599.4}}},
+					Transcript: whisper.Transcript{Words: []whisper.Word{{Word: wordKnees, Start: 598.8, End: 599.4}}},
 				},
 				{
 					Chunk:      chunk{Start: 598, End: 700},
-					Transcript: whisper.Transcript{Words: []whisper.Word{{Word: "Колени.", Start: 1.05, End: 1.5}, {Word: "колени", Start: 3, End: 3.5}}},
+					Transcript: whisper.Transcript{Words: []whisper.Word{{Word: "Колени.", Start: 1.05, End: 1.5}, {Word: wordKnees, Start: 3, End: 3.5}}},
 				},
 			},
 			expected: Result{
-				Words:    []Word{{Word: "колени", Start: 598.8, End: 599.4}, {Word: "колени", Start: 601, End: 601.5}},
+				Words:    []Word{{Word: wordKnees, Start: 598.8, End: 599.4}, {Word: wordKnees, Start: 601, End: 601.5}},
 				Segments: []Segment{},
 			},
 		},

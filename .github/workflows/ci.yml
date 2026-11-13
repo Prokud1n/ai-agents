@@ -213,12 +213,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Resolve base image digests (temporary)
-        run: |
-          for ref in alpine:3.22 alpine:3.23 alpine:3.24; do
-            echo "$ref $(docker buildx imagetools inspect "$ref" --format '{{json .Manifest.Digest}}' 2>&1 || true)"
-          done
-
       - name: Build media image
         run: docker build --target media -t ai-agents-media:ci .
 

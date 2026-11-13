@@ -23,8 +23,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/transcribe ./cmd/transcribe
 
 # Media image: ffmpeg + transcribe. Build with `docker build --target media .`
-# alpine:3.22
-FROM alpine:3.22 AS media
+# alpine:3.24
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS media
 
 RUN apk add --no-cache ffmpeg && \
     addgroup -S -g 65532 nonroot && \

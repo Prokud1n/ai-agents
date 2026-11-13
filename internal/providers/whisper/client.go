@@ -109,7 +109,7 @@ func (c *Client) Transcribe(ctx context.Context, data TranscribeData) (*Transcri
 }
 
 // buildBody reads the file once into a multipart body, so every retry re-sends the same bytes.
-func (c *Client) buildBody(data TranscribeData) ([]byte, string, error) {
+func (c *Client) buildBody(data TranscribeData) (body []byte, contentType string, err error) {
 	audio, err := os.ReadFile(filepath.Clean(data.Path))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read audio file: %w", err)

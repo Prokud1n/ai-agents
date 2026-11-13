@@ -31,14 +31,14 @@ func TestBuildArgs(t *testing.T) {
 			name:  "extract audio",
 			input: extractAudioArgs("/in/video one.mp4", "/tmp/audio.mp3"),
 			expected: concat(
-				common, []string{"-i", "/in/video one.mp4", "-map", "0:a:0"}, encode, []string{"/tmp/audio.mp3"},
+				common, []string{inputFlag, "/in/video one.mp4", "-map", "0:a:0"}, encode, []string{"/tmp/audio.mp3"},
 			),
 		},
 		{
 			name:  "cut audio",
 			input: cutAudioArgs("/tmp/audio.mp3", "/tmp/chunk-001.mp3", 598.25, 601.5),
 			expected: concat(
-				common, []string{"-ss", "598.250", "-t", "601.500", "-i", "/tmp/audio.mp3"},
+				common, []string{"-ss", "598.250", "-t", "601.500", inputFlag, "/tmp/audio.mp3"},
 				encode, []string{"/tmp/chunk-001.mp3"},
 			),
 		},
@@ -54,14 +54,14 @@ func TestBuildArgs(t *testing.T) {
 			name:  "detect silences",
 			input: silenceDetectArgs("/tmp/audio.mp3"),
 			expected: concat(
-				common, []string{"-i", "/tmp/audio.mp3", "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"},
+				common, []string{inputFlag, "/tmp/audio.mp3", "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"},
 			),
 		},
 		{
 			name:  "shell metacharacters stay one argument",
 			input: extractAudioArgs("/in/$(rm -rf ~); echo `id`.mp4", "/tmp/a b.mp3"),
 			expected: concat(
-				common, []string{"-i", "/in/$(rm -rf ~); echo `id`.mp4", "-map", "0:a:0"}, encode, []string{"/tmp/a b.mp3"},
+				common, []string{inputFlag, "/in/$(rm -rf ~); echo `id`.mp4", "-map", "0:a:0"}, encode, []string{"/tmp/a b.mp3"},
 			),
 		},
 	}

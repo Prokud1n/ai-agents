@@ -81,7 +81,7 @@ type output struct {
 func (*Runner) run(ctx context.Context, binary string, args []string) (output, error) {
 	var stdout, stderr bytes.Buffer
 
-	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // G204: fixed binary, arguments are a list, no shell
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

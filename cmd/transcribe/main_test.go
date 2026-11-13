@@ -13,6 +13,8 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
+const testVideo = "video.mp4"
+
 func TestParseFlags(t *testing.T) {
 	t.Parallel()
 
@@ -22,11 +24,11 @@ func TestParseFlags(t *testing.T) {
 		expected    options
 		expectedErr error
 	}{
-		{name: "input only", input: []string{"-in", "video.mp4"}, expected: options{in: "video.mp4"}},
+		{name: "input only", input: []string{"-in", testVideo}, expected: options{in: testVideo}},
 		{
 			name:     "all flags",
-			input:    []string{"-in", "video.mp4", "-lang", "en", "-out", "result.json"},
-			expected: options{in: "video.mp4", lang: "en", out: "result.json"},
+			input:    []string{"-in", testVideo, "-lang", "en", "-out", "result.json"},
+			expected: options{in: testVideo, lang: "en", out: "result.json"},
 		},
 		{name: "help", input: []string{"-h"}, expectedErr: flag.ErrHelp},
 		{name: "missing input", input: []string{"-lang", "ru"}, expectedErr: errNoInput},

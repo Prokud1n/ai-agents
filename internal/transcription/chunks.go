@@ -140,8 +140,8 @@ func mergeChunks(parts []chunkTranscript) Result {
 }
 
 // chunkBounds returns the absolute time range chunk i owns: overlaps with neighbors are split in half.
-func chunkBounds(parts []chunkTranscript, i int) (float64, float64) {
-	lower, upper := math.Inf(-1), math.Inf(1)
+func chunkBounds(parts []chunkTranscript, i int) (lower, upper float64) {
+	lower, upper = math.Inf(-1), math.Inf(1)
 
 	if i > 0 {
 		lower = (parts[i-1].Chunk.End + parts[i].Chunk.Start) / 2
