@@ -15,12 +15,7 @@ if [[ -z "$(git status --porcelain -- '*.go')" ]]; then
 	exit 0
 fi
 
-if ! command -v golangci-lint >/dev/null 2>&1; then
-	echo "golangci-lint не установлен — линт пропущен (brew install golangci-lint)" >&2
-	exit 0
-fi
-
-if ! output=$(golangci-lint run ./... 2>&1); then
+if ! output=$(./scripts/golangci-lint.sh run ./... 2>&1); then
 	echo "golangci-lint нашёл нарушения код-стайла (см. CODE_STYLE.md). Исправь их, не отключая линтер:" >&2
 	echo "$output" >&2
 	exit 2

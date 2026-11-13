@@ -52,7 +52,7 @@ func main() {
 type HandlerParams struct {
 	fx.In
 
-	Log     logger.LoggerInterface
+	Log     *slog.Logger
 	Service DisputeService
 }
 ```
@@ -142,13 +142,13 @@ return fmt.Errorf("fiat real amount should be positive: %w", apperr.ErrValidatio
 ```go
 deadlines, err := s.slaService.GetDeadlines(ctx, &d.Base)
 if err != nil {
-	s.logger.Error("failed to resolve SLA deadlines", err, logger.F{"payout_id": req.PayoutID})
+	s.log.ErrorContext(ctx, "failed to resolve SLA deadlines", "error", err, "payout_id", req.PayoutID)
 } else {
 	// ...
 }
 ```
 
-- `panic` — только при старте приложения в `MustXxx`-функциях.
+- `panic` не используем: конструкторы возвращают `error`, и FX сам остановит старт приложения.
 
 ## 9. Функции и поток управления
 
@@ -206,11 +206,12 @@ const (
 
 ## 13. Логирование
 
-- Логгер внедряется через DI (`logger.LoggerInterface`), глобальных логгеров нет.
-- Сообщение — короткое, в нижнем регистре; данные — структурированными полями, а не через форматирование строки:
+- Логгер — стандартный `log/slog` (JSON в stdout), внедряется через DI как `*slog.Logger`. Глобальный `slog.Default()` и пакет `log` не используем.
+- Сообщение — короткое, в нижнем регистре; данные — парами ключ-значение в `snake_case`, а не через форматирование строки. Ошибку передаём под ключом `error`:
 
 ```go
-w.logger.Info("worker: updated dispute statuses", logger.F{"count": len(changed)})
+w.log.InfoContext(ctx, "worker: updated dispute statuses", "count", len(changed))
+w.log.ErrorContext(ctx, "worker: failed to fetch documents", "error", err)
 ```
 
 ## 14. Контекст

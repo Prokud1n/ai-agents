@@ -12,15 +12,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
-        if: hashFiles('go.mod') != ''
         with:
           go-version-file: go.mod
 
-      - uses: golangci/golangci-lint-action@v8
-        if: hashFiles('go.mod') != ''
-        with:
-          version: latest
+      - name: Lint
+        run: make lint
 
       - name: Test
-        if: hashFiles('go.mod') != ''
-        run: go test ./...
+        run: make test

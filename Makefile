@@ -1,7 +1,12 @@
-.PHONY: setup build test lint fmt check
+.PHONY: setup run build test lint fmt check
+
+GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
 setup:
 	git config core.hooksPath .githooks
+
+run:
+	set -a && [ -f .env ] && . ./.env; set +a && go run .
 
 build:
 	go build -o bin/app .
@@ -10,9 +15,9 @@ test:
 	go test ./...
 
 lint:
-	golangci-lint run ./...
+	$(GOLANGCI_LINT) run ./...
 
 fmt:
-	golangci-lint fmt ./...
+	$(GOLANGCI_LINT) fmt ./...
 
 check: lint test

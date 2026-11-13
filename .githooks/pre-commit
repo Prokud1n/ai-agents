@@ -6,13 +6,8 @@ if [[ ! -f go.mod ]]; then
 	exit 0
 fi
 
-if ! command -v golangci-lint >/dev/null 2>&1; then
-	echo "pre-commit: golangci-lint не установлен (brew install golangci-lint)" >&2
-	exit 1
-fi
-
 echo "pre-commit: golangci-lint run"
-golangci-lint run ./...
+./scripts/golangci-lint.sh run ./...
 
 echo "pre-commit: go test"
 go test ./...

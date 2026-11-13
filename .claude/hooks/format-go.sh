@@ -10,9 +10,4 @@ if [[ "$file_path" != *.go ]] || [[ ! -f "$file_path" ]] || [[ ! -f go.mod ]]; t
 	exit 0
 fi
 
-if ! command -v golangci-lint >/dev/null 2>&1; then
-	echo "golangci-lint не установлен — форматирование пропущено (brew install golangci-lint)" >&2
-	exit 0
-fi
-
-golangci-lint fmt "$file_path" >&2 || true
+./scripts/golangci-lint.sh fmt "$file_path" >&2 || true
