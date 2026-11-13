@@ -14,7 +14,9 @@ import (
 // requireFFmpegEnv makes the test fail instead of skipping when ffmpeg is missing (set in CI).
 const requireFFmpegEnv = "FFMPEG_TESTS_REQUIRED"
 
-const timeDelta = 0.1 // seconds: MP3 frames and encoder padding shift durations slightly
+// MP3 encoder padding makes ffprobe report ~0.1 s more than the source; pauses found by silencedetect
+// on decoded audio stay exact.
+const timeDelta = 0.15 // seconds
 
 func requireFFmpeg(t *testing.T) {
 	t.Helper()

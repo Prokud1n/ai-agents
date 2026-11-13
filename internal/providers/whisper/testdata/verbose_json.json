@@ -1,0 +1,39 @@
+{
+  "task": "transcribe",
+  "language": "russian",
+  "duration": 4.21,
+  "text": "Привет! Сегодня делаем присед.",
+  "segments": [
+    {
+      "id": 0,
+      "seek": 0,
+      "start": 0.0,
+      "end": 1.12,
+      "text": " Привет!",
+      "tokens": [50364, 2933, 1546, 0, 50420],
+      "temperature": 0.0,
+      "avg_logprob": -0.31,
+      "compression_ratio": 0.82,
+      "no_speech_prob": 0.012
+    },
+    {
+      "id": 1,
+      "seek": 0,
+      "start": 1.6,
+      "end": 3.94,
+      "text": " Сегодня делаем присед.",
+      "tokens": [50444, 31869, 9119, 1060, 50560],
+      "temperature": 0.0,
+      "avg_logprob": -0.27,
+      "compression_ratio": 0.91,
+      "no_speech_prob": 0.004
+    }
+  ],
+  "words": [
+    {"word": "Привет", "start": 0.0, "end": 0.86},
+    {"word": "Сегодня", "start": 1.6, "end": 2.24},
+    {"word": "делаем", "start": 2.24, "end": 2.9},
+    {"word": "присед", "start": 2.9, "end": 3.94}
+  ],
+  "usage": {"type": "duration", "seconds": 5}
+}
