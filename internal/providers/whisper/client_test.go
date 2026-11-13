@@ -2,6 +2,7 @@ package whisper
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -102,7 +103,6 @@ type fakeResponse struct {
 
 // fakeAPI answers with the given responses in order (the last one repeats) and records requests.
 type fakeAPI struct {
-	t         *testing.T
 	responses []fakeResponse
 
 	mu       sync.Mutex
@@ -112,12 +112,14 @@ type fakeAPI struct {
 	lastName string
 	lastAuth string
 	lastPath string
+	parseErr error // checked by the test: assertions must not fail from the server goroutine
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	form, fileName, fileContent := readMultipart(f.t, r)
+	form, fileName, fileContent, err := readMultipart(r)
 
 	f.mu.Lock()
+	f.parseErr = errors.Join(f.parseErr, err)
 	idx := min(f.calls, len(f.responses)-1)
 	f.calls++
 	f.lastForm = form
@@ -133,33 +135,36 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(resp.status)
-	_, err := w.Write([]byte(resp.body))
-	assert.NoError(f.t, err)
+	if _, err := w.Write([]byte(resp.body)); err != nil {
+		f.mu.Lock()
+		f.parseErr = errors.Join(f.parseErr, err)
+		f.mu.Unlock()
+	}
 }
 
 // readMultipart streams the request parts: form values, and the name and content of the "file" part.
-func readMultipart(t *testing.T, r *http.Request) (form map[string][]string, fileName, fileContent string) {
-	t.Helper()
-
+func readMultipart(r *http.Request) (form map[string][]string, fileName, fileContent string, err error) {
 	form = map[string][]string{}
 
 	mr, err := r.MultipartReader()
-	if !assert.NoError(t, err) {
-		return form, "", ""
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to read multipart: %w", err)
 	}
 
 	for {
 		part, err := mr.NextPart()
 		if errors.Is(err, io.EOF) {
-			return form, fileName, fileContent
+			return form, fileName, fileContent, nil
 		}
 
-		if !assert.NoError(t, err) {
-			return form, fileName, fileContent
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to read part: %w", err)
 		}
 
 		content, err := io.ReadAll(part)
-		assert.NoError(t, err)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to read part %s: %w", part.FormName(), err)
+		}
 
 		if part.FormName() == "file" {
 			fileName, fileContent = part.FileName(), string(content)
@@ -274,7 +279,7 @@ func TestClientTranscribe(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			api := &fakeAPI{t: t, responses: tt.responses}
+			api := &fakeAPI{responses: tt.responses}
 			server := httptest.NewServer(api)
 			t.Cleanup(server.Close)
 
@@ -289,6 +294,7 @@ func TestClientTranscribe(t *testing.T) {
 			api.mu.Lock()
 			defer api.mu.Unlock()
 
+			require.NoError(t, api.parseErr)
 			assert.Equal(t, tt.expectedCalls, api.calls)
 
 			switch {
