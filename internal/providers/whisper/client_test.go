@@ -1,6 +1,7 @@
 package whisper
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -114,29 +115,16 @@ type fakeAPI struct {
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	err := r.ParseMultipartForm(1 << 20)
-	assert.NoError(f.t, err)
+	form, fileName, fileContent := readMultipart(f.t, r)
 
 	f.mu.Lock()
 	idx := min(f.calls, len(f.responses)-1)
 	f.calls++
-	f.lastForm = r.MultipartForm.Value
+	f.lastForm = form
+	f.lastName = fileName
+	f.lastFile = fileContent
 	f.lastAuth = r.Header.Get("Authorization")
 	f.lastPath = r.Method + " " + r.URL.Path
-
-	if files := r.MultipartForm.File["file"]; len(files) == 1 {
-		f.lastName = files[0].Filename
-
-		file, err := files[0].Open()
-		assert.NoError(f.t, err)
-
-		content, err := io.ReadAll(file)
-		assert.NoError(f.t, err)
-		assert.NoError(f.t, file.Close())
-
-		f.lastFile = string(content)
-	}
 	f.mu.Unlock()
 
 	resp := f.responses[idx]
@@ -145,8 +133,42 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(resp.status)
-	_, err = w.Write([]byte(resp.body))
+	_, err := w.Write([]byte(resp.body))
 	assert.NoError(f.t, err)
+}
+
+// readMultipart streams the request parts: form values, and the name and content of the "file" part.
+func readMultipart(t *testing.T, r *http.Request) (form map[string][]string, fileName, fileContent string) {
+	t.Helper()
+
+	form = map[string][]string{}
+
+	mr, err := r.MultipartReader()
+	if !assert.NoError(t, err) {
+		return form, "", ""
+	}
+
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			return form, fileName, fileContent
+		}
+
+		if !assert.NoError(t, err) {
+			return form, fileName, fileContent
+		}
+
+		content, err := io.ReadAll(part)
+		assert.NoError(t, err)
+
+		if part.FormName() == "file" {
+			fileName, fileContent = part.FileName(), string(content)
+
+			continue
+		}
+
+		form[part.FormName()] = append(form[part.FormName()], string(content))
+	}
 }
 
 func newTestClient(t *testing.T, baseURL, apiKey string) *Client {

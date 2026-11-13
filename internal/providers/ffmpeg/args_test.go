@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testAudio = "/tmp/audio.mp3"
+
 func concat(parts ...[]string) []string {
 	var out []string
 	for _, p := range parts {
@@ -29,32 +31,32 @@ func TestBuildArgs(t *testing.T) {
 	}{
 		{
 			name:  "extract audio",
-			input: extractAudioArgs("/in/video one.mp4", "/tmp/audio.mp3"),
+			input: extractAudioArgs("/in/video one.mp4", testAudio),
 			expected: concat(
-				common, []string{inputFlag, "/in/video one.mp4", "-map", "0:a:0"}, encode, []string{"/tmp/audio.mp3"},
+				common, []string{inputFlag, "/in/video one.mp4", "-map", "0:a:0"}, encode, []string{testAudio},
 			),
 		},
 		{
 			name:  "cut audio",
-			input: cutAudioArgs("/tmp/audio.mp3", "/tmp/chunk-001.mp3", 598.25, 601.5),
+			input: cutAudioArgs(testAudio, "/tmp/chunk-001.mp3", 598.25, 601.5),
 			expected: concat(
-				common, []string{"-ss", "598.250", "-t", "601.500", inputFlag, "/tmp/audio.mp3"},
+				common, []string{"-ss", "598.250", "-t", "601.500", inputFlag, testAudio},
 				encode, []string{"/tmp/chunk-001.mp3"},
 			),
 		},
 		{
 			name:  "probe duration",
-			input: durationArgs("/tmp/audio.mp3"),
+			input: durationArgs(testAudio),
 			expected: []string{
 				"-v", "error", "-show_entries", "format=duration",
-				"-of", "default=noprint_wrappers=1:nokey=1", "/tmp/audio.mp3",
+				"-of", "default=noprint_wrappers=1:nokey=1", testAudio,
 			},
 		},
 		{
 			name:  "detect silences",
-			input: silenceDetectArgs("/tmp/audio.mp3"),
+			input: silenceDetectArgs(testAudio),
 			expected: concat(
-				common, []string{inputFlag, "/tmp/audio.mp3", "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"},
+				common, []string{inputFlag, testAudio, "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"},
 			),
 		},
 		{
