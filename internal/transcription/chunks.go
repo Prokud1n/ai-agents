@@ -95,7 +95,8 @@ func findPauseCut(silences []ffmpeg.Silence, from, to float64) (float64, bool) {
 // whose range contains its start, a segment by the one that contains its middle. A word still repeated
 // by both chunks at the junction is dropped once.
 func mergeChunks(parts []chunkTranscript) Result {
-	var result Result
+	// Empty slices, not nil: the JSON has [] for a video without speech.
+	result := Result{Segments: []Segment{}, Words: []Word{}}
 
 	segmentTexts := make([]string, 0, len(parts))
 	lastWordChunk := -1

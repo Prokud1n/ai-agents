@@ -189,7 +189,8 @@ func TestMergeChunks(t *testing.T) {
 				},
 			},
 			expected: Result{
-				Words: []Word{{Word: "колени", Start: 598.8, End: 599.4}, {Word: "колени", Start: 601, End: 601.5}},
+				Words:    []Word{{Word: "колени", Start: 598.8, End: 599.4}, {Word: "колени", Start: 601, End: 601.5}},
+				Segments: []Segment{},
 			},
 		},
 	}

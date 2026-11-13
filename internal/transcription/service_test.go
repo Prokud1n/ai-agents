@@ -139,7 +139,8 @@ func TestServiceTranscribe(t *testing.T) {
 			},
 			expected: &Result{
 				Language: "ru", Duration: 700, Text: "",
-				Words: []Word{{Word: "A", Start: 1, End: 2}, {Word: "B", Start: 648, End: 649}},
+				Words:    []Word{{Word: "A", Start: 1, End: 2}, {Word: "B", Start: 648, End: 649}},
+				Segments: []Segment{},
 			},
 			expectedCuts:     []cutCall{{start: 0, duration: 600}, {start: 598, duration: 102}},
 			expectedPrompts:  []string{"", "A."},
