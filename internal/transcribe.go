@@ -1,14 +1,13 @@
 package internal
 
 import (
-	"fmt"
 	"log/slog"
-	"os"
 
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
+	"github.com/Prokud1n/ai-agents/internal/logger"
 	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
 	"github.com/Prokud1n/ai-agents/internal/providers/whisper"
 	"github.com/Prokud1n/ai-agents/internal/transcription"
@@ -16,29 +15,21 @@ import (
 
 // DeclareTranscribeOptions builds the standalone transcribe command. It reads only the OpenAI and Whisper
 // config, so it runs without the database and storage settings. Logs go to stderr: stdout carries the JSON.
+// The modules have no lifecycle hooks: the command takes the service with fx.Populate and never calls
+// app.Start, so a long transcription is not limited by the fx start timeout.
 func DeclareTranscribeOptions() []fx.Option {
 	return []fx.Option{
 		fx.Provide(config.ParseTranscribe),
-		fx.Provide(NewStderrLogger),
+		fx.Provide(logger.NewStderr),
 		fx.WithLogger(func(log *slog.Logger) fxevent.Logger {
-			logger := &fxevent.SlogLogger{Logger: log}
-			logger.UseLogLevel(slog.LevelDebug)
+			fxLogger := &fxevent.SlogLogger{Logger: log}
+			fxLogger.UseLogLevel(slog.LevelDebug)
 
-			return logger
+			return fxLogger
 		}),
 
 		ffmpeg.Module,
 		whisper.Module,
 		transcription.Module,
 	}
-}
-
-// NewStderrLogger is the logger of command-line tools whose stdout is their result.
-func NewStderrLogger(cfg config.Logging) (*slog.Logger, error) {
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(cfg.LogLevel)); err != nil {
-		return nil, fmt.Errorf("failed to parse log level: %w", err)
-	}
-
-	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})), nil
 }

@@ -55,8 +55,7 @@ func run(args []string) error {
 
 	var svc *transcription.Service
 
-	// The modules have no lifecycle hooks, so the graph is built without app.Start: a long transcription
-	// must not run inside the fx start timeout.
+	// Only the dependency graph is built; app.Start is not called (see DeclareTranscribeOptions).
 	app := fx.New(append(internal.DeclareTranscribeOptions(), fx.Populate(&svc))...)
 	if err := app.Err(); err != nil {
 		return fmt.Errorf("failed to build application: %w", err)

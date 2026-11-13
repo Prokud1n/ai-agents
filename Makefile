@@ -40,7 +40,7 @@ migrate-down:
 
 # make transcribe ARGS="-in video.mp4 [-lang ru] [-out result.json]"; needs ffmpeg and OPENAI_API_KEY (.env)
 transcribe:
-	set -a && [ -f .env ] && . ./.env; set +a && go run ./cmd/transcribe $(ARGS)
+	set -a; [ -f .env ] && . ./.env; [ -f .env.local ] && . ./.env.local; set +a; go run ./cmd/transcribe $(ARGS)
 
 media-image:
 	docker build --target media -t ai-agents-media:local .
