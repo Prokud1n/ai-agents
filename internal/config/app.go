@@ -13,4 +13,6 @@ type App struct {
 	Redis    *Redis    `env:",init"`
 	S3       *S3       `env:",init"`
 	Telegram *Telegram `env:",init"`
+	OpenAI   *OpenAI   `env:",init"`
+	Whisper  *Whisper  `env:",init"`
 }
