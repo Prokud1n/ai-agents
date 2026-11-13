@@ -51,11 +51,6 @@ func (c *Client) Conn() *goredis.Client {
 	return c.rdb
 }
 
-// Name is the dependency name in /readyz.
-func (*Client) Name() string {
-	return "redis"
-}
-
 func (c *Client) Ping(ctx context.Context) error {
 	if err := c.rdb.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("failed to ping redis: %w", err)

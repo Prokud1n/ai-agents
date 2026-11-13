@@ -5,8 +5,9 @@ GOLANGCI_LINT := ./scripts/golangci-lint.sh
 setup:
 	git config core.hooksPath .githooks
 
+# Runs the app on the host; see README ("Запуск на хосте"): hosts from .env are overridden in .env.local.
 run:
-	set -a && [ -f .env ] && . ./.env; set +a && go run .
+	set -a; [ -f .env ] && . ./.env; [ -f .env.local ] && . ./.env.local; set +a; go run .
 
 build:
 	go build -o bin/app .

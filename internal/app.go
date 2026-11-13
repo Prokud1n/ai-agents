@@ -10,52 +10,32 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/health"
-	"github.com/Prokud1n/ai-agents/internal/migrator"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
 	"github.com/Prokud1n/ai-agents/internal/providers/redis"
 	"github.com/Prokud1n/ai-agents/internal/providers/s3"
+	"github.com/Prokud1n/ai-agents/internal/readiness"
 	"github.com/Prokud1n/ai-agents/internal/server"
 )
 
 func DeclareApplicationOptions() []fx.Option {
 	return append(declareBaseOptions(),
-		// Apply migrations (if enabled) before anything else touches the database.
-		// Module order matters: fx runs start hooks in the order constructors and invokes ran.
-		migrator.Module,
-
-		// Initialize external service clients
+		// Initialize external service clients.
+		// Migrations are not applied here: that is cmd/migrate (the "migrate" service in docker compose).
 		postgres.Module,
 		redis.Module,
 		s3.Module,
 
 		// Initialize application modules
 		health.Module,
+		readiness.Module,
 
 		// HTTP server goes last: it starts accepting requests once dependencies are connected
 		server.Module,
 	)
 }
 
-// DeclareMigrationOptions builds the standalone migrate command: run cmd and exit.
-func DeclareMigrationOptions(cmd migrator.Command) []fx.Option {
-	return append(declareBaseOptions(),
-		fx.Supply(cmd),
-		migrator.CommandModule,
-	)
-}
-
 func NewApplication() *fx.App {
 	return fx.New(append(DeclareApplicationOptions(), lifecycleOptions())...)
-}
-
-// NewMigrationApplication builds the migrate command from command-line arguments (without the program name).
-func NewMigrationApplication(args []string) *fx.App {
-	cmd, err := migrator.ParseCommand(args)
-	if err != nil {
-		return fx.New(fx.Error(err))
-	}
-
-	return fx.New(append(DeclareMigrationOptions(cmd), lifecycleOptions())...)
 }
 
 func NewLogger(cfg config.Logging) (*slog.Logger, error) {

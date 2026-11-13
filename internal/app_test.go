@@ -8,7 +8,6 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
-	"github.com/Prokud1n/ai-agents/internal/migrator"
 )
 
 func TestDeclareOptions(t *testing.T) {
@@ -19,8 +18,6 @@ func TestDeclareOptions(t *testing.T) {
 		options []fx.Option
 	}{
 		{name: "application", options: DeclareApplicationOptions()},
-		{name: "migrate up", options: DeclareMigrationOptions(migrator.UpCommand)},
-		{name: "migrate down", options: DeclareMigrationOptions(migrator.DownCommand)},
 	}
 
 	for _, tt := range tests {

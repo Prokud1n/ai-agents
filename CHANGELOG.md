@@ -26,3 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Migration file naming in CODE_STYLE.md: `NNN_description.up.sql` + `NNN_description.down.sql`.
+- Migrations are applied only by `cmd/migrate` (the `migrate` service); `MIGRATIONS_RUN_ON_START` is removed.
+- `/readyz` dependencies are registered in `internal/readiness`; providers no longer import `internal/health`.
+- docker compose builds the app image once (in `migrate`); `app` reuses it.
+- `make run` reads `.env.local` after `.env` to run the app on the host (see README).
+- CI: `check` requires the branch to contain the current main; `tidy` also commits to `fix/**` and `refactoring/**`
+  and fails with a ready-to-run command if it cannot dispatch CI on the new commit; `compose-smoke` checks that
+  migrate up/down/up ends with `dirty: false`.
+
+### Fixed
+
+- `cmd/migrate` runs outside the fx lifecycle with no start timeout: a long migration is no longer killed midway
+  (leaving the database dirty); SIGINT/SIGTERM stop it gracefully after the current migration.

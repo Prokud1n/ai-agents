@@ -19,7 +19,8 @@ make down           # остановить (данные в volume сохран�
 Бакет для медиа (`S3_BUCKET`) приложение создаёт само при старте.
 
 Наружу опубликованы только `app` (`127.0.0.1:${APP_HOST_PORT}`) и `postgres` (`127.0.0.1:${POSTGRES_HOST_PORT}`, для отладки).
-Redis, S3 и Bot API доступны только внутри сети compose, поэтому приложение запускается в compose, а не на хосте.
+Redis, S3 и Bot API доступны только внутри сети compose, поэтому по умолчанию приложение запускается в compose
+(запуск на хосте — ниже).
 Консоль RustFS, если нужна: `docker compose exec s3 ...` или временный `docker-compose.override.yml` с портом на `127.0.0.1`.
 
 - `/healthz` — liveness: процесс жив.
@@ -35,7 +36,38 @@ make migrate        # применить все новые
 make migrate-down   # откатить одну
 ```
 
-Запуск миграций при старте приложения (`MIGRATIONS_RUN_ON_START=true`) по умолчанию выключен.
+Приложение миграции не применяет — только `cmd/migrate` (сервис `migrate`). Он работает без таймаута старта:
+по SIGINT/SIGTERM дожидается конца текущей миграции и выходит с ошибкой, так что база не остаётся `dirty`.
+
+### Запуск на хосте (`make run`)
+
+Удобно для отладки. Зависимости остаются в compose, а Redis и S3 нужно временно опубликовать на `127.0.0.1`:
+
+```bash
+cat > docker-compose.override.yml <<'YAML'   # в .gitignore; compose подхватывает его сам
+services:
+  redis:
+    ports: ["127.0.0.1:6379:6379"]
+  s3:
+    ports: ["127.0.0.1:9000:9000"]
+YAML
+
+cat > .env.local <<'ENV'                      # в .gitignore; make run читает его после .env
+POSTGRES_HOST=localhost
+REDIS_ADDRESS=localhost:6379
+S3_ENDPOINT=localhost:9000
+HTTP_ADDRESS=127.0.0.1:8081
+ENV
+
+docker compose up -d --wait postgres redis s3
+make migrate                                  # миграции применяются в compose
+make run
+```
+
+`POSTGRES_PORT` в `.env.local` нужен, только если `POSTGRES_HOST_PORT` не 5432. `HTTP_ADDRESS` — порт, отличный от `app`
+в compose, чтобы оба могли работать одновременно. Bot API на хосте недоступен: для него опубликуй порт 8081 так же
+и задай `TELEGRAM_BOT_API_URL=http://localhost:8081`, либо используй публичный API.
+Когда override не нужен, удали его: иначе `make up` тоже опубликует Redis и S3.
 
 ### Профиль `telegram`
 
@@ -54,5 +86,6 @@ docker compose --profile telegram up -d
 
 Правила — в [AGENTS.md](AGENTS.md) и [CODE_STYLE.md](CODE_STYLE.md). Проверки: `make check` (lint + `go test -race`).
 
-CI (`.github/workflows/ci.yml`): job `tidy` делает `go mod tidy` и на ветках `feature/**` сам коммитит `go.mod`/`go.sum`
-(после этого сделай `git pull`), затем `check` и `compose-smoke` проверяют итоговый коммит.
+CI (`.github/workflows/ci.yml`): job `tidy` делает `go mod tidy` и на ветках `feature/**`, `fix/**`, `refactoring/**`
+сам коммитит `go.mod`/`go.sum` (после этого сделай `git pull`), затем `check` и `compose-smoke` проверяют итоговый коммит.
+`check` требует, чтобы ветка содержала актуальный `main`: перед мержем сделай rebase.

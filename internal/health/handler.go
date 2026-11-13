@@ -14,12 +14,6 @@ import (
 // checkTimeout is below the 3s timeout of the container healthcheck probe (cmd/healthcheck).
 const checkTimeout = 2 * time.Second
 
-// Checker is a dependency pinged by /readyz.
-type Checker interface {
-	Name() string
-	Ping(ctx context.Context) error
-}
-
 type HandlerParams struct {
 	fx.In
 
