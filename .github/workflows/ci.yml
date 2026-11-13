@@ -105,8 +105,23 @@ jobs:
       - name: Lint
         run: make lint
 
+      - name: Install ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          fi
+          ffmpeg -hide_banner -version | head -n 1
+
       - name: Test
+        env:
+          FFMPEG_TESTS_REQUIRED: "1" # ffmpeg tests fail instead of skipping
         run: make test
+
+      - name: Show ffmpeg integration tests
+        env:
+          FFMPEG_TESTS_REQUIRED: "1"
+        run: go test -count=1 -v -run 'TestRunner' ./internal/providers/ffmpeg/
 
   compose-smoke:
     needs: tidy
@@ -186,3 +201,51 @@ jobs:
       - name: Stop stack
         if: always()
         run: docker compose down -v
+
+  media-image:
+    needs: tidy
+    if: needs.tidy.outputs.committed != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve base image digests (temporary)
+        run: |
+          for ref in alpine:3.22 alpine:3.23 alpine:3.24; do
+            echo "$ref $(docker buildx imagetools inspect "$ref" --format '{{json .Manifest.Digest}}' 2>&1 || true)"
+          done
+
+      - name: Build media image
+        run: docker build --target media -t ai-agents-media:ci .
+
+      - name: Check ffmpeg and transcribe
+        run: |
+          docker run --rm --entrypoint ffmpeg ai-agents-media:ci -hide_banner -version | head -n 1
+          docker run --rm --entrypoint ffprobe ai-agents-media:ci -hide_banner -version | head -n 1
+          docker run --rm ai-agents-media:ci -h
+          docker run --rm --entrypoint id ai-agents-media:ci
+
+      - name: Extract audio from a generated clip
+        # Without OPENAI_API_KEY transcribe extracts and probes the audio, then stops at the API call:
+        # the key error proves the ffmpeg part works inside the image.
+        run: |
+          set +e
+          docker run --rm --entrypoint sh ai-agents-media:ci -c '
+            ffmpeg -hide_banner -nostdin -loglevel error -y \
+              -f lavfi -i "sine=frequency=440:duration=3" \
+              -f lavfi -i "testsrc=duration=3:size=320x240:rate=25" \
+              -c:v mpeg4 -c:a aac -shortest /tmp/clip.mp4 &&
+            LOG_LEVEL=debug /app/transcribe -in /tmp/clip.mp4
+          ' > out.txt 2>&1
+          code=$?
+          set -e
+          cat out.txt
+          if [[ $code -ne 1 ]] || ! grep -q '"transcription: audio prepared"' out.txt \
+            || ! grep -q 'openai api key is not configured' out.txt; then
+            echo "::error::expected audio extraction to succeed and the API call to fail without a key (exit $code)"
+            exit 1
+          fi

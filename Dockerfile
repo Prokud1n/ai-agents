@@ -15,6 +15,28 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
 
+# Tools that need ffmpeg (transcribe) are built separately, so the app image below stays unchanged.
+FROM build AS build-media
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/transcribe ./cmd/transcribe
+
+# Media image: ffmpeg + transcribe. Build with `docker build --target media .`
+# alpine:3.22
+FROM alpine:3.22 AS media
+
+RUN apk add --no-cache ffmpeg && \
+    addgroup -S -g 65532 nonroot && \
+    adduser -S -D -H -u 65532 -G nonroot -s /sbin/nologin nonroot
+
+COPY --from=build-media /out-media/ /app/
+
+USER 65532:65532
+
+ENTRYPOINT ["/app/transcribe"]
+
+# The app image is the last stage: it is the default target of `docker build` and docker compose.
 # gcr.io/distroless/static-debian12:nonroot
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 

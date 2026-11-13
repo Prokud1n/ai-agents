@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check up down logs migrate migrate-down
+.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe media-image
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -37,3 +37,10 @@ migrate:
 
 migrate-down:
 	docker compose run --rm --build migrate down
+
+# make transcribe ARGS="-in video.mp4 [-lang ru] [-out result.json]"; needs ffmpeg and OPENAI_API_KEY (.env)
+transcribe:
+	set -a && [ -f .env ] && . ./.env; set +a && go run ./cmd/transcribe $(ARGS)
+
+media-image:
+	docker build --target media -t ai-agents-media:local .

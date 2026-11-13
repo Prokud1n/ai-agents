@@ -82,6 +82,18 @@ docker compose --profile telegram up -d
 Приложение обращается к нему по `TELEGRAM_BOT_API_URL`; том с файлами Bot API смонтирован в `app` только на чтение по тому же пути
 (`/var/lib/telegram-bot-api`), так что локальный путь из `getFile` можно читать напрямую.
 
+## Транскрипция видео
+
+`transcribe` извлекает речь из видео (ffmpeg) и отдаёт JSON с текстом, сегментами и таймкодами слов (Whisper `whisper-1`).
+Нужны `ffmpeg`/`ffprobe` и `OPENAI_API_KEY` в `.env`:
+
+```bash
+make transcribe ARGS="-in video.mp4 -out result.json"   # -lang ru по умолчанию (WHISPER_LANGUAGE)
+# или в образе с ffmpeg:
+make media-image
+docker run --rm --env-file .env --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work ai-agents-media:local -in video.mp4 -out result.json
+```
+
 ## Разработка
 
 Правила — в [AGENTS.md](AGENTS.md) и [CODE_STYLE.md](CODE_STYLE.md). Проверки: `make check` (lint + `go test -race`).
