@@ -1,17 +1,85 @@
 name: CI
 
+# How go.mod/go.sum stay tidy and the PR head is always checked:
+# 1. `tidy` runs `go mod tidy`. On a push to feature/** with changes it commits go.mod/go.sum
+#    to the branch, then dispatches this workflow on the branch and skips the checks of the
+#    current run (they would test a commit that is no longer the branch head).
+#    A push made with GITHUB_TOKEN does not trigger workflows; workflow_dispatch does.
+# 2. The dispatched run tests the new head: its `check` and `compose-smoke` are attached to
+#    that SHA, so required status checks on main see them.
+# 3. Anywhere else (main, other branches, dispatched runs) an untidy go.mod fails `tidy`,
+#    so a commit loop is impossible.
+# Required checks on main are the job names `check` and `compose-smoke`: do not rename them.
+
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  check:
+  tidy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit go.mod/go.sum to feature branches
+      actions: write # dispatch CI on the new commit
+    outputs:
+      committed: ${{ steps.tidy.outputs.committed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: go mod tidy
+        id: tidy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go mod tidy
+          if git diff --quiet -- go.mod go.sum; then
+            echo "go.mod and go.sum are tidy"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF_NAME" != feature/* ]]; then
+            git diff -- go.mod go.sum
+            echo "::error::go.mod/go.sum are not tidy: run go mod tidy"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum
+          git commit -m "Run go mod tidy"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Committed go mod tidy as $(git rev-parse HEAD); checks run in the dispatched CI run"
+
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+
+  check:
+    needs: tidy
+    if: needs.tidy.outputs.committed != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Show tested commit
+        run: echo "Testing $(git rev-parse HEAD) (${GITHUB_EVENT_NAME})"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
@@ -22,24 +90,51 @@ jobs:
         run: make test
 
   compose-smoke:
+    needs: tidy
+    if: needs.tidy.outputs.committed != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Show tested commit
+        run: echo "Testing $(git rev-parse HEAD) (${GITHUB_EVENT_NAME})"
 
       - name: Prepare env
         run: cp .env.dist .env
+
+      - name: Validate compose with the telegram profile
+        run: docker compose --profile telegram config -q
 
       - name: Start stack
         run: docker compose up -d --build --wait --wait-timeout 300
 
       - name: Check readiness
-        run: curl -fsS http://localhost:8080/readyz
+        run: curl -fsS http://127.0.0.1:8080/readyz
 
       - name: Check liveness
-        run: curl -fsS http://localhost:8080/healthz
+        run: curl -fsS http://127.0.0.1:8080/healthz
 
-      - name: Run migrations again (idempotent)
-        run: make migrate
+      - name: Check that only app and postgres are published, on 127.0.0.1
+        run: |
+          docker ps --filter label=com.docker.compose.project=ai-agents \
+            --format '{{.Label "com.docker.compose.service"}} {{.Ports}}' | tee ports.txt
+          if grep -E '0\.0\.0\.0:|\[::\]:|:::' ports.txt; then
+            echo "::error::ports must be published on 127.0.0.1 only"
+            exit 1
+          fi
+          if grep -E '^(redis|s3|telegram-bot-api) .*->' ports.txt; then
+            echo "::error::internal services must not be published"
+            exit 1
+          fi
+
+      - name: Roll back and re-apply migrations
+        run: |
+          make migrate-down
+          make migrate
 
       - name: Show logs
         if: failure()

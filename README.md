@@ -9,22 +9,33 @@
 ```bash
 cp .env.dist .env   # безопасные dev-значения по умолчанию
 make up             # собрать и поднять стек, дождаться healthcheck
-curl localhost:8080/readyz
+curl 127.0.0.1:8080/readyz
 make logs           # логи
 make down           # остановить (данные в volume сохраняются; `docker compose down -v` — удалить)
 ```
 
-Стек: `app`, `postgres` (pgvector), `redis`, `s3` ([RustFS](https://rustfs.com) — S3-совместимое хранилище; консоль — http://localhost:9001/rustfs/console/, логин/пароль — `S3_ACCESS_KEY`/`S3_SECRET_KEY`).
-Клиент в приложении — minio-go, работает с любым S3 (RustFS, AWS, Yandex Object Storage).
+Сервисы: `app`, `migrate` (одноразовый: применяет миграции до старта `app`), `postgres` (pgvector), `redis` (с паролем),
+`s3` ([RustFS](https://rustfs.com) — S3-совместимое хранилище). Клиент в приложении — minio-go, работает с любым S3.
 Бакет для медиа (`S3_BUCKET`) приложение создаёт само при старте.
 
+Наружу опубликованы только `app` (`127.0.0.1:${APP_HOST_PORT}`) и `postgres` (`127.0.0.1:${POSTGRES_HOST_PORT}`, для отладки).
+Redis, S3 и Bot API доступны только внутри сети compose, поэтому приложение запускается в compose, а не на хосте.
+Консоль RustFS, если нужна: `docker compose exec s3 ...` или временный `docker-compose.override.yml` с портом на `127.0.0.1`.
+
 - `/healthz` — liveness: процесс жив.
-- `/readyz` — readiness: статус PostgreSQL, Redis и S3 в JSON; `503`, если хоть одна зависимость недоступна.
+- `/readyz` — readiness: статусы (`ok`/`fail`) PostgreSQL, Redis и S3; `503`, если хоть одна зависимость недоступна.
+  Текст ошибок — только в логе.
 
-Миграции лежат в `migrations/` (`NNN-описание.up.sql`) и применяются при старте приложения (`MIGRATIONS_RUN_ON_START=true`).
-Вручную: `make migrate`.
+### Миграции
 
-Запуск приложения без Docker (`make run`) использует те же `.env` с адресами `localhost` — зависимости можно поднять через `docker compose up -d postgres redis s3`.
+Файлы — `migrations/NNN_описание.up.sql` + `NNN_описание.down.sql` (golang-migrate). В compose их применяет сервис `migrate`.
+
+```bash
+make migrate        # применить все новые
+make migrate-down   # откатить одну
+```
+
+Запуск миграций при старте приложения (`MIGRATIONS_RUN_ON_START=true`) по умолчанию выключен.
 
 ### Профиль `telegram`
 
@@ -36,6 +47,12 @@ make down           # остановить (данные в volume сохран�
 docker compose --profile telegram up -d
 ```
 
+Приложение обращается к нему по `TELEGRAM_BOT_API_URL`; том с файлами Bot API смонтирован в `app` только на чтение по тому же пути
+(`/var/lib/telegram-bot-api`), так что локальный путь из `getFile` можно читать напрямую.
+
 ## Разработка
 
-Правила — в [AGENTS.md](AGENTS.md) и [CODE_STYLE.md](CODE_STYLE.md). Проверки: `make check` (lint + test).
+Правила — в [AGENTS.md](AGENTS.md) и [CODE_STYLE.md](CODE_STYLE.md). Проверки: `make check` (lint + `go test -race`).
+
+CI (`.github/workflows/ci.yml`): job `tidy` делает `go mod tidy` и на ветках `feature/**` сам коммитит `go.mod`/`go.sum`
+(после этого сделай `git pull`), затем `check` и `compose-smoke` проверяют итоговый коммит.
