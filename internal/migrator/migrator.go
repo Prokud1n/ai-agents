@@ -1,3 +1,7 @@
+// Package migrator applies SQL migrations (golang-migrate). Unlike other packages it has no fx Module
+// and must stay outside the fx lifecycle: fx calls os.Exit when its start timeout expires, which would
+// interrupt a migration midway and leave the database "dirty". Migrations are run by cmd/migrate only,
+// with no start timeout and a graceful stop on SIGINT/SIGTERM.
 package migrator
 
 import (
@@ -10,7 +14,6 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5" // registers the "pgx5" database driver
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	"go.uber.org/fx"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/migrations"
@@ -76,8 +79,10 @@ func (m *Migrator) run(ctx context.Context, cmd Command, action func(*migrate.Mi
 		}
 	}()
 
-	// Stop between migrations when the start timeout expires or the app is interrupted;
-	// the migration in progress is finished, so the schema is never left half-applied.
+	// On cancellation (SIGINT/SIGTERM in cmd/migrate) ask golang-migrate to stop gracefully: it never
+	// interrupts the migration in progress, lets it finish and does not start the next one.
+	// Nothing else cancels ctx: there is deliberately no timeout, because a migration killed midway
+	// leaves the database "dirty" and needs manual repair.
 	done := make(chan struct{})
 	defer close(done)
 
@@ -100,6 +105,12 @@ func (m *Migrator) run(ctx context.Context, cmd Command, action func(*migrate.Mi
 
 	m.log.InfoContext(ctx, "migrator: done", "command", cmd, "version", version, "dirty", dirty)
 
+	// A graceful stop returns no error from golang-migrate, but the command is not complete:
+	// report it, so the "migrate" service does not exit successfully and app does not start.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("failed to finish migrations, stopped by signal: %w", err)
+	}
+
 	return nil
 }
 
@@ -120,30 +131,6 @@ func (m *Migrator) newMigrate() (*migrate.Migrate, error) {
 	}
 
 	return mg, nil
-}
-
-// RunOnStart applies migrations on application start when enabled in config.
-func RunOnStart(lc fx.Lifecycle, cfg *config.Migrations, m *Migrator) {
-	if !cfg.RunOnStart {
-		return
-	}
-
-	lc.Append(fx.StartHook(m.Up))
-}
-
-// RunAndShutdown runs the migrate command and stops the application: used by the standalone migrate binary.
-func RunAndShutdown(lc fx.Lifecycle, cmd Command, m *Migrator, shutdowner fx.Shutdowner) {
-	lc.Append(fx.StartHook(func(ctx context.Context) error {
-		if err := m.Run(ctx, cmd); err != nil {
-			return err
-		}
-
-		if err := shutdowner.Shutdown(); err != nil {
-			return fmt.Errorf("failed to shut down after migrations: %w", err)
-		}
-
-		return nil
-	}))
 }
 
 // migrateURL turns a postgres DSN into a URL for the golang-migrate pgx/v5 driver.

@@ -4,23 +4,30 @@ name: ai-agents
 # inside the compose network only.
 
 x-app-image: &app-image
-  build: .
   image: ai-agents-app:local
-  pull_policy: build
   env_file: .env
 
 services:
+  # The image is built once, here; app runs the same image (it depends on migrate, so the
+  # image is always built before app starts).
   migrate:
     <<: *app-image
+    build: .
+    pull_policy: build
     entrypoint: ["/app/migrate"]
     command: ["up"]
     depends_on:
       postgres:
         condition: service_healthy
     restart: "no"
+    # On SIGTERM migrate finishes the migration in progress and exits. It is not interrupted only
+    # within stop_grace_period (5m): after that docker sends SIGKILL and the database may stay dirty.
+    stop_grace_period: 5m
 
   app:
     <<: *app-image
+    # Built by the migrate service; never pulled from a registry.
+    pull_policy: never
     environment:
       # The container healthcheck probes :8080, so the address is fixed inside the container.
       HTTP_ADDRESS: ":8080"

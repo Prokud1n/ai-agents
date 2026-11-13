@@ -1,19 +1,7 @@
 package redis
 
-import (
-	"go.uber.org/fx"
-
-	"github.com/Prokud1n/ai-agents/internal/health"
-)
+import "go.uber.org/fx"
 
 var Module = fx.Module("redis",
-	fx.Provide(
-		NewClient,
-		fx.Annotate(asChecker, fx.ResultTags(`group:"readiness"`)),
-	),
+	fx.Provide(NewClient),
 )
-
-// asChecker registers the client as a /readyz dependency.
-func asChecker(c *Client) health.Checker {
-	return c
-}

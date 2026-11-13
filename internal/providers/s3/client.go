@@ -57,11 +57,6 @@ func (c *Client) Bucket() string {
 	return c.bucket
 }
 
-// Name is the dependency name in /readyz.
-func (*Client) Name() string {
-	return "s3"
-}
-
 func (c *Client) Ping(ctx context.Context) error {
 	exists, err := c.mc.BucketExists(ctx, c.bucket)
 	if err != nil {

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-stage Dockerfile with a distroless non-root runtime image.
 - Providers for PostgreSQL (pgxpool), Redis (go-redis) and S3 (minio-go) with connection checks on start.
 - SQL migrations with golang-migrate (`migrations/NNN_name.up.sql` / `.down.sql`): `make migrate` (up) and
-  `make migrate-down` (one step); optional run on app start (`MIGRATIONS_RUN_ON_START`, off by default).
+  `make migrate-down` (one step); applied only by `cmd/migrate`, outside the fx lifecycle and with no start timeout.
 - HTTP endpoints `/healthz` (liveness) and `/readyz` (statuses of dependencies registered in the `readiness` fx group).
 - HTTP server timeouts and fx start/stop timeouts in config; the app exits with code 1 if the HTTP server fails.
 - `TELEGRAM_BOT_API_URL` config for the upcoming Telegram integration.
@@ -26,3 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Migration file naming in CODE_STYLE.md: `NNN_description.up.sql` + `NNN_description.down.sql`.
+- `/readyz` dependencies are registered in `internal/readiness`; providers no longer import `internal/health`.
+- docker compose builds the app image once (in `migrate`); `app` reuses it.
+- `make run` reads `.env.local` after `.env` to run the app on the host (see README).
+- CI: `check` requires the branch to contain the current main; `tidy` also commits to `fix/**` and `refactoring/**`
+  and fails with a ready-to-run command if it cannot dispatch CI on the new commit; `compose-smoke` checks that
+  migrate up/down/up ends with `dirty: false`.
+
+### Fixed
+
+- `cmd/migrate` runs outside the fx lifecycle with no start timeout: a long migration is no longer killed midway
+  (leaving the database dirty); SIGINT/SIGTERM stop it gracefully after the current migration.

@@ -45,6 +45,7 @@ func main() {
 ## 3. Dependency Injection (Uber FX)
 
 - Каждый пакет экспортирует `Module` в `fx.go`; все модули собираются в `internal/app.go`.
+  Исключение: `internal/migrator` работает вне fx — миграции запускает `cmd/migrate` без таймаута старта; не возвращать их в lifecycle fx.
 - Внутренние зависимости пакета регистрируем с `fx.Private` (например, `fx.Provide(newRepo, fx.Private)`).
 - Конструкторы — `NewXxx(...) *Xxx`. При большом числе зависимостей — структура параметров с `fx.In`:
 
