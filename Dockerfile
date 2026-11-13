@@ -22,6 +22,6 @@ USER nonroot:nonroot
 EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \
-    CMD ["/app/healthcheck", "http://localhost:8080/readyz"]
+    CMD ["/app/healthcheck"]
 
 ENTRYPOINT ["/app/app"]

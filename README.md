@@ -14,7 +14,8 @@ make logs           # логи
 make down           # остановить (данные в volume сохраняются; `docker compose down -v` — удалить)
 ```
 
-Стек: `app`, `postgres` (pgvector), `redis`, `minio` (S3, консоль — http://localhost:9001, логин/пароль — `S3_ACCESS_KEY`/`S3_SECRET_KEY`).
+Стек: `app`, `postgres` (pgvector), `redis`, `s3` ([RustFS](https://rustfs.com) — S3-совместимое хранилище; консоль — http://localhost:9001/rustfs/console/, логин/пароль — `S3_ACCESS_KEY`/`S3_SECRET_KEY`).
+Клиент в приложении — minio-go, работает с любым S3 (RustFS, AWS, Yandex Object Storage).
 Бакет для медиа (`S3_BUCKET`) приложение создаёт само при старте.
 
 - `/healthz` — liveness: процесс жив.
@@ -23,7 +24,7 @@ make down           # остановить (данные в volume сохран�
 Миграции лежат в `migrations/` (`NNN-описание.up.sql`) и применяются при старте приложения (`MIGRATIONS_RUN_ON_START=true`).
 Вручную: `make migrate`.
 
-Запуск приложения без Docker (`make run`) использует те же `.env` с адресами `localhost` — зависимости можно поднять через `docker compose up -d postgres redis minio`.
+Запуск приложения без Docker (`make run`) использует те же `.env` с адресами `localhost` — зависимости можно поднять через `docker compose up -d postgres redis s3`.
 
 ### Профиль `telegram`
 

@@ -13,7 +13,7 @@ import (
 // only parses "NNN_description.up.sql" and silently skips anything else. migrateFS exposes the
 // project files under golang-migrate names and fails on a file that matches neither, so a
 // misnamed migration cannot be skipped unnoticed.
-var migrationNameRe = regexp.MustCompile(`^([0-9]+)-([^.]+)\.(up|down)\.sql$`)
+var migrationNameRe = regexp.MustCompile(`^(\d+)-([^.]+)\.(up|down)\.sql$`)
 
 var errInvalidMigrationName = errors.New("invalid migration file name, expected NNN-description.up.sql")
 

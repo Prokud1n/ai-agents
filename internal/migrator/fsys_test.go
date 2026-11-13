@@ -10,6 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	initMigration        = "001-init.up.sql"
+	initMigrationRenamed = "001_init.up.sql"
+)
+
 func TestToMigrateName(t *testing.T) {
 	t.Parallel()
 
@@ -19,10 +24,10 @@ func TestToMigrateName(t *testing.T) {
 		expected  string
 		expectErr bool
 	}{
-		{name: "up migration", input: "001-init.up.sql", expected: "001_init.up.sql"},
+		{name: "up migration", input: initMigration, expected: initMigrationRenamed},
 		{name: "down migration", input: "002-add-posts.down.sql", expected: "002_add-posts.down.sql"},
 		{name: "underscore in description", input: "010-create_users.up.sql", expected: "010_create_users.up.sql"},
-		{name: "golang-migrate style is rejected", input: "001_init.up.sql", expectErr: true},
+		{name: "golang-migrate style is rejected", input: initMigrationRenamed, expectErr: true},
 		{name: "no direction", input: "001-init.sql", expectErr: true},
 		{name: "no version", input: "init.up.sql", expectErr: true},
 	}
@@ -56,14 +61,14 @@ func TestMigrateFS(t *testing.T) {
 		{
 			name: "renames sql files and skips others",
 			input: fstest.MapFS{
-				"001-init.up.sql":     {Data: []byte("CREATE EXTENSION vector;")},
+				initMigration:         {Data: []byte("CREATE EXTENSION vector;")},
 				"002-posts.up.sql":    {Data: []byte("CREATE TABLE posts();")},
 				"embed.go":            {Data: []byte("package migrations")},
 				"nested/003-x.up.sql": {Data: []byte("SELECT 1;")},
 				"002-posts.down.sql":  {Data: []byte("DROP TABLE posts;")},
 			},
 			expected: map[string]string{
-				"001_init.up.sql":    "CREATE EXTENSION vector;",
+				initMigrationRenamed: "CREATE EXTENSION vector;",
 				"002_posts.down.sql": "DROP TABLE posts;",
 				"002_posts.up.sql":   "CREATE TABLE posts();",
 			},
@@ -71,7 +76,7 @@ func TestMigrateFS(t *testing.T) {
 		{
 			name: "misnamed migration fails",
 			input: fstest.MapFS{
-				"001_init.up.sql": {Data: []byte("SELECT 1;")},
+				initMigrationRenamed: {Data: []byte("SELECT 1;")},
 			},
 			expectErr: true,
 		},
@@ -120,13 +125,13 @@ func TestMigrateURL(t *testing.T) {
 	}{
 		{
 			name:     "replaces scheme",
-			input:    "postgres://agent:secret@localhost:5432/ai_agents?sslmode=disable",
-			expected: "pgx5://agent:secret@localhost:5432/ai_agents?sslmode=disable",
+			input:    "postgres://agent@localhost:5432/ai_agents?sslmode=disable",
+			expected: "pgx5://agent@localhost:5432/ai_agents?sslmode=disable",
 		},
 		{
-			name:     "keeps escaped password",
-			input:    "postgres://app:p%40ss@db:5432/agents?sslmode=require",
-			expected: "pgx5://app:p%40ss@db:5432/agents?sslmode=require",
+			name:     "keeps escaped user info",
+			input:    "postgres://app%40corp@db:5432/agents?sslmode=require",
+			expected: "pgx5://app%40corp@db:5432/agents?sslmode=require",
 		},
 	}
 

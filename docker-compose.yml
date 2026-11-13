@@ -11,7 +11,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_ADDRESS: redis:6379
-      S3_ENDPOINT: minio:9000
+      S3_ENDPOINT: s3:9000
     ports:
       - "${APP_HOST_PORT:-8080}:8080"
     depends_on:
@@ -19,61 +19,23 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "/app/healthcheck", "http://localhost:8080/readyz"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    restart: unless-stopped
-
-  postgres:
-    image: pgvector/pgvector:pg17
+      # S3-compatible storage for media. RustFS instead of MinIO: MinIO archived the community
+  # edition and its images are no longer pullable anonymously (Docker Hub / quay.io).
+  s3:
+    image: rustfs/rustfs:1.0.0
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY}
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${S3_HOST_PORT:-9000}:9000"
+      - "${S3_CONSOLE_HOST_PORT:-9001}:9001"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - s3-data:/data
     healthcheck:
-      # -h forces TCP: during first init the temporary server listens on the unix socket only.
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-    restart: unless-stopped
-
-  redis:
-    image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-    restart: unless-stopped
-
-  minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
-    ports:
-      - "${MINIO_HOST_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -98,5 +60,5 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  minio-data:
+  s3-data:
   telegram-bot-api-data:

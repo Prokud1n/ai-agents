@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Docker Compose stack: app, PostgreSQL with pgvector, Redis, MinIO; local Telegram Bot API server under the `telegram` profile.
+- Docker Compose stack: app, PostgreSQL with pgvector, Redis, RustFS (S3); local Telegram Bot API server under the `telegram` profile.
 - Multi-stage Dockerfile with a distroless non-root runtime image.
 - Providers for PostgreSQL (pgxpool), Redis (go-redis) and S3 (minio-go) with connection checks on start.
 - SQL migrations with golang-migrate, applied on start (`MIGRATIONS_RUN_ON_START`) or via `make migrate`.
