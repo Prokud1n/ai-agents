@@ -9,3 +9,5 @@ bin
 docker-compose.yml
 .env.local
 docker-compose.override.yml
+# agent and skill definitions are markdown, they go into the image
+!agents/**/*.md

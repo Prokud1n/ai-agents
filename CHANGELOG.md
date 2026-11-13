@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and extracts audio from a generated clip.
 - CI: `tidy` job that commits `go mod tidy` results to `feature/**` branches and re-runs checks on the new commit;
   `compose-smoke` job; actions pinned by SHA with least-privilege permissions.
+- LLM layer: thin Claude Messages API client (`ANTHROPIC_*` config, retries on 429/5xx with exponential backoff);
+  the app starts without `ANTHROPIC_API_KEY` and the Claude API is not a `/readyz` dependency.
+- Agent registry: an agent is a folder `agents/<name>/` with `agent.md` (YAML frontmatter + role prompt) and
+  `skills/<skill>/SKILL.md`; validated on start (`AGENTS_DIR`). Template: `agents/_example/`.
+- Agent runtime: tool use loop with a turn limit, built-in `load_skill` tool (skill bodies are loaded on demand),
+  tools registered through the fx value group `agent_tools`, tool errors returned to the model as `is_error`.
+- LLM usage accounting: migration `002_llm_usage`, a record per API call (tokens, cache tokens, cost, duration,
+  request id), prices per model in `LLM_PRICES`, `llmusage.Service.UsageSummary` by agent and model.
+- `cmd/agent-run` CLI and `make agent-run AGENT=... PROMPT=...` for manual checks with a real key.
 
 ### Changed
 

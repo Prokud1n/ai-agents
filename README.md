@@ -102,6 +102,19 @@ docker run --rm --env-file .env --user "$(id -u):$(id -g)" -v "$PWD:/work" ai-ag
 
 Если в роликах фоновая музыка и паузы не находятся, подними `TRANSCRIPTION_SILENCE_NOISE_DB` (например, до `-25`).
 
+## Агенты и LLM
+
+Агент — папка `agents/<name>/`: `agent.md` (YAML frontmatter `name`, `display_name`, `model`, `tools`, `skills` + тело —
+системный промпт роли) и `skills/<skill>/SKILL.md` (frontmatter `name`, `description` + тело — инструкция).
+Шаблон — `agents/_example/`. Агенты проверяются при старте: ошибка в папке — приложение не стартует, текст в логе.
+Новый инструмент для агентов регистрируется модулем в fx-группе `agent_tools` (`agents.ToolsGroup`).
+
+Ручная проверка с настоящим ключом (`ANTHROPIC_API_KEY` в `.env`): ответ агента и расход токенов и денег.
+
+```bash
+make agent-run AGENT=_example PROMPT="Привет! Представься."
+```
+
 ## Разработка
 
 Правила — в [AGENTS.md](AGENTS.md) и [CODE_STYLE.md](CODE_STYLE.md). Проверки: `make check` (lint + `go test -race`).

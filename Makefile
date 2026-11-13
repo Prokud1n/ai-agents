@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe media-image
+.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe media-image agent-run
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -44,3 +44,10 @@ transcribe:
 
 media-image:
 	docker build --target media -t ai-agents-media:local .
+
+# Run one agent with a prompt inside compose (needs ANTHROPIC_API_KEY in .env):
+#   make agent-run AGENT=_example PROMPT="Привет!"
+# The image is built by the migrate service, which also applies migrations (usage is recorded to llm_usage).
+agent-run:
+	docker compose run --rm --build migrate up
+	docker compose run --rm --entrypoint /app/agent-run app -agent "$(AGENT)" -prompt "$(PROMPT)"

@@ -13,7 +13,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app . && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-run ./cmd/agent-run
 
 # Tools that need ffmpeg (transcribe) are built separately, so the app image below stays unchanged.
 FROM build AS build-media
@@ -45,6 +46,9 @@ ENTRYPOINT ["/app/transcribe"]
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=build /out/ /app/
+# Agent definitions (AGENTS_DIR=./agents is relative to the working directory).
+COPY agents/ /app/agents/
+WORKDIR /app
 
 USER nonroot:nonroot
 EXPOSE 8080
