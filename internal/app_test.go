@@ -10,12 +10,26 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/config"
 )
 
-func TestDeclareApplicationOptions(t *testing.T) {
+func TestDeclareOptions(t *testing.T) {
 	t.Parallel()
 
-	err := fx.ValidateApp(DeclareApplicationOptions()...)
+	tests := []struct {
+		name    string
+		options []fx.Option
+	}{
+		{name: "application", options: DeclareApplicationOptions()},
+		{name: "migration", options: DeclareMigrationOptions()},
+	}
 
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := fx.ValidateApp(tt.options...)
+
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestNewLogger(t *testing.T) {
