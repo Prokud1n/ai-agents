@@ -37,11 +37,11 @@ func TestPostgresDSN(t *testing.T) {
 		{
 			name: "special characters survive escaping",
 			input: Postgres{
-				Host: "db", Port: 6432, User: "app", Password: "p@ss/w:rd?#",
+				Host: "db", Port: 6432, User: "app", Password: "@/:?#",
 				Database: "agents", SSLMode: "require",
 			},
 			expected: dsnParts{
-				user: "app", password: "p@ss/w:rd?#", host: "db:6432", database: "agents", sslMode: "require",
+				user: "app", password: "@/:?#", host: "db:6432", database: "agents", sslMode: "require",
 			},
 		},
 		{
