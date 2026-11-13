@@ -19,6 +19,7 @@ import (
 const (
 	sourceName     = "iofs"
 	databaseScheme = "pgx5"
+	downOneStep    = -1
 )
 
 type Migrator struct {
@@ -33,24 +34,39 @@ func NewMigrator(cfg *config.Postgres, log *slog.Logger) *Migrator {
 // Up applies all pending migrations. golang-migrate takes a Postgres advisory lock,
 // so several instances starting at once do not race.
 func (m *Migrator) Up(ctx context.Context) error {
-	fsys, err := newMigrateFS(migrations.FS)
-	if err != nil {
-		return fmt.Errorf("failed to prepare migrations: %w", err)
+	return m.run(ctx, UpCommand, func(mg *migrate.Migrate) error {
+		if err := mg.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			return fmt.Errorf("failed to apply migrations: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// Down rolls back exactly one migration.
+func (m *Migrator) Down(ctx context.Context) error {
+	return m.run(ctx, DownCommand, func(mg *migrate.Migrate) error {
+		if err := mg.Steps(downOneStep); err != nil {
+			return fmt.Errorf("failed to roll back migration: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// Run executes the given command.
+func (m *Migrator) Run(ctx context.Context, cmd Command) error {
+	if cmd == DownCommand {
+		return m.Down(ctx)
 	}
 
-	source, err := iofs.New(fsys, ".")
-	if err != nil {
-		return fmt.Errorf("failed to open migrations source: %w", err)
-	}
+	return m.Up(ctx)
+}
 
-	databaseURL, err := migrateURL(m.cfg.DSN())
+func (m *Migrator) run(ctx context.Context, cmd Command, action func(*migrate.Migrate) error) error {
+	mg, err := m.newMigrate()
 	if err != nil {
 		return err
-	}
-
-	mg, err := migrate.NewWithSourceInstance(sourceName, source, databaseURL)
-	if err != nil {
-		return fmt.Errorf("failed to init migrations: %w", err)
 	}
 
 	defer func() {
@@ -60,8 +76,21 @@ func (m *Migrator) Up(ctx context.Context) error {
 		}
 	}()
 
-	if err := mg.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("failed to apply migrations: %w", err)
+	// Stop between migrations when the start timeout expires or the app is interrupted;
+	// the migration in progress is finished, so the schema is never left half-applied.
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			mg.GracefulStop <- true
+		case <-done:
+		}
+	}()
+
+	if err := action(mg); err != nil {
+		return err
 	}
 
 	version, dirty, err := mg.Version()
@@ -69,9 +98,28 @@ func (m *Migrator) Up(ctx context.Context) error {
 		return fmt.Errorf("failed to get migrations version: %w", err)
 	}
 
-	m.log.InfoContext(ctx, "migrator: migrations applied", "version", version, "dirty", dirty)
+	m.log.InfoContext(ctx, "migrator: done", "command", cmd, "version", version, "dirty", dirty)
 
 	return nil
+}
+
+func (m *Migrator) newMigrate() (*migrate.Migrate, error) {
+	source, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open migrations source: %w", err)
+	}
+
+	databaseURL, err := migrateURL(m.cfg.DSN())
+	if err != nil {
+		return nil, err
+	}
+
+	mg, err := migrate.NewWithSourceInstance(sourceName, source, databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init migrations: %w", err)
+	}
+
+	return mg, nil
 }
 
 // RunOnStart applies migrations on application start when enabled in config.
@@ -83,10 +131,10 @@ func RunOnStart(lc fx.Lifecycle, cfg *config.Migrations, m *Migrator) {
 	lc.Append(fx.StartHook(m.Up))
 }
 
-// RunAndShutdown applies migrations and stops the application: used by the standalone migrate command.
-func RunAndShutdown(lc fx.Lifecycle, m *Migrator, shutdowner fx.Shutdowner) {
+// RunAndShutdown runs the migrate command and stops the application: used by the standalone migrate binary.
+func RunAndShutdown(lc fx.Lifecycle, cmd Command, m *Migrator, shutdowner fx.Shutdowner) {
 	lc.Append(fx.StartHook(func(ctx context.Context) error {
-		if err := m.Up(ctx); err != nil {
+		if err := m.Run(ctx, cmd); err != nil {
 			return err
 		}
 

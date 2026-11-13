@@ -3,7 +3,7 @@ package migrations
 
 import "embed"
 
-// FS contains migration files named "NNN-description.up.sql".
+// FS contains migration files named "NNN_description.up.sql" / "NNN_description.down.sql".
 //
 //go:embed *.sql
 var FS embed.FS
