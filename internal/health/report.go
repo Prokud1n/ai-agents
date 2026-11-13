@@ -9,16 +9,11 @@ const (
 	FailStatus Status = "fail"
 )
 
-// DependencyReport is the readiness of a single dependency.
-type DependencyReport struct {
-	Status Status `json:"status"`
-	Error  string `json:"error,omitempty"`
-}
-
-// Report is the /readyz response body.
+// Report is the /readyz response body. It carries statuses only: error details go to the log,
+// so the endpoint does not leak hosts or internals.
 type Report struct {
-	Status       Status                      `json:"status"`
-	Dependencies map[string]DependencyReport `json:"dependencies"`
+	Status       Status            `json:"status"`
+	Dependencies map[string]Status `json:"dependencies"`
 }
 
 type checkResult struct {
@@ -30,18 +25,18 @@ type checkResult struct {
 func buildReport(results []checkResult) Report {
 	report := Report{
 		Status:       OKStatus,
-		Dependencies: make(map[string]DependencyReport, len(results)),
+		Dependencies: make(map[string]Status, len(results)),
 	}
 
 	for _, r := range results {
 		if r.err == nil {
-			report.Dependencies[r.name] = DependencyReport{Status: OKStatus}
+			report.Dependencies[r.name] = OKStatus
 
 			continue
 		}
 
 		report.Status = FailStatus
-		report.Dependencies[r.name] = DependencyReport{Status: FailStatus, Error: r.err.Error()}
+		report.Dependencies[r.name] = FailStatus
 	}
 
 	return report

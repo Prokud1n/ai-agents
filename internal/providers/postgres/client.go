@@ -53,6 +53,11 @@ func (c *Client) GetWriteConnection() *pgxpool.Pool {
 	return c.pool
 }
 
+// Name is the dependency name in /readyz.
+func (*Client) Name() string {
+	return "postgres"
+}
+
 func (c *Client) Ping(ctx context.Context) error {
 	if err := c.pool.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping postgres: %w", err)

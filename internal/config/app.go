@@ -13,4 +13,5 @@ type App struct {
 	Redis      *Redis      `env:",init"`
 	S3         *S3         `env:",init"`
 	Migrations *Migrations `env:",init"`
+	Telegram   *Telegram   `env:",init"`
 }

@@ -8,11 +8,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	postgresName = "postgres"
+	redisName    = "redis"
+	s3Name       = "s3"
+)
+
 func TestBuildReport(t *testing.T) {
 	t.Parallel()
 
 	errTimeout := errors.New("context deadline exceeded")
-	errBucket := errors.New("bucket not found")
 
 	tests := []struct {
 		name         string
@@ -21,60 +26,35 @@ func TestBuildReport(t *testing.T) {
 		expectedCode int
 	}{
 		{
-			name:  "no dependencies",
-			input: nil,
+			name:         "no dependencies",
+			input:        nil,
+			expected:     Report{Status: OKStatus, Dependencies: map[string]Status{}},
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:  "all dependencies ok",
+			input: []checkResult{{name: postgresName}, {name: redisName}, {name: s3Name}},
 			expected: Report{
 				Status:       OKStatus,
-				Dependencies: map[string]DependencyReport{},
+				Dependencies: map[string]Status{postgresName: OKStatus, redisName: OKStatus, s3Name: OKStatus},
 			},
 			expectedCode: http.StatusOK,
 		},
 		{
-			name: "all dependencies ok",
-			input: []checkResult{
-				{name: postgresDependency},
-				{name: redisDependency},
-				{name: s3Dependency},
-			},
+			name:  "one dependency fails",
+			input: []checkResult{{name: postgresName}, {name: redisName, err: errTimeout}, {name: s3Name}},
 			expected: Report{
-				Status: OKStatus,
-				Dependencies: map[string]DependencyReport{
-					postgresDependency: {Status: OKStatus},
-					redisDependency:    {Status: OKStatus},
-					s3Dependency:       {Status: OKStatus},
-				},
-			},
-			expectedCode: http.StatusOK,
-		},
-		{
-			name: "one dependency fails",
-			input: []checkResult{
-				{name: postgresDependency},
-				{name: redisDependency, err: errTimeout},
-				{name: s3Dependency},
-			},
-			expected: Report{
-				Status: FailStatus,
-				Dependencies: map[string]DependencyReport{
-					postgresDependency: {Status: OKStatus},
-					redisDependency:    {Status: FailStatus, Error: errTimeout.Error()},
-					s3Dependency:       {Status: OKStatus},
-				},
+				Status:       FailStatus,
+				Dependencies: map[string]Status{postgresName: OKStatus, redisName: FailStatus, s3Name: OKStatus},
 			},
 			expectedCode: http.StatusServiceUnavailable,
 		},
 		{
-			name: "all dependencies fail",
-			input: []checkResult{
-				{name: postgresDependency, err: errTimeout},
-				{name: s3Dependency, err: errBucket},
-			},
+			name:  "all dependencies fail",
+			input: []checkResult{{name: postgresName, err: errTimeout}, {name: s3Name, err: errTimeout}},
 			expected: Report{
-				Status: FailStatus,
-				Dependencies: map[string]DependencyReport{
-					postgresDependency: {Status: FailStatus, Error: errTimeout.Error()},
-					s3Dependency:       {Status: FailStatus, Error: errBucket.Error()},
-				},
+				Status:       FailStatus,
+				Dependencies: map[string]Status{postgresName: FailStatus, s3Name: FailStatus},
 			},
 			expectedCode: http.StatusServiceUnavailable,
 		},

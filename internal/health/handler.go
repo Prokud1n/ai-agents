@@ -9,52 +9,32 @@ import (
 	"time"
 
 	"go.uber.org/fx"
-
-	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
-	"github.com/Prokud1n/ai-agents/internal/providers/redis"
-	"github.com/Prokud1n/ai-agents/internal/providers/s3"
 )
 
-const checkTimeout = 3 * time.Second
+// checkTimeout is below the 3s timeout of the container healthcheck probe (cmd/healthcheck).
+const checkTimeout = 2 * time.Second
 
-const (
-	postgresDependency = "postgres"
-	redisDependency    = "redis"
-	s3Dependency       = "s3"
-)
-
-type pinger interface {
+// Checker is a dependency pinged by /readyz.
+type Checker interface {
+	Name() string
 	Ping(ctx context.Context) error
-}
-
-type dependency struct {
-	name   string
-	pinger pinger
 }
 
 type HandlerParams struct {
 	fx.In
 
 	Log      *slog.Logger
-	Postgres *postgres.Client
-	Redis    *redis.Client
-	S3       *s3.Client
+	Checkers []Checker `group:"readiness"`
 }
 
 type Handler struct {
-	log          *slog.Logger
-	dependencies []dependency
+	log      *slog.Logger
+	checkers []Checker
+	timeout  time.Duration
 }
 
 func NewHandler(p HandlerParams) *Handler {
-	return &Handler{
-		log: p.Log,
-		dependencies: []dependency{
-			{name: postgresDependency, pinger: p.Postgres},
-			{name: redisDependency, pinger: p.Redis},
-			{name: s3Dependency, pinger: p.S3},
-		},
-	}
+	return &Handler{log: p.Log, checkers: p.Checkers, timeout: checkTimeout}
 }
 
 func RegisterRoutes(mux *http.ServeMux, h *Handler) {
@@ -69,24 +49,27 @@ func (h *Handler) Liveness(w http.ResponseWriter, r *http.Request) {
 
 // Readiness pings every dependency concurrently and reports each one's status.
 func (h *Handler) Readiness(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
 	defer cancel()
 
-	report := buildReport(h.check(ctx))
-	if report.Status != OKStatus {
-		h.log.WarnContext(ctx, "health: service is not ready", "dependencies", report.Dependencies)
+	results := h.check(ctx)
+	for _, res := range results {
+		if res.err != nil {
+			h.log.WarnContext(ctx, "health: dependency is not ready", "dependency", res.name, "error", res.err)
+		}
 	}
 
+	report := buildReport(results)
 	h.writeJSON(ctx, w, report.HTTPStatus(), report)
 }
 
 func (h *Handler) check(ctx context.Context) []checkResult {
-	results := make([]checkResult, len(h.dependencies))
+	results := make([]checkResult, len(h.checkers))
 
 	var wg sync.WaitGroup
-	for i, d := range h.dependencies {
+	for i, c := range h.checkers {
 		wg.Go(func() {
-			results[i] = checkResult{name: d.name, err: d.pinger.Ping(ctx)}
+			results[i] = checkResult{name: c.Name(), err: c.Ping(ctx)}
 		})
 	}
 

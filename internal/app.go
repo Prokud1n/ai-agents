@@ -19,7 +19,7 @@ import (
 
 func DeclareApplicationOptions() []fx.Option {
 	return append(declareBaseOptions(),
-		// Apply migrations before anything else touches the database.
+		// Apply migrations (if enabled) before anything else touches the database.
 		// Module order matters: fx runs start hooks in the order constructors and invokes ran.
 		migrator.Module,
 
@@ -36,19 +36,26 @@ func DeclareApplicationOptions() []fx.Option {
 	)
 }
 
-// DeclareMigrationOptions builds the standalone migrate command: apply migrations and exit.
-func DeclareMigrationOptions() []fx.Option {
+// DeclareMigrationOptions builds the standalone migrate command: run cmd and exit.
+func DeclareMigrationOptions(cmd migrator.Command) []fx.Option {
 	return append(declareBaseOptions(),
+		fx.Supply(cmd),
 		migrator.CommandModule,
 	)
 }
 
 func NewApplication() *fx.App {
-	return fx.New(DeclareApplicationOptions()...)
+	return fx.New(append(DeclareApplicationOptions(), lifecycleOptions())...)
 }
 
-func NewMigrationApplication() *fx.App {
-	return fx.New(DeclareMigrationOptions()...)
+// NewMigrationApplication builds the migrate command from command-line arguments (without the program name).
+func NewMigrationApplication(args []string) *fx.App {
+	cmd, err := migrator.ParseCommand(args)
+	if err != nil {
+		return fx.New(fx.Error(err))
+	}
+
+	return fx.New(append(DeclareMigrationOptions(cmd), lifecycleOptions())...)
 }
 
 func NewLogger(cfg config.Logging) (*slog.Logger, error) {
@@ -65,10 +72,27 @@ func declareBaseOptions() []fx.Option {
 		// Initialize application configuration
 		fx.Provide(config.Parse),
 
-		// Initialize logger
+		// Initialize logger; fx lifecycle events are noisy, so they go to debug
 		fx.Provide(NewLogger),
 		fx.WithLogger(func(log *slog.Logger) fxevent.Logger {
-			return &fxevent.SlogLogger{Logger: log}
+			logger := &fxevent.SlogLogger{Logger: log}
+			logger.UseLogLevel(slog.LevelDebug)
+
+			return logger
 		}),
 	}
+}
+
+// lifecycleOptions sets fx start/stop timeouts. They must be top-level options,
+// so the config is read before the fx graph is built.
+func lifecycleOptions() fx.Option {
+	cfg, err := config.ParseLifecycle()
+	if err != nil {
+		return fx.Error(err)
+	}
+
+	return fx.Options(
+		fx.StartTimeout(cfg.StartTimeout),
+		fx.StopTimeout(cfg.StopTimeout),
+	)
 }
