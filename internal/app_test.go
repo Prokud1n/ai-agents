@@ -8,14 +8,30 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
+	"github.com/Prokud1n/ai-agents/internal/migrator"
 )
 
-func TestDeclareApplicationOptions(t *testing.T) {
+func TestDeclareOptions(t *testing.T) {
 	t.Parallel()
 
-	err := fx.ValidateApp(DeclareApplicationOptions()...)
+	tests := []struct {
+		name    string
+		options []fx.Option
+	}{
+		{name: "application", options: DeclareApplicationOptions()},
+		{name: "migrate up", options: DeclareMigrationOptions(migrator.UpCommand)},
+		{name: "migrate down", options: DeclareMigrationOptions(migrator.DownCommand)},
+	}
 
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := fx.ValidateApp(tt.options...)
+
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestNewLogger(t *testing.T) {
