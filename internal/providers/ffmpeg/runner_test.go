@@ -122,9 +122,17 @@ func TestRunnerHostileFileNames(t *testing.T) {
 		{name: "quotes and separators", input: "x';[0]afade.mp4"},
 	}
 
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, root.Close()) })
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.NoError(t, os.WriteFile(tt.input, content, 0o600))
+			f, err := root.Create(tt.input)
+			require.NoError(t, err)
+			_, err = f.Write(content)
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
 
 			out := "-out-" + strconv.Itoa(len(tt.name)) + AudioExtension
 			require.NoError(t, r.ExtractAudio(ctx, tt.input, out))

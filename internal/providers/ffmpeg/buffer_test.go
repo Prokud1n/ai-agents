@@ -16,7 +16,7 @@ func TestTailBuffer(t *testing.T) {
 		input    []string
 		expected string
 	}{
-		{name: "empty", input: nil, expected: ""},
+		{name: "nothing written", input: nil, expected: ""},
 		{name: "fits", input: []string{"ab", "cd"}, expected: "abcd"},
 		{name: "exactly full", input: []string{"abc", "def"}, expected: "abcdef"},
 		{name: "wraps around", input: []string{"abcd", "efgh"}, expected: "cdefgh"},

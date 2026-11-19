@@ -17,6 +17,9 @@ const (
 	wordSquat    = "присед"
 	wordKnees    = "колени"
 	wordOne      = "раз"
+	wordHold     = "держим"
+	wordBack     = "спину"
+	langRussian  = "russian" // as Whisper reports it
 )
 
 func TestChunkDurationLimit(t *testing.T) {
@@ -164,7 +167,7 @@ func TestMergeChunks(t *testing.T) {
 							{Word: "Опускаемся", Start: 595.2, End: 596},
 							{Word: "медленно", Start: 596.1, End: 597.4},
 							{Word: "вниз,", Start: 597.5, End: 598.2},
-							{Word: "держим", Start: 598.9, End: 599.5},
+							{Word: wordHold, Start: 598.9, End: 599.5},
 							{Word: "спи", Start: 599.6, End: 600},
 						},
 						Segments: []whisper.Segment{{Start: 595, End: 600, Text: " Опускаемся медленно вниз, держим спи"}},
@@ -175,8 +178,8 @@ func TestMergeChunks(t *testing.T) {
 					Transcript: whisper.Transcript{
 						Words: []whisper.Word{
 							{Word: "низ,", Start: 0, End: 0.2},
-							{Word: "держим", Start: 0.95, End: 1.5},
-							{Word: "спину", Start: 1.6, End: 2.1},
+							{Word: wordHold, Start: 0.95, End: 1.5},
+							{Word: wordBack, Start: 1.6, End: 2.1},
 							{Word: "ровно.", Start: 2.2, End: 2.7},
 						},
 						Segments: []whisper.Segment{
@@ -192,8 +195,8 @@ func TestMergeChunks(t *testing.T) {
 					{Word: "Опускаемся", Start: 595.2, End: 596},
 					{Word: "медленно", Start: 596.1, End: 597.4},
 					{Word: "вниз,", Start: 597.5, End: 598.2},
-					{Word: "держим", Start: 598.9, End: 599.5},
-					{Word: "спину", Start: 599.6, End: 600.1},
+					{Word: wordHold, Start: 598.9, End: 599.5},
+					{Word: wordBack, Start: 599.6, End: 600.1},
 					{Word: "ровно.", Start: 600.2, End: 600.7},
 				},
 				Segments: []Segment{

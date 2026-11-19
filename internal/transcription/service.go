@@ -187,7 +187,7 @@ func (s *Service) transcribeChunks(
 			return nil, fmt.Errorf("failed to transcribe chunk %d of %d: %w", i+1, len(chunks), err)
 		}
 
-		filtered := dropHallucinations(*transcript)
+		filtered := dropHallucinations(transcript)
 
 		s.log.InfoContext(ctx, "transcription: chunk done",
 			"chunk", i+1, "of", len(chunks), "words", len(filtered.Words),

@@ -128,7 +128,7 @@ func TestServiceTranscribe(t *testing.T) {
 			input: TranscribeData{Path: videoPath},
 			audio: &fakeAudio{duration: 4.2104},
 			transcripts: []whisper.Transcript{{
-				Language: "russian", Text: segmentHello,
+				Language: langRussian, Text: segmentHello,
 				Words:    []whisper.Word{{Word: wordHello, Start: 0, End: 0.86}},
 				Segments: []whisper.Segment{{Start: 0, End: 1.1, Text: segmentHello}},
 			}},
@@ -223,7 +223,7 @@ func TestServiceTranscribeErrors(t *testing.T) {
 			audio: &fakeAudio{}, transcriber: &fakeTranscriber{}, expectedErr: ErrEmptyPath,
 		},
 		{
-			name: "unsupported language", input: TranscribeData{Path: videoPath, Language: "russian"},
+			name: "unsupported language", input: TranscribeData{Path: videoPath, Language: langRussian},
 			audio: &fakeAudio{}, transcriber: &fakeTranscriber{}, expectedErr: ErrUnsupportedLanguage,
 		},
 		{
@@ -256,7 +256,7 @@ func TestServiceTranscribeSilence(t *testing.T) {
 	t.Parallel()
 
 	hallucination := whisper.Transcript{
-		Language: "russian",
+		Language: langRussian,
 		Text:     " Продолжение следует...",
 		Words: []whisper.Word{
 			{Word: "Продолжение", Start: 0.5, End: 1.4},

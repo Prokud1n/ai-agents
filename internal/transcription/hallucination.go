@@ -24,7 +24,7 @@ func isHallucination(s whisper.Segment) bool {
 }
 
 // dropHallucinations removes hallucinated segments and the words inside them.
-func dropHallucinations(t whisper.Transcript) whisper.Transcript {
+func dropHallucinations(t *whisper.Transcript) whisper.Transcript {
 	kept := make([]whisper.Segment, 0, len(t.Segments))
 	dropped := make([]whisper.Segment, 0)
 
@@ -39,7 +39,7 @@ func dropHallucinations(t whisper.Transcript) whisper.Transcript {
 	}
 
 	if len(dropped) == 0 {
-		return t
+		return *t
 	}
 
 	words := make([]whisper.Word, 0, len(t.Words))

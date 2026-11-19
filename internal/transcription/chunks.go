@@ -99,9 +99,9 @@ func mergeChunks(parts []chunkTranscript) Result {
 	for i := range parts {
 		lower, upper := chunkBounds(parts, i)
 
-		words := chunkWords(parts[i], lower, upper, lastWord(result.Words))
+		words := chunkWords(&parts[i], lower, upper, lastWord(result.Words))
 		result.Words = append(result.Words, words...)
-		result.Segments = append(result.Segments, chunkSegments(parts[i], lower, upper, words)...)
+		result.Segments = append(result.Segments, chunkSegments(&parts[i], lower, upper, words)...)
 	}
 
 	texts := make([]string, 0, len(result.Segments))
@@ -118,7 +118,7 @@ func mergeChunks(parts []chunkTranscript) Result {
 // The first of them is dropped if it repeats prev, the last word kept from the previous chunk: both
 // chunks heard the same word at the junction when it starts before prev ends. A real repetition
 // ("раз, раз") starts after the previous word ends and is kept.
-func chunkWords(part chunkTranscript, lower, upper float64, prev *Word) []Word {
+func chunkWords(part *chunkTranscript, lower, upper float64, prev *Word) []Word {
 	words := make([]Word, 0, len(part.Transcript.Words))
 
 	for _, w := range part.Transcript.Words {
@@ -143,7 +143,7 @@ func chunkWords(part chunkTranscript, lower, upper float64, prev *Word) []Word {
 }
 
 // chunkSegments returns the segments of a chunk in absolute time, clipped to [lower, upper).
-func chunkSegments(part chunkTranscript, lower, upper float64, words []Word) []Segment {
+func chunkSegments(part *chunkTranscript, lower, upper float64, words []Word) []Segment {
 	segments := make([]Segment, 0, len(part.Transcript.Segments))
 
 	for _, s := range part.Transcript.Segments {

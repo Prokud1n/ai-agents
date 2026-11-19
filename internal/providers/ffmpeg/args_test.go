@@ -90,9 +90,9 @@ func TestLocalFile(t *testing.T) {
 		{name: "absolute path", input: "/data/video.mp4", expected: "file:/data/video.mp4"},
 		{name: "relative path", input: "video.mp4", expected: "file:" + filepath.Join(cwd, "video.mp4")},
 		{name: "leading dash is not an option", input: "-version", expected: "file:" + filepath.Join(cwd, "-version")},
-		{name: "url is a file name", input: "http://example.com/x.mp4", expected: "file:" + filepath.Join(cwd, "http:/example.com/x.mp4")},
-		{name: "concat protocol is a file name", input: "concat:/etc/passwd|b.mp4", expected: "file:" + filepath.Join(cwd, "concat:/etc/passwd|b.mp4")},
-		{name: "file prefix is a file name", input: "file:/etc/passwd", expected: "file:" + filepath.Join(cwd, "file:/etc/passwd")},
+		{name: "url is a file name", input: "http://example.com/x.mp4", expected: "file:" + cwd + "/http:/example.com/x.mp4"},
+		{name: "concat protocol is a file name", input: "concat:/etc/passwd|b.mp4", expected: "file:" + cwd + "/concat:/etc/passwd|b.mp4"},
+		{name: "file prefix is a file name", input: "file:/etc/passwd", expected: "file:" + cwd + "/file:/etc/passwd"},
 	}
 
 	for _, tt := range tests {
@@ -118,7 +118,7 @@ func TestParseDuration(t *testing.T) {
 	}{
 		{name: "seconds with fraction", input: "12.345000\n", expected: 12.345},
 		{name: "integer", input: "60", expected: 60},
-		{name: "empty", input: " \n", expectErr: true},
+		{name: "blank output", input: " \n", expectErr: true},
 		{name: "not available", input: "N/A\n", expectErr: true},
 		{name: "garbage", input: "abc", expectErr: true},
 	}
@@ -192,7 +192,7 @@ func TestTailLines(t *testing.T) {
 		n        int
 		expected string
 	}{
-		{name: "empty", input: "", n: 3, expected: ""},
+		{name: "no lines", input: "", n: 3, expected: ""},
 		{name: "fewer lines than limit", input: "a\nb\n", n: 3, expected: "a | b"},
 		{name: "keeps the last lines", input: "a\nb\n\nc\nd\n", n: 2, expected: "c | d"},
 	}
