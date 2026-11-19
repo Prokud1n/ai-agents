@@ -58,12 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run in the CI job `compose-smoke`.
 - CI: `check` requires new migrations to be numbered above the latest migration in `main`.
 
-### Fixed
-
-- Transcription: a high Whisper `compression_ratio` alone no longer drops a segment, so counting reps and rhythmic cues
-  are kept; such a segment is dropped only when it is also poorly decoded or over silence.
-- ffmpeg errors tell the runner's own timeout (`FFMPEG_TIMEOUT`) from the caller's deadline or cancellation.
-
 ### Changed
 
 - Migration file naming in CODE_STYLE.md: `NNN_description.up.sql` + `NNN_description.down.sql`.
@@ -76,5 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Transcription: a high Whisper `compression_ratio` alone no longer drops a segment, so counting reps and rhythmic cues
+  are kept; such a segment is dropped only when it is also poorly decoded or over silence.
+- ffmpeg errors tell the runner's own timeout (`FFMPEG_TIMEOUT`) from the caller's deadline or cancellation.
 - `cmd/migrate` runs outside the fx lifecycle with no start timeout: a long migration is no longer killed midway
   (leaving the database dirty); SIGINT/SIGTERM stop it gracefully after the current migration.
