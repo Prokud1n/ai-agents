@@ -298,9 +298,9 @@ func TestRunnerIngestHostilePDF(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	hostile, err := os.ReadFile(filepath.Join("..", "knowledge", "extract", "testdata", "pdf-objstm-self.pdf"))
+	fixture, err := filepath.Abs(filepath.Join("..", "knowledge", "extract", "testdata", "pdf-objstm-self.pdf"))
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a-hostile.pdf"), hostile, 0o600))
+	require.NoError(t, os.Symlink(fixture, filepath.Join(dir, "a-hostile.pdf")))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, voiceFile), []byte("# Голос\n\nна ты"), 0o600))
 
 	svc := &fakeService{}

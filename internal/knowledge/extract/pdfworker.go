@@ -66,7 +66,9 @@ func (w *PDFWorker) Parse(ctx context.Context, data []byte) (string, error) {
 	stdout := &limitedBuffer{limit: maxWorkerOutput}
 	stderr := &limitedBuffer{limit: maxWorkerStderr, truncate: true}
 
-	cmd := exec.CommandContext(ctx, w.Path, w.Args...) // killed (SIGKILL) when ctx is done
+	// Killed (SIGKILL) when ctx is done. Path is this program's own executable (os.Executable in kb,
+	// the test binary in tests) and Args are fixed: no user input reaches the command line.
+	cmd := exec.CommandContext(ctx, w.Path, w.Args...) //nolint:gosec // G204: re-runs its own executable, see above
 	cmd.Env = append([]string{"GOMEMLIMIT=" + workerMemoryLimit}, w.Env...)
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = stdout
@@ -85,8 +87,13 @@ func (w *PDFWorker) Parse(ctx context.Context, data []byte) (string, error) {
 	var res workerResult
 	if decodeErr := json.Unmarshal(stdout.buf.Bytes(), &res); decodeErr != nil || runErr != nil && res.Error == "" {
 		// The child crashed (or was killed by the OS) before answering.
-		return "", fmt.Errorf("failed to parse pdf: parser crashed (%v): %s: %w",
-			runErr, firstLine(stderr.buf.String()), ErrInvalidDocument)
+		cause := runErr
+		if cause == nil {
+			cause = decodeErr
+		}
+
+		return "", fmt.Errorf("failed to parse pdf: parser crashed: %s: %w: %w",
+			firstLine(stderr.buf.String()), ErrInvalidDocument, cause)
 	}
 
 	if res.Error != "" {
