@@ -76,7 +76,7 @@ func extractAudioArgs(src, dst string) []string {
 func cutAudioArgs(src, dst string, start, duration float64) []string {
 	args := commonArgs()
 	// -ss before -i seeks the input; with re-encoding the cut is still sample-accurate.
-	args = append(args, "-ss", formatSeconds(start), "-t", formatSeconds(duration))
+	args = append(args, "-ss", formatDecimal(start), "-t", formatDecimal(duration))
 	args = append(args, inputArgs(src)...)
 	args = append(args, encodeArgs()...)
 
@@ -94,13 +94,14 @@ func durationArgs(input string) []string {
 }
 
 func silenceDetectArgs(input string, opts SilenceOptions) []string {
-	filter := "silencedetect=noise=" + formatSeconds(opts.NoiseDB) + "dB:d=" + formatSeconds(opts.MinDuration.Seconds())
+	filter := "silencedetect=noise=" + formatDecimal(opts.NoiseDB) + "dB:d=" + formatDecimal(opts.MinDuration.Seconds())
 
 	args := append(commonArgs(), inputArgs(input)...)
 
 	return append(args, "-af", filter, "-f", "null", "-")
 }
 
-func formatSeconds(seconds float64) string {
-	return strconv.FormatFloat(seconds, 'f', timePrecision, float64Bits)
+// formatDecimal formats seconds or decibels with three decimals.
+func formatDecimal(value float64) string {
+	return strconv.FormatFloat(value, 'f', timePrecision, float64Bits)
 }

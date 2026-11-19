@@ -212,6 +212,12 @@ func lastWord(words []Word) *Word {
 	return &w
 }
 
+// isJunctionDuplicate is a trade-off. Both chunks hear the overlap, so the same word may be kept on both
+// sides of the boundary with slightly different times; it counts as one when the words match and the next
+// one starts before the previous ends. A real repetition said without any gap ("раз-раз" where Whisper
+// gives the second word a start inside the first) is then lost, and a duplicate whose second copy starts
+// after the first ends is kept. Only the first word after a junction is checked, so the rest of the
+// speech is never affected.
 func isJunctionDuplicate(prev, next Word) bool {
 	return normalizeWord(prev.Word) == normalizeWord(next.Word) && next.Start < prev.End
 }

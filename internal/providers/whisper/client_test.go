@@ -219,6 +219,7 @@ func TestClientTranscribe(t *testing.T) {
 		body:   `{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}`,
 	}
 	serverError := fakeResponse{status: http.StatusBadGateway, body: "bad gateway"}
+	gatewayTimeout := fakeResponse{status: http.StatusGatewayTimeout, body: "gateway timeout"}
 	badRequest := fakeResponse{
 		status: http.StatusBadRequest,
 		body:   `{"error":{"message":"Invalid file format.","code":null}}`,
@@ -262,6 +263,13 @@ func TestClientTranscribe(t *testing.T) {
 			responses:     []fakeResponse{serverError},
 			expectedCalls: 3,
 			expectedInErr: "openai status 502: bad gateway",
+		},
+		{
+			name:          "gateway timeout is not retried: the request was likely processed",
+			apiKey:        testAPIKey,
+			responses:     []fakeResponse{gatewayTimeout},
+			expectedCalls: 1,
+			expectedInErr: "openai status 504",
 		},
 		{
 			name:          "insufficient quota is not retried",

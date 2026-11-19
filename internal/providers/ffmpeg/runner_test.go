@@ -164,21 +164,37 @@ func TestRunnerErrors(t *testing.T) {
 	generateVideo(ctx, t, r, long, 30)
 
 	tests := []struct {
-		name     string
-		runner   *Runner
-		input    string
-		expected string
+		name          string
+		runner        *Runner
+		callerTimeout time.Duration
+		input         string
+		expected      string
 	}{
 		{name: "missing file", runner: r, input: filepath.Join(dir, "missing.mp4"), expected: "No such file or directory"},
 		{name: "no audio stream", runner: r, input: silentVideo, expected: "matches no streams"},
-		{name: "timeout", runner: newTestRunner(time.Millisecond), input: long, expected: "ffmpeg timed out"},
+		{
+			name: "own timeout", runner: newTestRunner(time.Millisecond), input: long,
+			expected: "ffmpeg timed out after 1ms (FFMPEG_TIMEOUT)",
+		},
+		{
+			name: "caller deadline", runner: r, callerTimeout: time.Millisecond, input: long,
+			expected: "stopped by the caller's context (context deadline exceeded)",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tt.runner.ExtractAudio(ctx, tt.input, filepath.Join(dir, tt.name+AudioExtension))
+			callCtx := ctx
+			if tt.callerTimeout > 0 {
+				var cancel context.CancelFunc
+
+				callCtx, cancel = context.WithTimeout(ctx, tt.callerTimeout)
+				defer cancel()
+			}
+
+			err := tt.runner.ExtractAudio(callCtx, tt.input, filepath.Join(dir, tt.name+AudioExtension))
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expected)

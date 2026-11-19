@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
@@ -18,6 +19,8 @@ const (
 	tempDirPattern = "transcribe-*"
 	audioName      = "audio"
 	chunkName      = "chunk-"
+
+	maxLoggedTextRunes = 120 // a dropped segment's text in the log
 )
 
 var (
@@ -163,6 +166,26 @@ func (s *Service) planAudioChunks(ctx context.Context, audio string, duration fl
 	return planChunks(duration, maxChunk, silences), nil
 }
 
+// logDropped records what the hallucination filter removed, so a lost phrase can be found in the logs.
+func (s *Service) logDropped(ctx context.Context, c chunk, dropped []whisper.Segment) {
+	for _, d := range dropped {
+		s.log.InfoContext(ctx, "transcription: dropped hallucinated segment",
+			"start", roundTime(c.Start+d.Start), "end", roundTime(c.Start+d.End),
+			"text", truncateText(strings.TrimSpace(d.Text), maxLoggedTextRunes),
+			"no_speech_prob", d.NoSpeechProb, "avg_logprob", d.AvgLogprob, "compression_ratio", d.CompressionRatio)
+	}
+}
+
+// truncateText cuts s to at most n runes, marking the cut with an ellipsis.
+func truncateText(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+
+	return string(runes[:n]) + "…"
+}
+
 // transcribeChunks runs chunks one by one: each next request gets the tail of the previous text as a prompt.
 func (s *Service) transcribeChunks(
 	ctx context.Context,
@@ -187,11 +210,11 @@ func (s *Service) transcribeChunks(
 			return nil, fmt.Errorf("failed to transcribe chunk %d of %d: %w", i+1, len(chunks), err)
 		}
 
-		filtered := dropHallucinations(transcript)
+		filtered, dropped := dropHallucinations(transcript)
+		s.logDropped(ctx, c, dropped)
 
 		s.log.InfoContext(ctx, "transcription: chunk done",
-			"chunk", i+1, "of", len(chunks), "words", len(filtered.Words),
-			"dropped_segments", len(transcript.Segments)-len(filtered.Segments))
+			"chunk", i+1, "of", len(chunks), "words", len(filtered.Words), "dropped_segments", len(dropped))
 
 		parts = append(parts, chunkTranscript{Chunk: c, Transcript: filtered})
 		prompt = promptTail(filtered.Text)
