@@ -79,7 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `kb ingest` takes files only from `KB_ROOT` (default `./kb`, ignored by git and docker): a document's source is its
   path relative to it, so the same file always gets the same source and same-named files of different folders no
   longer overwrite each other; a file outside `KB_ROOT` is an error. Changing the kind of an existing document needs
-  `-force`; without `-kind` the stored kind is kept.
+  `-force`; without `-kind` the stored kind is kept. Files are walked and read through `os.Root`: a symlink leading
+  outside `KB_ROOT` is never read (skipped in folders, an error when named).
 
 - `pgtest.Connect` gives every integration test its own temporary database with all migrations applied and drops it
   afterwards, instead of truncating tables of `POSTGRES_DB`; `pgtest.Truncate` is removed and integration tests may
@@ -108,9 +109,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PDF parsing runs in a child process (`kb extract-pdf`) with a timeout, `GOMEMLIMIT`, `RLIMIT_AS` on Linux,
   a 64 MB stack and limited output: a crash of the PDF library (stack overflow on a self-referencing object stream)
   or a memory blow-up fails only that file. Inflated content is budgeted at 1 MB per page (repeated references
-  counted) and 16 MB per document.
+  counted) and 16 MB per document. The child runs in its own process group (killed as a whole), exits by itself
+  5 s after the timeout if orphaned, caches font decoders per font name and refuses ToUnicode maps of more than
+  4096 entries (a PDF switching fonts 50,000 times or scanning a huge map no longer burns the whole timeout).
 - `kb reembed` takes the ingest lock of the document and writes nothing if the document changed meanwhile.
 - `pgtest`: the admin connection is closed when creating the test database fails; database names use a counter;
-  test databases older than an hour, left by killed runs, are dropped.
+  test databases older than an hour, left by killed runs, are dropped (without `FORCE`: one in use is kept).
 - `cmd/migrate` runs outside the fx lifecycle with no start timeout: a long migration is no longer killed midway
   (leaving the database dirty); SIGINT/SIGTERM stop it gracefully after the current migration.

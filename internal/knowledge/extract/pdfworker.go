@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"runtime/debug"
 	"strings"
@@ -23,17 +24,20 @@ const (
 
 	PDFTimeout = 30 * time.Second // the whole document, including the child's start
 
-	workerMemoryLimit = "512MiB" // GOMEMLIMIT of the child: the GC works harder near it
+	// The child exits by itself this long after PDFTimeout, in case the parent died without killing it.
+	workerSelfDeadline = PDFTimeout + 5*time.Second
+	workerMemoryLimit  = "512MiB" // GOMEMLIMIT of the child: the GC works harder near it
 	// Address space the child may add to what it has mapped at start (RLIMIT_AS, Linux only):
 	// past it allocations fail and the child dies with "out of memory" instead of taking the host's RAM.
 	workerAddressSpace = 1 << 30
 	workerMaxStack     = 64 << 20 // a runaway recursion dies at 64 MB of stack instead of 1 GB
 
-	maxWorkerOutput = 16 << 20 // JSON with at most MaxDocumentRunes of text fits easily
-	maxWorkerStderr = 4 << 10  // enough for the first lines of a Go crash report
-	workerWaitDelay = time.Second
-	workerOK        = 0
-	workerFailed    = 1
+	maxWorkerOutput   = 16 << 20 // JSON with at most MaxDocumentRunes of text fits easily
+	maxWorkerStderr   = 4 << 10  // enough for the first lines of a Go crash report
+	workerWaitDelay   = time.Second
+	workerOK          = 0
+	workerFailed      = 1
+	workerSelfTimeout = 2
 )
 
 var errOutputTooLarge = errors.New("output limit exceeded")
@@ -44,42 +48,70 @@ type workerResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// PDFWorker starts the child process that parses PDFs: Path with Args runs RunPDFWorker.
+// childError is an error the child reported as text: an invalid document, without repeating
+// "invalid document", which the child's message already says.
+type childError struct {
+	msg string
+}
+
+func (e *childError) Error() string {
+	return e.msg
+}
+
+func (*childError) Is(target error) bool {
+	return target == ErrInvalidDocument
+}
+
+// PDFWorker starts the child process that parses PDFs. It always runs this program's own executable
+// with WorkerCommand: no user input reaches the command line.
 type PDFWorker struct {
-	Path string
-	Args []string
-	// Env is the child's whole environment besides GOMEMLIMIT: the parser needs no secrets.
-	Env     []string
-	Timeout time.Duration // PDFTimeout if zero
+	path    string
+	args    []string
+	env     []string // the child's whole environment besides GOMEMLIMIT: the parser needs no secrets
+	timeout time.Duration
+}
+
+// NewPDFWorker runs the current executable with WorkerCommand; the binary must dispatch that command
+// to RunPDFWorker before anything else (see internal.RunKB).
+func NewPDFWorker() (*PDFWorker, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find the executable for the pdf parser: %w", err)
+	}
+
+	return newPDFWorker(exe, []string{WorkerCommand}, nil, PDFTimeout), nil
+}
+
+// newPDFWorker is for tests, which run the test binary as the child.
+func newPDFWorker(path string, args, env []string, timeout time.Duration) *PDFWorker {
+	return &PDFWorker{path: path, args: args, env: env, timeout: timeout}
 }
 
 // Parse runs the child with the PDF on stdin and returns the extracted text.
 func (w *PDFWorker) Parse(ctx context.Context, data []byte) (string, error) {
-	timeout := w.Timeout
-	if timeout == 0 {
-		timeout = PDFTimeout
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 
 	stdout := &limitedBuffer{limit: maxWorkerOutput}
 	stderr := &limitedBuffer{limit: maxWorkerStderr, truncate: true}
 
-	// Killed (SIGKILL) when ctx is done. Path is this program's own executable (os.Executable in kb,
-	// the test binary in tests) and Args are fixed: no user input reaches the command line.
-	cmd := exec.CommandContext(ctx, w.Path, w.Args...) //nolint:gosec // G204: re-runs its own executable, see above
-	cmd.Env = append([]string{"GOMEMLIMIT=" + workerMemoryLimit}, w.Env...)
+	// Killed with its process group when runCtx is done. path is this program's own executable and
+	// args are fixed (NewPDFWorker): no user input reaches the command line.
+	cmd := exec.CommandContext(runCtx, w.path, w.args...) //nolint:gosec // G204: re-runs its own executable, see above
+	cmd.Env = append([]string{"GOMEMLIMIT=" + workerMemoryLimit}, w.env...)
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.WaitDelay = workerWaitDelay
+	killProcessGroup(cmd)
 
 	runErr := cmd.Run()
 
 	switch {
 	case ctx.Err() != nil:
-		return "", fmt.Errorf("failed to parse pdf in %s: %w: %w", timeout, ErrInvalidDocument, ctx.Err())
+		return "", fmt.Errorf("pdf parsing was cancelled: %w", ctx.Err())
+	case runCtx.Err() != nil:
+		return "", fmt.Errorf("failed to parse pdf in %s: %w: %w", w.timeout, ErrInvalidDocument, runCtx.Err())
 	case errors.Is(runErr, errOutputTooLarge) || stdout.exceeded:
 		return "", fmt.Errorf("pdf parser output is larger than %d bytes: %w", maxWorkerOutput, ErrInvalidDocument)
 	}
@@ -97,15 +129,22 @@ func (w *PDFWorker) Parse(ctx context.Context, data []byte) (string, error) {
 	}
 
 	if res.Error != "" {
-		return "", fmt.Errorf("failed to parse pdf: %s: %w", res.Error, ErrInvalidDocument)
+		return "", fmt.Errorf("failed to parse pdf: %w", &childError{msg: res.Error})
 	}
 
 	return res.Text, nil
 }
 
 // RunPDFWorker is the child side: it reads a PDF from in, writes a JSON workerResult to out and
-// returns the exit code. It runs in its own process only: it lowers the process's limits.
+// returns the exit code. It runs in its own process only: it lowers the process's limits and exits
+// the process by itself if it outlives the parent's timeout (an orphan must not live forever).
 func RunPDFWorker(in io.Reader, out, errOut io.Writer) int {
+	time.AfterFunc(workerSelfDeadline, func() {
+		_, _ = fmt.Fprintln(errOut, "pdf worker: deadline exceeded")
+
+		os.Exit(workerSelfTimeout)
+	})
+
 	debug.SetMaxStack(workerMaxStack)
 
 	if err := limitAddressSpace(workerAddressSpace); err != nil {
@@ -141,7 +180,7 @@ func RunPDFWorker(in io.Reader, out, errOut io.Writer) int {
 func parsePDFRecovered(data []byte) (text string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			text, err = "", fmt.Errorf("pdf parser panicked: %v", r)
+			text, err = "", fmt.Errorf("pdf parser panicked: %v: %w", r, ErrInvalidDocument)
 		}
 	}()
 

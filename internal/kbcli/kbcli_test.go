@@ -27,16 +27,20 @@ const (
 	voiceSource = "brand/voice.md"
 	testSource  = "a.md"
 	voiceFile   = "voice.md"
+	secretFile  = "secret.md"
+	secretValue = "sk-secret"
+	aliasFile   = "alias.md"
+	plainFile   = "a.txt"
+	voiceText   = "# Голос\n\nна ты"
 	notesFile   = "notes.txt"
 	docxFile    = "products.docx"
 	subDocxFile = "sub/" + docxFile
 )
 
-// testWorkerEnv makes the test binary act as the PDF child process, like `kb extract-pdf`.
-const testWorkerEnv = "KBCLI_TEST_PDF_WORKER"
-
+// The runner uses the real extract.NewPDFWorker: it re-runs this test binary with `extract-pdf`,
+// which TestMain dispatches to the PDF child, exactly like `kb extract-pdf` in internal.RunKB.
 func TestMain(m *testing.M) {
-	if os.Getenv(testWorkerEnv) == "1" {
+	if len(os.Args) > 1 && os.Args[1] == extract.WorkerCommand {
 		os.Exit(extract.RunPDFWorker(os.Stdin, os.Stdout, os.Stderr))
 	}
 
@@ -46,10 +50,8 @@ func TestMain(m *testing.M) {
 func newTestRunner(t *testing.T, svc knowledgeService, root string, out io.Writer) *Runner {
 	t.Helper()
 
-	exe, err := os.Executable()
+	worker, err := extract.NewPDFWorker()
 	require.NoError(t, err)
-
-	worker := &extract.PDFWorker{Path: exe, Env: []string{testWorkerEnv + "=1", "GORACE=atexit_sleep_ms=0"}}
 
 	return &Runner{
 		svc:       svc,
@@ -134,50 +136,89 @@ func TestParseCommand(t *testing.T) {
 	}
 }
 
-func TestCollectFiles(t *testing.T) {
+func TestRelativeToRoot(t *testing.T) {
 	t.Parallel()
 
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-
-	for _, name := range []string{voiceFile, notesFile, "photo.jpg", ".hidden.md", subDocxFile, ".git/x.md"} {
-		path := filepath.Join(dir, name)
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
-		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
-	}
-
-	outside := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(outside, voiceFile), []byte("x"), 0o600))
-
-	file := func(rel string) File { return File{Path: filepath.Join(dir, rel), Source: rel} }
-	all := []File{file(notesFile), file(subDocxFile), file(voiceFile)}
+	dir := t.TempDir()
 
 	tests := []struct {
 		name      string
 		root      string
 		input     string
-		expected  []File
+		expected  string
 		expectErr error
 	}{
-		{name: "root itself: supported, not hidden, recursive", root: dir, input: dir, expected: all},
-		{name: "root spelled differently", root: dir + "/./sub/..", input: dir, expected: all},
-		{name: "subfolder: sources stay relative to root", root: dir, input: filepath.Join(dir, "sub"), expected: []File{file(subDocxFile)}},
-		{name: "single file in a subfolder", root: dir, input: filepath.Join(dir, subDocxFile), expected: []File{file(subDocxFile)}},
-		{name: "single file", root: dir, input: filepath.Join(dir, voiceFile), expected: []File{file(voiceFile)}},
-		{name: "file outside root", root: dir, input: filepath.Join(outside, voiceFile), expectErr: ErrOutsideRoot},
-		{name: "folder outside root", root: filepath.Join(dir, "sub"), input: dir, expectErr: ErrOutsideRoot},
-		{name: "unsupported file", root: dir, input: filepath.Join(dir, "photo.jpg"), expectErr: extract.ErrUnsupportedFormat},
-		{name: "missing path", root: dir, input: filepath.Join(dir, "nope"), expectErr: os.ErrNotExist},
-		{name: "missing root", root: filepath.Join(dir, "nope"), input: dir, expectErr: os.ErrNotExist},
+		{name: "root itself", root: dir, input: dir, expected: "."},
+		{name: "nested", root: dir, input: filepath.Join(dir, brandName, voiceFile), expected: brandName + "/" + voiceFile},
+		{name: "spelled with dots", root: dir + "/./brand/..", input: dir + "/brand/../" + voiceFile, expected: voiceFile},
+		{name: "outside", root: filepath.Join(dir, brandName), input: filepath.Join(dir, voiceFile), expectErr: ErrOutsideRoot},
+		{name: "parent of root", root: filepath.Join(dir, brandName), input: dir, expectErr: ErrOutsideRoot},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := CollectFiles(tt.root, tt.input)
+			got, err := RelativeToRoot(tt.root, tt.input)
 			if tt.expectErr != nil {
 				require.ErrorIs(t, err, tt.expectErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestCollectFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	for _, name := range []string{voiceFile, notesFile, "photo.jpg", ".hidden.md", subDocxFile, ".git/x.md"} {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+	}
+
+	// Symlinks inside the root: to a file outside it, to a folder outside it and to a file inside it.
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, secretFile), []byte("OPENAI_API_KEY="+secretValue), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(outside, secretFile), filepath.Join(dir, "leak.md")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "leakdir")))
+	// os.Root follows only relative links that stay inside it; an absolute link counts as escaping.
+	require.NoError(t, os.Symlink(voiceFile, filepath.Join(dir, aliasFile)))
+
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+
+	all := []File{{Source: notesFile}, {Source: subDocxFile}, {Source: voiceFile}}
+
+	tests := []struct {
+		name      string
+		input     string
+		expected  []File
+		expectErr error
+	}{
+		{name: "root: supported, not hidden, recursive, no symlinks", input: ".", expected: all},
+		{name: "subfolder: sources stay relative to root", input: "sub", expected: []File{{Source: subDocxFile}}},
+		{name: "single file", input: voiceFile, expected: []File{{Source: voiceFile}}},
+		{name: "symlink inside root, named explicitly", input: aliasFile, expected: []File{{Source: aliasFile}}},
+		{name: "symlink leading outside, named explicitly", input: "leak.md", expectErr: os.ErrPermission},
+		{name: "symlinked folder leading outside", input: "leakdir", expectErr: os.ErrPermission},
+		{name: "unsupported file", input: "photo.jpg", expectErr: extract.ErrUnsupportedFormat},
+		{name: "missing path", input: "nope", expectErr: os.ErrNotExist},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := CollectFiles(root, tt.input)
+			if tt.expectErr != nil {
+				require.Error(t, err)
 
 				return
 			}
@@ -192,25 +233,36 @@ func TestReadFileLimited(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "a.txt")
-	require.NoError(t, os.WriteFile(path, []byte("12345"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, plainFile), []byte("12345"), 0o600))
+
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte(secretValue), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "leak.txt")))
+
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
 
 	tests := []struct {
 		name      string
+		file      string
 		limit     int64
-		expectErr error
+		expectErr bool
 	}{
-		{name: "fits", limit: 5},
-		{name: "too large", limit: 4, expectErr: extract.ErrTooLarge},
+		{name: "fits", file: plainFile, limit: 5},
+		{name: "too large", file: plainFile, limit: 4, expectErr: true},
+		{name: "symlink leading outside is not read", file: "leak.txt", limit: 100, expectErr: true},
+		{name: "path leading outside is not read", file: "../" + filepath.Base(outside) + "/secret.txt", limit: 100, expectErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			data, err := ReadFileLimited(path, tt.limit)
-			if tt.expectErr != nil {
-				require.ErrorIs(t, err, tt.expectErr)
+			data, err := ReadFileLimited(root, tt.file, tt.limit)
+			if tt.expectErr {
+				require.Error(t, err)
+				assert.Empty(t, data)
 
 				return
 			}
@@ -274,7 +326,7 @@ func TestRunnerIngest(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, voiceFile), []byte("# Голос\n\nна ты"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, voiceFile), []byte(voiceText), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "broken.md"), []byte("x"), 0o600))
 
 	svc := &fakeService{failOn: "broken.md"}
@@ -286,36 +338,57 @@ func TestRunnerIngest(t *testing.T) {
 	require.ErrorIs(t, err, ErrIngestFailed)
 	require.Len(t, svc.ingested, 1)
 	assert.Equal(t, knowledge.IngestDocumentData{
-		Source: voiceFile, Title: "Голос", Kind: knowledge.BrandKind, Text: "# Голос\n\nна ты", Force: true,
+		Source: voiceFile, Title: "Голос", Kind: knowledge.BrandKind, Text: voiceText, Force: true,
 	}, svc.ingested[0])
 	assert.Contains(t, out.String(), "created   "+voiceFile+" (1 chunks)")
 	assert.Contains(t, out.String(), "failed    broken.md")
 }
 
 // A PDF that crashes its parser process fails as a validation error of that file; the kb process
-// (here: the test) survives and goes on with the next file.
+// (here: the test) survives and goes on with the next file. testdata/hostile holds real files.
 func TestRunnerIngestHostilePDF(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	fixture, err := filepath.Abs(filepath.Join("..", "knowledge", "extract", "testdata", "pdf-objstm-self.pdf"))
-	require.NoError(t, err)
-	require.NoError(t, os.Symlink(fixture, filepath.Join(dir, "a-hostile.pdf")))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, voiceFile), []byte("# Голос\n\nна ты"), 0o600))
+	const root = "testdata/hostile"
 
 	svc := &fakeService{}
-	runner := newTestRunner(t, svc, dir, &bytes.Buffer{})
+	runner := newTestRunner(t, svc, root, &bytes.Buffer{})
 
-	file := File{Path: filepath.Join(dir, "a-hostile.pdf"), Source: "a-hostile.pdf"}
-	_, err = runner.ingestFile(context.Background(), file, &Command{Action: IngestAction})
-	require.ErrorIs(t, err, knowledge.ErrValidation)
-	require.ErrorIs(t, err, extract.ErrInvalidDocument)
+	err := runner.Run(context.Background(), &Command{Action: IngestAction, Arg: filepath.Join(root, "a-hostile.pdf")})
+	require.ErrorIs(t, err, ErrIngestFailed)
 
-	err = runner.Run(context.Background(), &Command{Action: IngestAction, Arg: dir})
+	err = runner.Run(context.Background(), &Command{Action: IngestAction, Arg: root})
 
 	require.ErrorIs(t, err, ErrIngestFailed)
 	require.Len(t, svc.ingested, 1)
 	assert.Equal(t, voiceFile, svc.ingested[0].Source)
+}
+
+// A symlink inside KB_ROOT that leads outside is never read: skipped when its folder is ingested,
+// an error when named explicitly. Its target's content never reaches the service (and so OpenAI).
+func TestRunnerIngestSymlinkOutsideRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, secretFile), []byte("OPENAI_API_KEY="+secretValue), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(outside, secretFile), filepath.Join(dir, notesFile+".md")))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, voiceFile), []byte(voiceText), 0o600))
+
+	svc := &fakeService{}
+	out := &bytes.Buffer{}
+	runner := newTestRunner(t, svc, dir, out)
+
+	require.NoError(t, runner.Run(context.Background(), &Command{Action: IngestAction, Arg: dir}))
+
+	err := runner.Run(context.Background(), &Command{Action: IngestAction, Arg: filepath.Join(dir, notesFile+".md")})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "path escapes")
+
+	require.Len(t, svc.ingested, 1)
+	assert.Equal(t, voiceFile, svc.ingested[0].Source)
+	assert.NotContains(t, svc.ingested[0].Text, secretValue)
+	assert.NotContains(t, out.String(), secretValue)
 }
 
 func TestRunnerReembed(t *testing.T) {

@@ -2,21 +2,23 @@
 //
 // An integration test has "Integration" in its name and calls Connect, which skips the test unless
 // INTEGRATION=1. Run them with `make up && make test-integration` (in CI: the job "compose-smoke").
+// The server is configured with the usual POSTGRES_* variables, the same as cmd/migrate.
 //
 // Rule: with INTEGRATION=1 a test with "Integration" in its name must not skip (no t.Skip of its own,
 // no skipping subtests): `make test-integration` treats any "--- SKIP" as a failure, because a skipped
 // test proves nothing. A test that cannot run in that environment fails or does not have "Integration"
 // in its name.
-// The server is configured with the usual POSTGRES_* variables, the same as cmd/migrate.
 //
 // Isolation: Connect creates a new database for every test, applies all migrations to it and drops it
 // when the test ends. Tests never see each other's rows or the data in POSTGRES_DB, so they may call
-// t.Parallel. The configured user needs the CREATEDB privilege, and the migrations run CREATE EXTENSION
-// vector in every new database, which needs a superuser unless the extension is trusted or already in
-// template1 (the compose postgres user is a superuser).
+// t.Parallel.
 //
-// Databases left behind by a killed test run are dropped by the first Connect of a later run once they
-// are older than staleAfter (the creation time is part of the name).
+// Privileges: the configured user needs CREATEDB, and the migrations run CREATE EXTENSION vector in
+// every new database, which needs a superuser unless the extension is trusted or already in template1
+// (the compose postgres user is a superuser).
+//
+// Leftovers: databases of a killed test run are dropped by the first Connect of a later run once they
+// are older than staleAfter (the creation time is part of the name). A database still in use is kept.
 package pgtest
 
 import (
@@ -122,7 +124,8 @@ func createDatabase(t *testing.T, cfg *config.Postgres) config.Postgres {
 }
 
 // dropStaleDatabases drops pgtest databases created more than staleAfter ago: left by killed runs.
-// Failures are only logged: a leftover database does not break the tests.
+// Without FORCE, so a database somebody still uses (a very long test run) is kept; failures are only
+// logged: a leftover database does not break the tests.
 func dropStaleDatabases(t *testing.T, admin *pgx.Conn, now time.Time) {
 	t.Helper()
 
@@ -147,7 +150,7 @@ func dropStaleDatabases(t *testing.T, admin *pgx.Conn, now time.Time) {
 			continue
 		}
 
-		if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {
+		if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()); err != nil {
 			t.Logf("pgtest: failed to drop stale database %s: %v", name, err)
 		}
 	}

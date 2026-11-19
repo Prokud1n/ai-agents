@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func testWorker(t *testing.T, mode string) *PDFWorker {
 	require.NoError(t, err)
 
 	// Under -race the child would sleep 1 s at exit (GORACE atexit_sleep_ms defaults to 1000).
-	return &PDFWorker{Path: exe, Env: []string{testWorkerEnv + "=" + mode, "GORACE=atexit_sleep_ms=0"}}
+	return newPDFWorker(exe, nil, []string{testWorkerEnv + "=" + mode, "GORACE=atexit_sleep_ms=0"}, PDFTimeout)
 }
 
 func testExtractor(t *testing.T) *Extractor {
@@ -160,6 +161,16 @@ func TestHostilePDF(t *testing.T) {
 		{name: "self-referencing object stream", file: "pdf-objstm-self.pdf", expectMsg: "parser crashed"},
 		// One 4 MB stream of numbers referenced 20 times: stopped by the per-page budget.
 		{name: "repeated references to one big stream", file: "pdf-refs20.pdf", expectMsg: "bytes per page"},
+		// 50,000 Tf operators with a 30,000-entry ToUnicode map: refused by the CMap limit (and the
+		// decoder is cached per font name, so Tf no longer re-parses the map).
+		{name: "font switched 50,000 times", file: "pdf-tf-reparse.pdf", expectMsg: "ToUnicode map has more than"},
+		// The same 50,000 Tf with a 4,000-entry map pass the CMap limit: fast only because the decoder
+		// is cached per font name (without the cache this file takes more than 40 s).
+		{name: "font switched 50,000 times, allowed map", file: "pdf-tf-switch.pdf", expected: "A"},
+		// 100,000 codes missing from a 30,000-entry map: each one scans the whole map.
+		{name: "codes scanning a huge cmap", file: "pdf-decode-scan.pdf", expectMsg: "ToUnicode map has more than"},
+		// 400,000 nested arrays: handled by the library's parser without deep recursion.
+		{name: "deeply nested arrays", file: "pdf-deep-arrays.pdf", expectMsg: "no text layer"},
 	}
 
 	for _, tt := range tests {
@@ -176,6 +187,7 @@ func TestHostilePDF(t *testing.T) {
 				require.ErrorIs(t, err, ErrInvalidDocument)
 				require.NotErrorIs(t, err, context.DeadlineExceeded)
 				assert.Contains(t, err.Error(), tt.expectMsg)
+				assert.Equal(t, 1, strings.Count(err.Error(), ErrInvalidDocument.Error()), err.Error())
 
 				return
 			}
@@ -217,7 +229,9 @@ func TestPDFWorkerFailures(t *testing.T) {
 			t.Parallel()
 
 			worker := testWorker(t, tt.mode)
-			worker.Timeout = tt.timeout
+			if tt.timeout > 0 {
+				worker.timeout = tt.timeout
+			}
 
 			start := time.Now()
 			_, err := worker.Parse(context.Background(), []byte("%PDF-1.4"))
@@ -228,6 +242,22 @@ func TestPDFWorkerFailures(t *testing.T) {
 			assert.Less(t, time.Since(start), 10*time.Second)
 		})
 	}
+}
+
+// Cancelling the caller's context is reported as a cancellation, not as the parser's timeout.
+func TestPDFWorkerParentCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err := testWorker(t, workerModeHang).Parse(ctx, []byte("%PDF-1.4"))
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, ErrInvalidDocument)
+	assert.Contains(t, err.Error(), "cancelled")
+	assert.Less(t, time.Since(start), 10*time.Second)
 }
 
 func TestLimitedBuffer(t *testing.T) {

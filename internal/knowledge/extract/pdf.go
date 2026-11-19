@@ -3,7 +3,6 @@ package extract
 import (
 	"bytes"
 	"cmp"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -28,7 +27,12 @@ const (
 	maxPDFStreamBytes   = 16 << 20
 	maxPredictorColumns = 1 << 16 // the library allocates a buffer of this size per stream
 	maxGlyphsPerPage    = 200_000
-	maxGlyphsPerPDF     = 2_000_000
+	maxGlyphsPerPDF     = 1_000_000 // as many characters as a knowledge base document may have
+	// Entries of one ToUnicode CMap: the library decodes every code by scanning all of them, so a huge
+	// CMap makes decoding quadratic. Real subset fonts have hundreds.
+	maxCMapEntries = 4096
+	// Hex strings of a CMap: two per bfchar entry, three per bfrange; a few more for the header.
+	maxCMapHexStrings = 3*maxCMapEntries + 64
 )
 
 // Layout thresholds relative to the font size. The library's own text helpers glue words together
@@ -40,7 +44,8 @@ const (
 	paragraphGapRatio = 1.8  // a vertical gap wider than this starts a new paragraph
 )
 
-var errPDFLimit = errors.New("pdf exceeds extraction limits")
+// errPDFLimit is an invalid document: errors.Is(err, ErrInvalidDocument) holds for it.
+var errPDFLimit = fmt.Errorf("pdf exceeds extraction limits: %w", ErrInvalidDocument)
 
 // parsePDF extracts the text layer page by page. Scanned PDFs have no text layer and give an error:
 // they need OCR first. Columns and tables are not reconstructed: lines are read top to bottom.
@@ -99,8 +104,8 @@ func collectPages(root pdf.Value) ([]pdf.Page, error) {
 
 	for visited := 0; len(stack) > 0 && len(pages) < maxPDFPages; visited++ {
 		if visited >= maxPageTreeNodes {
-			return nil, fmt.Errorf("page tree has more than %d nodes (cyclic /Kids?): %w: %w",
-				maxPageTreeNodes, ErrInvalidDocument, errPDFLimit)
+			return nil, fmt.Errorf("page tree has more than %d nodes (cyclic /Kids?): %w",
+				maxPageTreeNodes, errPDFLimit)
 		}
 
 		node := stack[len(stack)-1]
@@ -111,12 +116,12 @@ func collectPages(root pdf.Value) ([]pdf.Page, error) {
 			pages = append(pages, pdf.Page{V: node.v})
 		case "Pages":
 			if node.depth >= maxPageTreeDepth {
-				return nil, fmt.Errorf("page tree is deeper than %d: %w: %w", maxPageTreeDepth, ErrInvalidDocument, errPDFLimit)
+				return nil, fmt.Errorf("page tree is deeper than %d: %w", maxPageTreeDepth, errPDFLimit)
 			}
 
 			kids := node.v.Key("Kids")
 			if kids.Len() > maxPageTreeNodes {
-				return nil, fmt.Errorf("page tree node has %d kids: %w: %w", kids.Len(), ErrInvalidDocument, errPDFLimit)
+				return nil, fmt.Errorf("page tree node has %d kids: %w", kids.Len(), errPDFLimit)
 			}
 
 			// Reverse order on the stack, so pages come out in document order.
@@ -151,7 +156,7 @@ func (b *streamBudget) checkPage(page pdf.Page) error {
 	streams := []pdf.Value{contents}
 	if contents.Kind() == pdf.Array {
 		if contents.Len() > maxPageTreeNodes {
-			return fmt.Errorf("page has %d content streams: %w: %w", contents.Len(), ErrInvalidDocument, errPDFLimit)
+			return fmt.Errorf("page has %d content streams: %w", contents.Len(), errPDFLimit)
 		}
 
 		streams = streams[:0]
@@ -160,14 +165,21 @@ func (b *streamBudget) checkPage(page pdf.Page) error {
 		}
 	}
 
+	cmaps := make([]pdf.Value, 0, len(page.Fonts()))
 	for _, name := range page.Fonts() {
-		streams = append(streams, page.Font(name).V.Key("ToUnicode"))
+		cmaps = append(cmaps, page.Font(name).V.Key("ToUnicode"))
 	}
 
-	for _, s := range streams {
-		n, err := inflateLimited(s, b.page)
+	for i, s := range append(streams, cmaps...) {
+		isCMap := i >= len(streams)
+
+		n, hexStrings, err := inflateLimited(s, b.page, isCMap)
 		if err != nil {
 			return err
+		}
+
+		if hexStrings > maxCMapHexStrings {
+			return fmt.Errorf("font ToUnicode map has more than %d entries: %w", maxCMapEntries, errPDFLimit)
 		}
 
 		b.page -= n
@@ -177,30 +189,51 @@ func (b *streamBudget) checkPage(page pdf.Page) error {
 	return nil
 }
 
-// inflateLimited reads the inflated stream and returns its size; more than limit bytes is an error.
-func inflateLimited(s pdf.Value, limit int64) (int64, error) {
+// hexCounter counts '<' bytes: hex strings (and a few dictionary delimiters) of a CMap.
+type hexCounter struct {
+	n int64
+}
+
+func (c *hexCounter) Write(p []byte) (int, error) {
+	c.n += int64(bytes.Count(p, []byte{'<'}))
+
+	return len(p), nil
+}
+
+// inflateLimited reads the inflated stream and returns its size (and, for a CMap, its count of hex
+// strings); more than limit bytes is an error.
+func inflateLimited(s pdf.Value, limit int64, countHex bool) (size, hexStrings int64, err error) {
 	if s.Kind() != pdf.Stream {
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	if columns := s.Key("DecodeParms").Key("Columns").Int64(); columns > maxPredictorColumns {
-		return 0, fmt.Errorf("stream predictor has %d columns: %w: %w", columns, ErrInvalidDocument, errPDFLimit)
+		return 0, 0, fmt.Errorf("stream predictor has %d columns: %w", columns, errPDFLimit)
 	}
 
 	rc := s.Reader()
 	defer rc.Close()
 
-	n, err := io.Copy(io.Discard, io.LimitReader(rc, limit+1))
+	var (
+		sink    io.Writer = io.Discard
+		counter hexCounter
+	)
+
+	if countHex {
+		sink = &counter
+	}
+
+	n, err := io.Copy(sink, io.LimitReader(rc, limit+1))
 	if err != nil {
-		return 0, fmt.Errorf("failed to inflate pdf stream: %w: %w", ErrInvalidDocument, err)
+		return 0, 0, fmt.Errorf("failed to inflate pdf stream: %w: %w", ErrInvalidDocument, err)
 	}
 
 	if n > limit {
-		return 0, fmt.Errorf("pdf streams inflate to more than %d bytes per page or %d per document: %w: %w",
-			maxPageStreamBytes, maxPDFStreamBytes, ErrInvalidDocument, errPDFLimit)
+		return 0, 0, fmt.Errorf("pdf streams inflate to more than %d bytes per page or %d per document: %w",
+			maxPageStreamBytes, maxPDFStreamBytes, errPDFLimit)
 	}
 
-	return n, nil
+	return n, counter.n, nil
 }
 
 type pdfLine struct {
