@@ -102,10 +102,45 @@ docker run --rm --env-file .env --user "$(id -u):$(id -g)" -v "$PWD:/work" ai-ag
 
 Если в роликах фоновая музыка и паузы не находятся, подними `TRANSCRIPTION_SILENCE_NOISE_DB` (например, до `-25`).
 
+## Агенты и LLM
+
+- **Агент** — папка `agents/<name>/` с файлом `agent.md`: YAML frontmatter (`name` = имя папки, `display_name`,
+  `model`, `tools`, `skills`, `skill_overrides`) и тело — системный промпт роли.
+- **Общие скиллы** — `skills/<skill>/SKILL.md` (`SKILLS_DIR`): frontmatter `name`, `description` и тело — инструкция.
+  Агент подключает скилл по имени в `skills:`, один скилл может использоваться несколькими агентами.
+- **Доработка скилла под агента** — `skill_overrides: {<skill>: "<инструкция>"}` в `agent.md`. Когда агент
+  вызывает `load_skill`, текст дописывается к общему SKILL.md. Override на скилл не из `skills:` — ошибка старта.
+- **Локальные скиллы** (необязательно) — `agents/<name>/skills/<skill>/SKILL.md`. Локальный скилл с именем
+  общего — ошибка старта.
+- Runtime добавляет к роли каждого агента общие правила проекта (`agents.SafetyRules`) и список его скиллов.
+
+Агенты и скиллы проверяются при старте: ошибка — приложение не стартует, текст с путями к файлам в логе.
+Папки с префиксом `_` — шаблоны, они не загружаются. Шаблон — `agents/_example/`: скопируй его в
+`agents/<name>/` и поменяй `name`. Новый инструмент регистрируется модулем в fx-группе `agents.ToolsGroup`.
+
+Ручная проверка с настоящим ключом (`ANTHROPIC_API_KEY` в `.env`): ответ агента и расход токенов и денег.
+
+```bash
+make agent-run AGENT=<name> PROMPT="Привет! Представься."
+```
+
 ## Разработка
 
 Правила — в [AGENTS.md](AGENTS.md) и [CODE_STYLE.md](CODE_STYLE.md). Проверки: `make check` (lint + `go test -race`).
 
 CI (`.github/workflows/ci.yml`): job `tidy` делает `go mod tidy` и на ветках `feature/**`, `fix/**`, `refactoring/**`
 сам коммитит `go.mod`/`go.sum` (после этого сделай `git pull`), затем `check` и `compose-smoke` проверяют итоговый коммит.
-`check` требует, чтобы ветка содержала актуальный `main`: перед мержем сделай rebase.
+`check` требует, чтобы ветка содержала актуальный `main`: перед мержем сделай rebase. Новые миграции ветки
+должны иметь номер больше последней миграции в `main` (golang-migrate молча пропускает меньший номер).
+
+### Интеграционные тесты
+
+Тесты с `Integration` в имени работают с PostgreSQL из compose (миграции накатывает сервис `migrate`) и
+подключаются через `internal/pgtest`. Без `INTEGRATION=1` они пропускаются, поэтому `make test` базы не требует.
+
+```bash
+make up && make test-integration
+```
+
+В CI они идут в job `compose-smoke`. Каждый пакет работает только со своими таблицами и чистит их через
+`pgtest.Truncate`; тесты, которые делят таблицу, не вызывают `t.Parallel`.

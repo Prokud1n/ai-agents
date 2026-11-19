@@ -35,6 +35,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and extracts audio from a generated clip.
 - CI: `tidy` job that commits `go mod tidy` results to `feature/**` branches and re-runs checks on the new commit;
   `compose-smoke` job; actions pinned by SHA with least-privilege permissions.
+- LLM layer: thin Claude Messages API client (`ANTHROPIC_*` config, retries on 429/5xx with exponential backoff);
+  the app starts without `ANTHROPIC_API_KEY` and the Claude API is not a `/readyz` dependency.
+- Agent registry: an agent is a folder `agents/<name>/` with `agent.md` (YAML frontmatter + role prompt);
+  validated on start (`AGENTS_DIR`). Directories starting with `_` are templates and are not loaded:
+  `agents/_example/`.
+- Shared skills `skills/<skill>/SKILL.md` (`SKILLS_DIR`), listed by agents in `skills:`; per-agent additions to a
+  skill in `skill_overrides` of `agent.md`, appended when the agent loads the skill. Optional local skills in
+  `agents/<name>/skills/`; a local skill named like a shared one, or an override of an unlisted skill, fails the start.
+- Project safety rules (`agents.SafetyRules`) in the system prompt of every agent.
+- Agent runtime: tool use loop with a turn limit, built-in `load_skill` tool (skill bodies are loaded on demand),
+  tools registered through the fx value group `agent_tools`, tool errors returned to the model as `is_error`.
+- LLM usage accounting: migration `002_llm_usage`, a record per API call (tokens, cache tokens, cost, duration,
+  request id), prices per model in `LLM_PRICES`, `llmusage.Service.UsageSummary` by agent and model.
+- `cmd/agent-run` CLI and `make agent-run AGENT=... PROMPT=...` for manual checks with a real key.
+- Agent runs handle every stop reason: `max_tokens` (and a full context window) returns `ErrMaxTokens`, `refusal`
+  returns `ErrRefusal`, an unknown one `ErrInvalidResponse`, each with the partial result whose history has no
+  unanswered `tool_use`; `pause_turn` is continued.
+- Usage keeps both the requested and the response model; the cost is calculated by the requested one. Usage is
+  recorded even if the run's context is cancelled after a billed call.
+- Integration tests against PostgreSQL from compose (`internal/pgtest`, `INTEGRATION=1`, `make test-integration`),
+  run in the CI job `compose-smoke`.
+- CI: `check` requires new migrations to be numbered above the latest migration in `main`.
 
 ### Changed
 

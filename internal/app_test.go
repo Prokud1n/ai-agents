@@ -15,6 +15,7 @@ func TestDeclareOptions(t *testing.T) {
 		options []fx.Option
 	}{
 		{name: "application", options: DeclareApplicationOptions()},
+		{name: "agent run", options: DeclareAgentRunOptions()},
 	}
 
 	for _, tt := range tests {
