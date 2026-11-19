@@ -14,10 +14,11 @@
 | Docker | весь стек работает в контейнерах | Docker Desktop (macOS) или Docker Engine (Linux) |
 | Docker Compose v2 | `docker compose …` (через пробел; старый `docker-compose` v1 не подходит) | v2.20+ (`--wait`) |
 | make, git, curl | команды проекта, клонирование, проверка `/readyz` | любые актуальные |
-| Go | `make kb-*` и `make transcribe` запускают `go run` на хосте; также разработка (`make check`) | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
+| Go | **нужен для базы знаний и транскрипции на хосте**: `make kb-*` и `make transcribe` запускают `go run`; также разработка (`make check`) | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
 | ffmpeg, ffprobe | только `make transcribe` на хосте; без них транскрипция работает в образе `media` | 8.x |
 
-Без Go стек, агенты (`make agent-run`) и транскрипция в образе `media` работают; не работает только CLI базы знаний.
+Без Go работают стек, агенты (`make agent-run`) и транскрипция в образе `media`; не работает CLI базы знаний
+(`make m0-check` пропустит этот шаг с подсказкой). Перенос `kb` в образ запланирован отдельной задачей.
 
 ### macOS
 
@@ -59,7 +60,14 @@ cp .env.dist .env
 ## 3. Справочник переменных `.env`
 
 «Секрет» — значение нельзя коммитить, показывать в скриншотах и логах. «Обязательна» — без неё не стартует стек
-или соответствующая функция; остальные можно не трогать.
+или соответствующая функция; остальные можно не трогать. Колонка «В `.env.dist`» — значение из шаблона, с которым
+работает `cp .env.dist .env`. Если переменную из `.env` удалить, код возьмёт свой дефолт, и он бывает другим
+(например, `POSTGRES_HOST=localhost`, `TELEGRAM_BOT_API_URL=https://api.telegram.org`), поэтому лучше не удалять,
+а менять значение.
+
+Формат `.env`: `KEY=VALUE`, по строке на переменную. Кавычки допустимы для `make` и `docker compose`, но
+`docker run --env-file` (ручной запуск образа `media` из README) их не снимает: для него пиши значения без кавычек.
+`make m0-check` передаёт переменные в `docker run` сам, кавычки ему не мешают.
 
 > **Продакшн.** Обязательно смени `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `S3_ACCESS_KEY` и `S3_SECRET_KEY`: значения
 > из `.env.dist` публичны. Сгенерировать: `openssl rand -base64 32 | tr -d '/+='`. Пароль Postgres задаётся только
@@ -67,7 +75,7 @@ cp .env.dist .env
 
 ### Приложение
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `LOG_LEVEL` | нет | `info` | `debug`, `info`, `warn`, `error` | нет |
 | `HTTP_ADDRESS` | нет | `:8080` | адрес HTTP-сервера; в compose всегда `:8080` (переопределён), важен только для `make run` | нет |
@@ -80,7 +88,7 @@ cp .env.dist .env
 
 ### PostgreSQL
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `POSTGRES_HOST` | да (приложение) | `postgres` | имя сервиса compose; для `make run` — `localhost` в `.env.local` | нет |
 | `POSTGRES_PORT` | нет | `5432` | порт внутри сети compose | нет |
@@ -91,7 +99,7 @@ cp .env.dist .env
 
 ### Redis
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `REDIS_ADDRESS` | да (приложение) | `redis:6379` | сервис compose; для `make run` — `localhost:6379` | нет |
 | `REDIS_PASSWORD` | да (контейнер redis, приложение) | `redis-dev-password` | **сменить в продакшне**; применяется при перезапуске контейнера | **да** |
@@ -99,7 +107,7 @@ cp .env.dist .env
 
 ### S3 (RustFS)
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `S3_ENDPOINT` | да (приложение) | `s3:9000` | сервис compose; для `make run` — `localhost:9000` | нет |
 | `S3_ACCESS_KEY` | да (контейнер s3, приложение) | `rustfsadmin` | логин администратора RustFS; **сменить в продакшне** | **да** |
@@ -110,7 +118,7 @@ cp .env.dist .env
 
 ### Telegram
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `TELEGRAM_BOT_API_URL` | нет | `http://telegram-bot-api:8081` | локальный Bot API (профиль `telegram`) или публичный `https://api.telegram.org` | нет |
 | `TELEGRAM_API_ID` | для профиля `telegram` | пусто | [my.telegram.org](https://my.telegram.org) → API development tools (раздел 4) | **да** |
@@ -120,7 +128,7 @@ cp .env.dist .env
 
 ### OpenAI: Whisper и эмбеддинги
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `OPENAI_API_KEY` | для транскрипции и базы знаний | пусто | [OpenAI Platform → API keys](https://platform.openai.com/api-keys) (раздел 4) | **да** |
 | `OPENAI_BASE_URL` | нет | `https://api.openai.com/v1` | менять только для совместимого прокси | нет |
@@ -141,7 +149,7 @@ cp .env.dist .env
 
 ### Claude API (LLM-слой)
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `ANTHROPIC_API_KEY` | для запусков агентов | пусто | [Claude Console](https://platform.claude.com/docs/en/get-api-key) → Settings → API keys (раздел 4); без ключа приложение стартует, запуски агентов падают | **да** |
 | `ANTHROPIC_BASE_URL` | нет | `https://api.anthropic.com` | менять только для прокси | нет |
@@ -157,7 +165,7 @@ cp .env.dist .env
 
 ### docker compose
 
-| Переменная | Обязательна (для чего) | По умолчанию | Где взять / как выбрать | Секрет |
+| Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `APP_HOST_PORT` | нет | `8080` | порт `app` на `127.0.0.1` хоста; поменяй, если 8080 занят | нет |
 | `POSTGRES_HOST_PORT` | нет | `5432` | порт Postgres на `127.0.0.1` хоста (отладка, `make kb-*`, интеграционные тесты); поменяй, если на хосте свой Postgres | нет |
@@ -168,8 +176,30 @@ cp .env.dist .env
 Не присылай ключи в чаты и не прикладывай `.env` к отчётам: `make m0-check` печатает только «задан (…последние 4 символа)».
 
 - **Claude API (`ANTHROPIC_API_KEY`).** [Claude Console](https://platform.claude.com/docs/en/get-api-key) → войти →
-  Settings → API keys → Create Key. Нужны пополненный баланс (Settings → Billing) и, по желанию, лимит расходов.
-  Ключ начинается с `sk-ant-`.
+  Settings → API keys → Create Key. Нужны пополненный баланс (Settings → Billing) или кредиты по подписке (ниже)
+  и, по желанию, лимит расходов. Ключ начинается с `sk-ant-`. Без денег на балансе API отвечает
+  `credit balance is too low`.
+
+  **API-кредиты по подписке Claude.** На тарифах **Max, Ultra и Team** организацию Claude Console можно привязать
+  к подписке и получать ежемесячные кредиты на API: claude.ai → Settings → Billing (на Team — Organization
+  settings → Billing) → раздел API credits → Link organization. **Pro (и Free, Enterprise) не подходит.** Кредиты
+  можно получить через 7 дней после оформления тарифа, они не переносятся на следующий месяц, тратятся раньше
+  купленных и общие для всех ключей организации. Привязать можно одну организацию, сменить её — только через
+  поддержку, поэтому привязывай ту, где будет ключ проекта. Нужны роли: подписчик (на Team — Owner/Primary Owner)
+  и Admin или Billing в организации Console. Подробности — в официальных статьях:
+  [Help Center](https://support.claude.com/en/articles/17154008) и
+  [документация](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
+
+  Суммы на момент написания (19.11.2026; актуальные — по ссылкам выше):
+
+  | Тариф | Кредиты в месяц |
+  |---|---|
+  | Max | $100 |
+  | Ultra | $200 |
+  | Team, Standard seat | $20 за место |
+  | Team, Premium seat | $100 за место |
+
+  На Team кредиты всех мест складываются в общий баланс, не больше $500 в месяц.
 - **OpenAI (`OPENAI_API_KEY`).** [platform.openai.com/api-keys](https://platform.openai.com/api-keys) → Create new
   secret key. Нужен положительный баланс в Billing; без него Whisper и эмбеддинги отвечают `insufficient_quota`.
   Ключ начинается с `sk-`.
@@ -178,8 +208,9 @@ cp .env.dist .env
   `App api_hash` ([описание](https://core.telegram.org/api/obtaining_api_id)). Нужны только для локального Bot API
   (файлы до 2 ГБ).
 - **Токен бота.** В Telegram написать [@BotFather](https://t.me/BotFather) → `/newbot` → имя и username, оканчивающийся
-  на `bot` → токен вида `123456:ABC…` ([документация](https://core.telegram.org/bots/features#botfather)). В M0 он
-  ещё не используется: сохрани его в менеджере паролей до задачи с ботом.
+  на `bot` → токен вида `123456:ABC…` ([документация](https://core.telegram.org/bots/features#botfather)). В `.env`
+  он пока не нужен: сохрани его в менеджере паролей до задачи с ботом. Для `make m0-check` заведи **отдельного
+  тестового бота** (раздел 7).
 
 ## 5. Материалы базы знаний (`KB_ROOT`)
 
@@ -207,8 +238,8 @@ make kb-ingest KB_PATH=./kb/post KB_KIND=post
 make kb-search Q="как мы говорим о питании" LIMIT=5
 ```
 
-Один документ — одна тема: так поиск точнее. Папку `kb/_m0check/` создаёт и удаляет `make m0-check`, не клади туда
-свои файлы.
+Один документ — одна тема: так поиск точнее. Временные папки `kb/_m0check.XXXXXX/` создаёт и удаляет
+`make m0-check`, не клади туда свои файлы.
 
 ## 6. Запуск, проверка, остановка
 
@@ -246,33 +277,45 @@ docker compose --profile telegram down -v   # остановить и УДАЛИ
 
 ```bash
 make m0-check                        # шаги без ключей — SKIP
-make m0-check M0_VIDEO=./clip.mp4    # плюс транскрипция ролика (лучше 10–60 с русской речи)
+make m0-check M0_VIDEO=./clip.mp4    # плюс транскрипция ролика (лучше 10–60 с речи)
+
+# плюс getMe тестового бота через локальный Bot API; токен — только в окружении, не в .env и не в истории shell
+read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKEN
 ```
+
+> **`M0_BOT_TOKEN` — только для тестового бота.** При первом запросе локальный сервер Bot API логинит бота у себя;
+> боту, который в это время работает через облачный `api.telegram.org`, это может помешать (обновления и вебхук
+> переходят к локальному серверу). Заведи у @BotFather отдельного бота для проверок. Токен не пишется в `.env`,
+> логи и отчёт; ответ `getMe` не сохраняется.
 
 | Шаг | Что проверяет | Когда SKIP |
 |---|---|---|
-| 1. Окружение | docker, compose v2, daemon, make, curl, git, `.env`; обязательные переменные заданы; dev-пароли и переменные, которых нет в `.env` по сравнению с `.env.dist`, — WARN | никогда |
+| 1. Окружение | docker, compose v2, daemon, make, curl, `.env`; обязательные переменные заданы; WARN — dev-пароли, переменные из `.env.dist`, которых нет в `.env`, и отсутствие git (в отчёте `Git: unknown`) | никогда |
 | 2. Стек | `make up`, все сервисы healthy, `/readyz` = ok по всем зависимостям, версия миграций = последней в `migrations/`, не dirty | шаг 1 не прошёл |
-| 3. LLM | временная копия `agents/_example` в `agents/m0check`, `make agent-run AGENT=m0check PROMPT="Ответь одним словом: работает"`: ответ не пустой, есть строка расхода | нет `ANTHROPIC_API_KEY` |
-| 4. База знаний | тестовый документ в `KB_ROOT/_m0check/`, `make kb-ingest`, `make kb-search` по фразе из него — документ первый, `make kb-delete` | нет `OPENAI_API_KEY` |
-| 5. Транскрипция | `make transcribe` на `M0_VIDEO` (без Go/ffmpeg на хосте — в образе `media`): JSON с `language=ru` и непустым `words` | нет ключа или `M0_VIDEO` |
-| 6. Telegram | поднимает `telegram-bot-api` и ждёт его healthcheck; если сервис был остановлен — останавливает обратно | нет `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` |
+| 3. LLM | временная копия `agents/_example` в `agents/m0check-<pid>`, `make agent-run PROMPT="Ответь одним словом: работает"`: ответ не пустой, есть строка расхода | нет `ANTHROPIC_API_KEY` |
+| 4. База знаний | документ `m0-check-<pid>-<время>.md` во временной `KB_ROOT/_m0check.XXXXXX/`; проверка, что такого source в базе нет; `make kb-ingest`, `make kb-search` по фразе из него — документ первый, `make kb-delete` | нет `OPENAI_API_KEY` или Go |
+| 5. Транскрипция | `make transcribe` на `M0_VIDEO` (без Go/ffmpeg на хосте — в образе `media`): JSON с непустым `language` и `words` | нет ключа или `M0_VIDEO` |
+| 6. Telegram | поднимает `telegram-bot-api` и ждёт его healthcheck: PASS «порт открыт, ключи не проверены». С `M0_BOT_TOKEN` — ещё `getMe` через локальный сервер, это проверяет `api_id`/`api_hash` и токен. Если сервис был остановлен — останавливает обратно | нет `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` |
 
 В конце — таблица PASS / FAIL / SKIP; код выхода не 0, если есть хоть один FAIL. Всё сохраняется в `m0-results/`
 (в `.gitignore`):
 
 - `report.md` — **приложи его к отчёту**: дата, git SHA, шаги с длительностью, предупреждения, расход LLM из
   `llm_usage` за прогон, версии образов. Секретов в нём нет;
-- `up.log`, `llm.out`/`llm.log`, `kb.log`, `transcribe.log`, `telegram.log` — подробности для FAIL;
+- `up.log`, `llm.out`/`llm.log`, `kb.log`, `transcribe.log`, `telegram.log` — подробности для FAIL. Ключи
+  (`sk-…`, токены ботов, значения ключей и паролей из `.env`) в них маскируются, но логи — для разбора на месте:
+  **не пересылай их** и не прикладывай к отчёту, там могут быть адреса, тексты и прочие внутренние детали;
 - `transcript.json` — результат транскрипции (содержит текст ролика).
 
-Скрипт можно запускать повторно. Он не трогает пользовательские данные: создаёт только `agents/m0check` и
-`KB_ROOT/_m0check` (удаляются при выходе, даже по Ctrl+C) и документ `_m0check/m0-check.md` в базе знаний
-(удаляется `kb-delete`), `down -v` не делает. Стоимость прогона с ключами — доли цента (один короткий запрос
+Скрипт можно запускать повторно. Он не трогает пользовательские данные и удаляет только то, что создал сам:
+временный агент `agents/m0check-<pid>`, папку `KB_ROOT/_m0check.XXXXXX` и документ в базе знаний с уникальным
+именем. Если такой путь или документ уже есть — шаг FAIL, чужое не трогается. `.env` читается построчно и не
+исполняется. Ctrl+C прерывает весь прогон (код 130) и убирает временное; `down -v` скрипт не делает. Стоимость прогона с ключами — доли цента (один короткий запрос
 к Claude, эмбеддинги двух коротких текстов) плюс Whisper по длине ролика.
 
-Ограничение шага 6: у Bot API нет health-эндпоинта, healthcheck проверяет только, что порт 8081 принимает соединения.
-Неверные `api_id`/`api_hash` видны в `docker compose --profile telegram logs telegram-bot-api`.
+Ограничение шага 6 без `M0_BOT_TOKEN`: у Bot API нет health-эндпоинта, healthcheck проверяет только, что порт 8081
+принимает соединения. Неверные `api_id`/`api_hash` видны в `docker compose --profile telegram logs telegram-bot-api`
+или при проверке с токеном тестового бота.
 
 ## 8. Типовые проблемы
 
@@ -283,16 +326,21 @@ make m0-check M0_VIDEO=./clip.mp4    # плюс транскрипция рол�
 | `POSTGRES_PASSWORD is required` (и т.п.) при `make up` | нет `.env` или в нём пустая переменная: `cp .env.dist .env` |
 | `bind: address already in use` на 8080 или 5432 | порт занят (свой Postgres, другой проект): задай `APP_HOST_PORT` / `POSTGRES_HOST_PORT` в `.env` |
 | `make up` висит, `app` unhealthy | `docker compose logs app migrate`; чаще всего неверные пароли или упавшая миграция |
-| `password authentication failed` после смены `POSTGRES_PASSWORD` | пароль применяется только при первом создании тома. Либо верни старый, либо смени в базе: `docker compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD '…'"`, либо (данные не нужны) `docker compose down -v` |
+| `password authentication failed` после смены `POSTGRES_PASSWORD` | пароль применяется только при первом создании тома. Смени его в самой базе (внутри контейнера вход по сокету без пароля): `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\password $POSTGRES_USER"'` — новый пароль спросит интерактивно, он должен совпасть с `.env`; затем `make up`. Если данные не нужны — `docker compose down -v` |
 | `app` не проходит проверку S3 после смены `S3_ACCESS_KEY`/`S3_SECRET_KEY` | ключи — учётка администратора RustFS. На свежей установке проще всего `down -v`; на рабочей — меняй ключи до первого запуска |
 | `/readyz` = 503 | в JSON видно, какая зависимость `fail`; причина — в `docker compose logs app` |
 | `migrate` упал, база `dirty` | `docker compose logs migrate`; исправь миграцию (если она не смержена) и повтори `make migrate`. Смерженные миграции не редактируются |
 | `anthropic api key is not set` | пустой `ANTHROPIC_API_KEY` в `.env` |
-| `401` / `invalid x-api-key` / `insufficient_quota` | ключ неверный, отозван или на балансе нет денег (Console / OpenAI Billing) |
-| `make kb-*`: `go: command not found` | CLI базы знаний запускается на хосте: установи Go (раздел 1) |
+| Claude: `401` / `invalid x-api-key` | ключ неверный или отозван: создай новый в Console |
+| Claude: `credit balance is too low` | на балансе организации Console нет денег и кредитов: пополни Billing или привяжи подписку (раздел 4) |
+| OpenAI: `401` / `invalid_api_key` | ключ неверный или отозван |
+| OpenAI: `insufficient_quota` | на балансе OpenAI нет денег (Billing на platform.openai.com) |
+| `make kb-*`: `go: command not found`; в `m0-check` шаг 4 SKIP «нет Go» | CLI базы знаний запускается на хосте: установи Go (раздел 1) |
 | `make kb-*`: `connection refused` к `127.0.0.1:5432` | стек не поднят (`make up`) или `POSTGRES_HOST_PORT` отличается от того, с которым поднят стек |
 | `kb ingest`: файл вне `KB_ROOT` | положи материалы в `./kb` (или задай `KB_ROOT`) |
 | `make transcribe`: `"ffmpeg": executable file not found` | установи ffmpeg или используй образ `media` (README, «Транскрипция видео») |
 | Транскрипция режет речь посреди фраз, видео с музыкой | подними `TRANSCRIPTION_SILENCE_NOISE_DB` до `-25` |
 | Apple Silicon: сборка медленная | первый `make up` собирает образ (несколько минут); дальше работает кэш |
 | `m0-check`: шаг 4 FAIL «не первый в поиске» | в базе есть очень похожий документ или сменилась модель эмбеддингов без `make kb-reembed`; подробности — `m0-results/kb.log` |
+| `m0-check`: шаг 6 FAIL «getMe не ok» | неверный `M0_BOT_TOKEN` или `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`; смотри `docker compose --profile telegram logs telegram-bot-api` |
+| `docker run --env-file .env`: ключ «неверный», хотя в `.env` он правильный | `--env-file` не снимает кавычки: убери кавычки вокруг значений в `.env` |

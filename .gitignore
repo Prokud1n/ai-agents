@@ -10,5 +10,5 @@ docker-compose.override.yml
 # Local copy of agents/_example for make agent-run (README)
 /agents/test/
 # make m0-check: temporary agent (removed by the script) and results (report.md, logs, transcript)
-/agents/m0check/
+/agents/m0check-*/
 /m0-results/
