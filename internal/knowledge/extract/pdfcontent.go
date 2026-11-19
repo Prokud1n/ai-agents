@@ -62,8 +62,16 @@ type graphicsState struct {
 	rise      float64
 }
 
+// cachedFont is a page font with its decoder: the library re-parses the ToUnicode CMap on every
+// Font.Encoder call of a fresh Font value, so a stream repeating Tf would parse it thousands of times.
+type cachedFont struct {
+	font pdf.Font
+	enc  pdf.TextEncoding
+}
+
 type contentReader struct {
 	page      pdf.Page
+	fonts     map[string]cachedFont
 	state     graphicsState
 	stack     []graphicsState
 	glyphs    []glyph
@@ -124,6 +132,7 @@ func readPageGlyphs(page pdf.Page, maxGlyphs int) ([]glyph, error) {
 
 	r := &contentReader{
 		page:      page,
+		fonts:     make(map[string]cachedFont),
 		state:     graphicsState{ctm: identity, tm: identity, tlm: identity, scale: 1},
 		maxGlyphs: maxGlyphs,
 	}
@@ -140,7 +149,7 @@ func readPageGlyphs(page pdf.Page, maxGlyphs int) ([]glyph, error) {
 	})
 
 	if r.overflow {
-		return nil, fmt.Errorf("page has more than %d glyphs: %w: %w", maxGlyphs, ErrInvalidDocument, errPDFLimit)
+		return nil, fmt.Errorf("page has more than %d glyphs: %w", maxGlyphs, errPDFLimit)
 	}
 
 	return r.glyphs, nil
@@ -209,8 +218,17 @@ func (r *contentReader) setFont(args []pdf.Value) {
 		return
 	}
 
-	r.state.font = r.page.Font(args[0].Name())
-	r.state.enc = r.state.font.Encoder()
+	name := args[0].Name()
+
+	f, ok := r.fonts[name]
+	if !ok {
+		font := r.page.Font(name)
+		f = cachedFont{font: font, enc: font.Encoder()}
+		r.fonts[name] = f
+	}
+
+	r.state.font = f.font
+	r.state.enc = f.enc
 	r.state.fontSize = args[1].Float64()
 }
 

@@ -332,3 +332,82 @@ func TestIntegrationEmbeddingsUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ReembedResult{}, again, "nothing left to reembed")
 }
+
+// One source, another kind: most likely another document with a clashing path, so it is refused
+// unless forced; without a kind the stored one is kept.
+func TestIntegrationKindConflict(t *testing.T) {
+	t.Parallel()
+
+	svc := newIntegrationService(pgtest.Connect(t), hashEmbedder{model: testModelA})
+	ctx := context.Background()
+
+	doc := nutritionDoc() // brand
+	_, err := svc.Ingest(ctx, doc)
+	require.NoError(t, err)
+
+	asProduct := nutritionDoc()
+	asProduct.Kind = ProductKind
+	asProduct.Text += "\n\nДругой текст."
+
+	_, err = svc.Ingest(ctx, asProduct)
+	require.ErrorIs(t, err, ErrConflict)
+
+	keepKind := nutritionDoc()
+	keepKind.Kind = ""
+	res, err := svc.Ingest(ctx, keepKind)
+	require.NoError(t, err)
+	assert.Equal(t, UnchangedIngestStatus, res.Status)
+
+	stored, err := svc.repo.GetDocumentBySource(ctx, doc.Source)
+	require.NoError(t, err)
+	assert.Equal(t, BrandKind, stored.Kind)
+
+	asProduct.Force = true
+	res, err = svc.Ingest(ctx, asProduct)
+	require.NoError(t, err)
+	assert.Equal(t, UpdatedIngestStatus, res.Status)
+
+	stored, err = svc.repo.GetDocumentBySource(ctx, doc.Source)
+	require.NoError(t, err)
+	assert.Equal(t, ProductKind, stored.Kind)
+}
+
+// SetDocumentEmbeddings writes nothing when the document changed after its chunks were read.
+func TestIntegrationSetDocumentEmbeddingsConflict(t *testing.T) {
+	t.Parallel()
+
+	svc := newIntegrationService(pgtest.Connect(t), hashEmbedder{model: testModelA})
+	ctx := context.Background()
+
+	res, err := svc.Ingest(ctx, nutritionDoc())
+	require.NoError(t, err)
+
+	chunks, err := svc.repo.DocumentChunks(ctx, res.DocumentID)
+	require.NoError(t, err)
+
+	ids, vectors, err := svc.embedPending(ctx, chunks)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		doc     staleDocument
+		ids     []int64
+		vectors []string
+	}{
+		{name: "model changed meanwhile", doc: staleDocument{id: res.DocumentID, source: nutritionDoc().Source, model: testModelB}, ids: ids, vectors: vectors},
+		{name: "chunks changed meanwhile", doc: staleDocument{id: res.DocumentID, source: nutritionDoc().Source, model: testModelA}, ids: ids[:1], vectors: vectors[:1]},
+		{name: "document deleted", doc: staleDocument{id: res.DocumentID + 1000, source: "gone.md", model: testModelA}, ids: ids, vectors: vectors},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := svc.repo.SetDocumentEmbeddings(ctx, &tt.doc, testModelB, tt.ids, tt.vectors)
+
+			require.ErrorIs(t, err, ErrConflict)
+		})
+	}
+
+	stored, err := svc.repo.GetDocumentBySource(ctx, nutritionDoc().Source)
+	require.NoError(t, err)
+	assert.Equal(t, testModelA, stored.EmbeddingModel, "nothing was written")
+}

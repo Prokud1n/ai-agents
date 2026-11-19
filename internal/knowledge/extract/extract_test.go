@@ -4,15 +4,74 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testWorkerEnv makes the test binary act as the PDF child process (the os/exec tests' pattern):
+// the parent tests start os.Executable() with it. Other values simulate a misbehaving child.
+const (
+	testWorkerEnv   = "EXTRACT_TEST_WORKER"
+	workerModePDF   = "pdf"
+	workerModeHang  = "hang"
+	workerModeCrash = "crash"
+	workerModeSpam  = "spam"
+	workerModeAlloc = "alloc"
+
+	hugeAllocation = 2 << 30 // above workerAddressSpace
+)
+
+func TestMain(m *testing.M) {
+	switch os.Getenv(testWorkerEnv) {
+	case "":
+		os.Exit(m.Run())
+	case workerModePDF:
+		os.Exit(RunPDFWorker(os.Stdin, os.Stdout, os.Stderr))
+	case workerModeHang:
+		time.Sleep(time.Hour)
+	case workerModeCrash:
+		_, _ = os.Stderr.WriteString("fatal error: stack overflow\n\ngoroutine 1 [running]:\n")
+		os.Exit(2)
+	case workerModeAlloc:
+		if err := limitAddressSpace(workerAddressSpace); err != nil {
+			os.Exit(3)
+		}
+
+		buf := make([]byte, hugeAllocation)
+		for i := 0; i < len(buf); i += os.Getpagesize() {
+			buf[i] = 1
+		}
+
+		_, _ = os.Stdout.WriteString(`{"text":"allocated"}`)
+		os.Exit(0)
+	case workerModeSpam:
+		_, _ = os.Stdout.Write(bytes.Repeat([]byte("x"), maxWorkerOutput+1))
+		os.Exit(0)
+	}
+}
+
+func testWorker(t *testing.T, mode string) *PDFWorker {
+	t.Helper()
+
+	exe, err := os.Executable()
+	require.NoError(t, err)
+
+	// Under -race the child would sleep 1 s at exit (GORACE atexit_sleep_ms defaults to 1000).
+	return newPDFWorker(exe, nil, []string{testWorkerEnv + "=" + mode, "GORACE=atexit_sleep_ms=0"}, PDFTimeout)
+}
+
+func testExtractor(t *testing.T) *Extractor {
+	t.Helper()
+
+	return NewExtractor(testWorker(t, workerModePDF))
+}
 
 // Fixtures: testdata/brand.docx is made with python-docx (Word styles "Heading 1/2", "List Bullet",
 // a table); testdata/brand.pdf is the same document exported by LibreOffice.
@@ -69,7 +128,7 @@ func TestText(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := Text(context.Background(), tt.fileName, tt.input)
+			got, err := testExtractor(t).Text(context.Background(), tt.fileName, tt.input)
 			if tt.expectErr != nil {
 				require.ErrorIs(t, err, tt.expectErr)
 
@@ -82,7 +141,8 @@ func TestText(t *testing.T) {
 	}
 }
 
-// Hostile PDFs from testdata/make_pdf_fixtures.py. Each must finish fast and without huge allocations.
+// Hostile PDFs from testdata/make_pdf_fixtures.py, parsed in a real child process. Each must fail fast
+// with an ordinary error; the test process itself (the parent) must survive.
 func TestHostilePDF(t *testing.T) {
 	t.Parallel()
 
@@ -90,26 +150,44 @@ func TestHostilePDF(t *testing.T) {
 		name      string
 		file      string
 		expected  string
-		expectErr error
+		expectMsg string // part of the error; empty means success
 	}{
 		{name: "lying /Count is ignored", file: "pdf-count-1e9.pdf", expected: "Hello brand"},
-		{name: "cycle in /Kids", file: "pdf-kids-cycle.pdf", expectErr: errPDFLimit},
-		{name: "library panic is recovered", file: "pdf-bad-filter.pdf", expectErr: ErrInvalidDocument},
-		{name: "deflate bomb", file: "pdf-stream-bomb.pdf", expectErr: errPDFLimit},
+		{name: "cycle in /Kids", file: "pdf-kids-cycle.pdf", expectMsg: "exceeds extraction limits"},
+		{name: "library panic is recovered", file: "pdf-bad-filter.pdf", expectMsg: "panicked"},
+		{name: "deflate bomb", file: "pdf-stream-bomb.pdf", expectMsg: "bytes per page"},
+		// The library recurses forever resolving an object stream that contains itself: a fatal
+		// stack overflow, which only process isolation contains.
+		{name: "self-referencing object stream", file: "pdf-objstm-self.pdf", expectMsg: "parser crashed"},
+		// One 4 MB stream of numbers referenced 20 times: stopped by the per-page budget.
+		{name: "repeated references to one big stream", file: "pdf-refs20.pdf", expectMsg: "bytes per page"},
+		// 50,000 Tf operators with a 30,000-entry ToUnicode map: refused by the CMap limit (and the
+		// decoder is cached per font name, so Tf no longer re-parses the map).
+		{name: "font switched 50,000 times", file: "pdf-tf-reparse.pdf", expectMsg: "ToUnicode map has more than"},
+		// The same 50,000 Tf with a 4,000-entry map pass the CMap limit: fast only because the decoder
+		// is cached per font name (without the cache this file takes more than 40 s).
+		{name: "font switched 50,000 times, allowed map", file: "pdf-tf-switch.pdf", expected: "A"},
+		// 100,000 codes missing from a 30,000-entry map: each one scans the whole map.
+		{name: "codes scanning a huge cmap", file: "pdf-decode-scan.pdf", expectMsg: "ToUnicode map has more than"},
+		// 400,000 nested arrays: handled by the library's parser without deep recursion.
+		{name: "deeply nested arrays", file: "pdf-deep-arrays.pdf", expectMsg: "no text layer"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			start := time.Now()
+			got, err := testExtractor(t).Text(context.Background(), tt.file, readFixture(t, tt.file))
 
-			got, err := Text(ctx, tt.file, readFixture(t, tt.file))
-			if tt.expectErr != nil {
-				require.ErrorIs(t, err, tt.expectErr)
+			assert.Less(t, time.Since(start), 10*time.Second)
+
+			if tt.expectMsg != "" {
+				// The child reports its error as text: the parent sees ErrInvalidDocument.
 				require.ErrorIs(t, err, ErrInvalidDocument)
 				require.NotErrorIs(t, err, context.DeadlineExceeded)
+				assert.Contains(t, err.Error(), tt.expectMsg)
+				assert.Equal(t, 1, strings.Count(err.Error(), ErrInvalidDocument.Error()), err.Error())
 
 				return
 			}
@@ -120,44 +198,100 @@ func TestHostilePDF(t *testing.T) {
 	}
 }
 
-func TestRunWithTimeout(t *testing.T) {
+func TestPDFWorkerFailures(t *testing.T) {
 	t.Parallel()
-
-	block := make(chan struct{})
-	t.Cleanup(func() { close(block) })
 
 	tests := []struct {
 		name      string
-		fn        func() (string, error)
-		expected  string
+		mode      string
+		timeout   time.Duration
 		expectErr error
+		expectMsg string
 	}{
-		{name: "result", fn: func() (string, error) { return "text", nil }, expected: "text"},
-		{name: "error", fn: func() (string, error) { return "", errPDFLimit }, expectErr: errPDFLimit},
-		{name: "panic", fn: func() (string, error) { panic("library bug") }, expectErr: ErrInvalidDocument},
-		{
-			name: "timeout",
-			fn: func() (string, error) {
-				<-block
-				return "", errors.New("too late")
-			},
-			expectErr: context.DeadlineExceeded,
-		},
+		{name: "hung child is killed", mode: workerModeHang, timeout: 300 * time.Millisecond, expectErr: context.DeadlineExceeded},
+		{name: "crashed child", mode: workerModeCrash, expectErr: ErrInvalidDocument, expectMsg: "fatal error: stack overflow"},
+		{name: "oversized output", mode: workerModeSpam, expectErr: ErrInvalidDocument, expectMsg: "output is larger"},
+	}
+
+	if runtime.GOOS == "linux" {
+		// RLIMIT_AS: the child cannot take 2 GB; it dies instead of eating the host's memory.
+		tests = append(tests, struct {
+			name      string
+			mode      string
+			timeout   time.Duration
+			expectErr error
+			expectMsg string
+		}{name: "memory cap", mode: workerModeAlloc, expectErr: ErrInvalidDocument, expectMsg: "parser crashed"})
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := runWithTimeout(context.Background(), 50*time.Millisecond, tt.fn)
-			if tt.expectErr != nil {
-				require.ErrorIs(t, err, tt.expectErr)
-
-				return
+			worker := testWorker(t, tt.mode)
+			if tt.timeout > 0 {
+				worker.timeout = tt.timeout
 			}
 
-			require.NoError(t, err)
-			assert.Equal(t, tt.expected, got)
+			start := time.Now()
+			_, err := worker.Parse(context.Background(), []byte("%PDF-1.4"))
+
+			require.ErrorIs(t, err, tt.expectErr)
+			require.ErrorIs(t, err, ErrInvalidDocument)
+			assert.Contains(t, err.Error(), tt.expectMsg)
+			assert.Less(t, time.Since(start), 10*time.Second)
+		})
+	}
+}
+
+// Cancelling the caller's context is reported as a cancellation, not as the parser's timeout.
+func TestPDFWorkerParentCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err := testWorker(t, workerModeHang).Parse(ctx, []byte("%PDF-1.4"))
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, ErrInvalidDocument)
+	assert.Contains(t, err.Error(), "cancelled")
+	assert.Less(t, time.Since(start), 10*time.Second)
+}
+
+func TestLimitedBuffer(t *testing.T) {
+	t.Parallel()
+
+	const kept = "abcd"
+
+	tests := []struct {
+		name      string
+		truncate  bool
+		writes    []string
+		expected  string
+		expectErr bool
+	}{
+		{name: "fits", writes: []string{"ab", "cd"}, expected: kept},
+		{name: "overflow fails", writes: []string{"abc", "def"}, expected: kept, expectErr: true},
+		{name: "overflow truncates", truncate: true, writes: []string{"abc", "def"}, expected: kept},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			b := &limitedBuffer{limit: 4, truncate: tt.truncate}
+
+			var err error
+			for _, w := range tt.writes {
+				if _, werr := b.Write([]byte(w)); werr != nil {
+					err = werr
+				}
+			}
+
+			assert.Equal(t, tt.expected, b.buf.String())
+			assert.Equal(t, tt.expectErr, err != nil)
 		})
 	}
 }

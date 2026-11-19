@@ -39,9 +39,18 @@ func Supported(name string) bool {
 	}
 }
 
+// Extractor extracts text; PDFs are parsed by the child process of its PDFWorker.
+type Extractor struct {
+	pdf *PDFWorker
+}
+
+func NewExtractor(pdf *PDFWorker) *Extractor {
+	return &Extractor{pdf: pdf}
+}
+
 // Text extracts plain text from a file; the format is chosen by the file name's extension.
 // PDF parsing is limited by PDFTimeout (and ctx).
-func Text(ctx context.Context, name string, data []byte) (string, error) {
+func (e *Extractor) Text(ctx context.Context, name string, data []byte) (string, error) {
 	if len(data) > MaxFileBytes {
 		return "", fmt.Errorf("%d bytes, at most %d: %w", len(data), MaxFileBytes, ErrTooLarge)
 	}
@@ -52,7 +61,7 @@ func Text(ctx context.Context, name string, data []byte) (string, error) {
 	case docxExt:
 		return docxText(data)
 	case pdfExt:
-		return pdfText(ctx, data)
+		return e.pdf.Parse(ctx, data)
 	default:
 		return "", fmt.Errorf("%q: %w", filepath.Ext(name), ErrUnsupportedFormat)
 	}

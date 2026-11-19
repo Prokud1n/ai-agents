@@ -22,6 +22,17 @@ type documentRow struct {
 	Checksum       string
 	EmbeddingModel string
 	ChunkerVersion int
+	Force          bool // allow changing the kind of an existing document
+}
+
+// checkKind refuses to change the kind of a stored document without Force.
+func (d *documentRow) checkKind(stored *Document) error {
+	if d.Kind == stored.Kind || d.Force {
+		return nil
+	}
+
+	return fmt.Errorf("document %q is already stored as %s, not %s (re-ingest with -force to change the kind): %w",
+		d.Source, stored.Kind, d.Kind, ErrConflict)
 }
 
 func (d *documentRow) sameVersion(o *Document) bool {
@@ -33,6 +44,13 @@ type chunkRow struct {
 	content   string
 	embedding string
 	tokens    int
+}
+
+// staleDocument is a document whose chunks were embedded by another model.
+type staleDocument struct {
+	id     int64
+	source string
+	model  string
 }
 
 // pendingEmbedding is a row whose vector is missing or made by another model.
@@ -98,6 +116,12 @@ func (r *repo) ReplaceDocument(ctx context.Context, doc *documentRow, chunks []c
 		}
 
 		existing, err := scanDocument(tx.QueryRow(ctx, selectDocument+" FOR UPDATE OF d", doc.Source), doc.Source)
+
+		if err == nil {
+			if kindErr := doc.checkKind(&existing); kindErr != nil {
+				return kindErr
+			}
+		}
 
 		switch {
 		case err == nil && doc.sameVersion(&existing):
@@ -363,20 +387,25 @@ func (r *repo) SetCorrectionEmbeddings(ctx context.Context, model string, ids []
 	return nil
 }
 
-// DocumentsWithOtherModel returns ids of documents whose chunks were embedded by another model.
-func (r *repo) DocumentsWithOtherModel(ctx context.Context, model string) ([]int64, error) {
+// DocumentsWithOtherModel returns documents whose chunks were embedded by another model.
+func (r *repo) DocumentsWithOtherModel(ctx context.Context, model string) ([]staleDocument, error) {
 	rows, err := r.db.GetReadConnection().Query(ctx,
-		`SELECT id FROM kb_documents WHERE embedding_model <> $1 ORDER BY id`, model)
+		`SELECT id, source, embedding_model FROM kb_documents WHERE embedding_model <> $1 ORDER BY id`, model)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query documents to reembed: %w", err)
 	}
 
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	docs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (staleDocument, error) {
+		var d staleDocument
+		err := row.Scan(&d.id, &d.source, &d.model)
+
+		return d, err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to read documents to reembed: %w", err)
 	}
 
-	return ids, nil
+	return docs, nil
 }
 
 func (r *repo) DocumentChunks(ctx context.Context, documentID int64) ([]pendingEmbedding, error) {
@@ -399,31 +428,75 @@ func (r *repo) DocumentChunks(ctx context.Context, documentID int64) ([]pendingE
 	return chunks, nil
 }
 
-// SetDocumentEmbeddings replaces the vectors of the document's chunks and its model in one transaction.
+// SetDocumentEmbeddings replaces the vectors of the document's chunks and its model in one transaction,
+// under the same advisory lock as ingest. If the document changed since its chunks were read (another
+// model, other chunks: a concurrent ingest), nothing is written and ErrConflict is returned.
 func (r *repo) SetDocumentEmbeddings(
 	ctx context.Context,
-	documentID int64,
+	doc *staleDocument,
 	model string,
 	chunkIDs []int64,
 	vectors []string,
 ) error {
+	const updateChunk = `UPDATE kb_chunks SET embedding = $2::text::vector WHERE id = $1 AND document_id = $3`
+
 	err := pgx.BeginFunc(ctx, r.db.GetWriteConnection(), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, doc.source); err != nil {
+			return fmt.Errorf("failed to lock document source: %w", err)
+		}
+
+		var (
+			storedModel string
+			chunks      int
+		)
+
+		err := tx.QueryRow(ctx, `
+			SELECT d.embedding_model, (SELECT count(*) FROM kb_chunks c WHERE c.document_id = d.id)
+			FROM kb_documents d WHERE d.id = $1 FOR UPDATE OF d`, doc.id).Scan(&storedModel, &chunks)
+
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("document %q was deleted: %w", doc.source, ErrConflict)
+		case err != nil:
+			return fmt.Errorf("failed to lock document: %w", err)
+		case storedModel != doc.model || chunks != len(chunkIDs):
+			return fmt.Errorf("document %q changed during reembed: %w", doc.source, ErrConflict)
+		}
+
 		batch := &pgx.Batch{}
 		for i, id := range chunkIDs {
-			batch.Queue(`UPDATE kb_chunks SET embedding = $2::text::vector WHERE id = $1 AND document_id = $3`,
-				id, vectors[i], documentID)
+			batch.Queue(updateChunk, id, vectors[i], doc.id)
 		}
 
-		batch.Queue(`UPDATE kb_documents SET embedding_model = $2, updated_at = now() WHERE id = $1`, documentID, model)
+		batch.Queue(`UPDATE kb_documents SET embedding_model = $2, updated_at = now() WHERE id = $1`, doc.id, model)
 
-		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
-			return fmt.Errorf("failed to update chunk embeddings: %w", err)
-		}
-
-		return nil
+		return execBatchOneRowEach(ctx, tx, batch)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to reembed document: %w", err)
+	}
+
+	return nil
+}
+
+// execBatchOneRowEach runs the batch and requires every statement to change exactly one row.
+func execBatchOneRowEach(ctx context.Context, tx pgx.Tx, batch *pgx.Batch) (err error) {
+	results := tx.SendBatch(ctx, batch)
+	defer func() {
+		if closeErr := results.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("failed to finish batch: %w", closeErr)
+		}
+	}()
+
+	for range batch.Len() {
+		tag, err := results.Exec()
+		if err != nil {
+			return fmt.Errorf("failed to update embeddings: %w", err)
+		}
+
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("an update changed %d rows instead of 1: %w", tag.RowsAffected(), ErrConflict)
+		}
 	}
 
 	return nil

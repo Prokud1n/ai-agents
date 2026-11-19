@@ -5,8 +5,12 @@ package knowledge
 type IngestDocumentData struct {
 	Source string
 	Title  string
-	Kind   Kind
-	Text   string
+	// Kind of the document; empty keeps the kind of an existing document (other for a new one).
+	// Changing the kind of an existing document is ErrConflict unless Force is set: a different kind
+	// usually means another document that happens to have the same source.
+	Kind  Kind
+	Text  string
+	Force bool
 }
 
 type SearchChunksData struct {

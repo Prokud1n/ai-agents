@@ -154,6 +154,15 @@ jobs:
           FFMPEG_TESTS_REQUIRED: "1"
         run: go test -count=1 -v -run 'TestRunner' ./internal/providers/ffmpeg/
 
+      # Hostile input for kb: PDFs are parsed in real child processes (the test binary re-run as the
+      # parser), symlinks inside KB_ROOT lead outside it. The log shows each attack failing as an ordinary
+      # error while the parent test process survives.
+      - name: Show hostile input tests
+        run: >-
+          go test -race -count=1 -v
+          -run 'TestHostilePDF|TestPDFWorker|TestRunnerIngestHostilePDF|TestRunnerIngestSymlinkOutsideRoot|TestCollectFiles|TestReadFileLimited'
+          ./internal/knowledge/extract/ ./internal/kbcli/
+
   compose-smoke:
     needs: tidy
     if: needs.tidy.outputs.committed != 'true'

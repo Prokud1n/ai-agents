@@ -15,6 +15,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/kbcli"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
+	"github.com/Prokud1n/ai-agents/internal/knowledge/extract"
 	"github.com/Prokud1n/ai-agents/internal/providers/embeddings"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
 )
@@ -46,6 +47,11 @@ func DeclareKBOptions() []fx.Option {
 // The command runs between fx start and stop, not in a start hook, so a long ingest is not limited
 // by APP_START_TIMEOUT.
 func RunKB(args []string) int {
+	// Hidden command: the child process that parses one PDF from stdin (see extract.PDFWorker).
+	if len(args) > 0 && args[0] == extract.WorkerCommand {
+		return extract.RunPDFWorker(os.Stdin, os.Stdout, os.Stderr)
+	}
+
 	cmd, err := kbcli.ParseCommand(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "kb: %v\n\n%s\n", err, kbcli.Usage)

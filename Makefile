@@ -75,12 +75,12 @@ agent-run:
 	docker compose run --rm --entrypoint /app/agent-run app -agent "$(AGENT)" -prompt "$(PROMPT)"
 
 # Knowledge base CLI (needs `make up` and OPENAI_API_KEY in .env):
-#   make kb-ingest KB_PATH=./brand KB_KIND=brand
+#   make kb-ingest KB_PATH=./kb/brand KB_KIND=brand        (files only from KB_ROOT, default ./kb)
 #   make kb-search Q="как мы говорим о питании" LIMIT=5
-#   make kb-delete SOURCE=voice.md
+#   make kb-delete SOURCE=brand/voice.md
 #   make kb-reembed
 kb-ingest:
-	$(HOST_DB_ENV) go run ./cmd/kb ingest "$(KB_PATH)" -kind "$(or $(KB_KIND),other)"
+	$(HOST_DB_ENV) go run ./cmd/kb ingest "$(or $(KB_PATH),./kb)" $(if $(KB_KIND),-kind "$(KB_KIND)") $(if $(KB_FORCE),-force)
 
 kb-search:
 	$(HOST_DB_ENV) go run ./cmd/kb search "$(Q)" -limit "$(or $(LIMIT),5)"
