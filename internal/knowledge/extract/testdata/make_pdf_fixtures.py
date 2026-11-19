@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generates hostile PDF fixtures for extract tests: python3 make_pdf_fixtures.py (in this folder)."""
+import struct
 import zlib
 
 FONT = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
@@ -40,3 +41,41 @@ write("pdf-bad-filter.pdf", [catalog, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >
 # 8 MB of spaces deflated to a few KB: rejected before the library inflates it.
 bomb = zlib.compress(b" " * (8 << 20), 9)
 write("pdf-stream-bomb.pdf", [catalog, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>", page(), stream(bomb, b"/Filter /FlateDecode"), FONT])
+
+# /Contents lists one 4 MB stream of numbers (no operators) 20 times: each reference must be paid for.
+numbers = zlib.compress(b"1 " * 2_000_000, 9)
+refs = b" ".join([b"4 0 R"] * 20)
+write("pdf-refs20.pdf", [catalog, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                         b"<< /Type /Page /Parent 2 0 R /Contents [" + refs + b"] >>",
+                         stream(numbers, b"/Filter /FlateDecode")])
+
+
+def objstm_self(name):
+    """An xref stream says object 5 (an object stream) lives inside object stream 5 itself:
+    resolving it recurses until the stack overflows."""
+    out = bytearray(b"%PDF-1.5\n")
+    offsets = {}
+
+    def add(num, body):
+        offsets[num] = len(out)
+        out.extend(b"%d 0 obj\n" % num + body + b"\nendobj\n")
+
+    add(1, catalog)
+    add(2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    add(3, b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>")
+    add(5, b"<< /Type /ObjStm /N 1 /First 4 /Length 8 >>\nstream\n4 0 1 \nendstream")
+    xref_num = 6
+    offsets[xref_num] = len(out)
+    rows = [struct.pack(">BIH", 0, 0, 65535)]
+    rows += [struct.pack(">BIH", 1, offsets[k], 0) for k in (1, 2, 3)]
+    rows += [struct.pack(">BIH", 2, 5, 0), struct.pack(">BIH", 2, 5, 1)]  # objects 4 and 5 in stream 5
+    rows.append(struct.pack(">BIH", 1, offsets[xref_num], 0))
+    data = b"".join(rows)
+    out.extend(b"%d 0 obj\n<< /Type /XRef /Size 7 /W [1 4 2] /Root 1 0 R /Length %d >>\nstream\n" % (xref_num, len(data))
+               + data + b"\nendstream\nendobj\n")
+    out.extend(b"startxref\n%d\n%%%%EOF\n" % offsets[xref_num])
+    with open(name, "wb") as f:
+        f.write(out)
+
+
+objstm_self("pdf-objstm-self.pdf")

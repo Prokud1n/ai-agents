@@ -13,10 +13,11 @@ import (
 type KB struct {
 	fx.Out
 
-	Logging    Logging
-	Postgres   *Postgres   `env:",init"`
-	OpenAI     *OpenAI     `env:",init"`
-	Embeddings *Embeddings `env:",init"`
+	Logging       Logging
+	Postgres      *Postgres      `env:",init"`
+	OpenAI        *OpenAI        `env:",init"`
+	Embeddings    *Embeddings    `env:",init"`
+	KnowledgeBase *KnowledgeBase `env:",init"`
 }
 
 func ParseKB() (KB, error) {

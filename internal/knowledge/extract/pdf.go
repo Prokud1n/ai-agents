@@ -3,14 +3,12 @@ package extract
 import (
 	"bytes"
 	"cmp"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"slices"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -19,14 +17,15 @@ import (
 
 // Limits for untrusted PDFs. The library trusts the file: it allocates by /Count, follows /Kids
 // cycles forever and inflates streams without bounds, so the page tree is walked here and every
-// stream is inflated through a limit before the library reads it.
+// stream is inflated through the remaining budget before the library reads it. These limits keep
+// a valid-looking hostile file cheap; what they cannot stop (a crash inside the library, such as
+// endless recursion) is contained by running the parser in a child process (pdfworker.go).
 const (
-	PDFTimeout = 30 * time.Second // the whole document
-
 	maxPDFPages         = 1000    // further pages are ignored
 	maxPageTreeNodes    = 5000    // nodes visited while walking /Kids: stops cycles
 	maxPageTreeDepth    = 32      // nesting of /Pages nodes
-	maxStreamBytes      = 4 << 20 // inflated size of one content or ToUnicode stream
+	maxPageStreamBytes  = 1 << 20 // inflated content and ToUnicode of one page; a stream referenced twice counts twice
+	maxPDFStreamBytes   = 16 << 20
 	maxPredictorColumns = 1 << 16 // the library allocates a buffer of this size per stream
 	maxGlyphsPerPage    = 200_000
 	maxGlyphsPerPDF     = 2_000_000
@@ -42,48 +41,6 @@ const (
 )
 
 var errPDFLimit = errors.New("pdf exceeds extraction limits")
-
-// pdfText extracts the text layer with a timeout. The library cannot be interrupted, so it runs in
-// a goroutine: on timeout the caller gets an error, but the goroutine runs until the library returns.
-// The limits above bound the memory it can take; a long-running process should move PDF parsing
-// to a separate process before accepting PDFs from untrusted users.
-func pdfText(ctx context.Context, data []byte) (string, error) {
-	return runWithTimeout(ctx, PDFTimeout, func() (string, error) {
-		return parsePDF(data)
-	})
-}
-
-// runWithTimeout runs fn in a goroutine and stops waiting for it when the timeout or ctx expires.
-// A panic in fn becomes ErrInvalidDocument: the library panics on many malformed files.
-func runWithTimeout(ctx context.Context, timeout time.Duration, fn func() (string, error)) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	type result struct {
-		text string
-		err  error
-	}
-
-	done := make(chan result, 1) // buffered: a late result must not block the goroutine forever
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				done <- result{err: fmt.Errorf("failed to parse pdf: %v: %w", r, ErrInvalidDocument)}
-			}
-		}()
-
-		text, err := fn()
-		done <- result{text: text, err: err}
-	}()
-
-	select {
-	case r := <-done:
-		return r.text, r.err
-	case <-ctx.Done():
-		return "", fmt.Errorf("failed to parse pdf in %s: %w: %w", timeout, ErrInvalidDocument, ctx.Err())
-	}
-}
 
 // parsePDF extracts the text layer page by page. Scanned PDFs have no text layer and give an error:
 // they need OCR first. Columns and tables are not reconstructed: lines are read top to bottom.
@@ -101,10 +58,11 @@ func parsePDF(data []byte) (string, error) {
 	var (
 		texts  []string
 		glyphs int
+		budget = streamBudget{document: maxPDFStreamBytes}
 	)
 
 	for i, page := range pages {
-		if err := checkPageStreams(page); err != nil {
+		if err := budget.checkPage(page); err != nil {
 			return "", fmt.Errorf("pdf page %d: %w", i+1, err)
 		}
 
@@ -175,9 +133,19 @@ func collectPages(root pdf.Value) ([]pdf.Page, error) {
 	return pages, nil
 }
 
-// checkPageStreams inflates the streams the library will read for the page (content and fonts'
-// ToUnicode maps) through a limit, so it never inflates an oversized stream itself.
-func checkPageStreams(page pdf.Page) error {
+// streamBudget limits the inflated size of the streams the library will read: per page and for
+// the whole document. Every reference is counted, so one stream listed many times in /Contents
+// costs as much as distinct streams of that size.
+type streamBudget struct {
+	document int64 // bytes left for the rest of the document
+	page     int64 // bytes left for the current page
+}
+
+// checkPage inflates the streams the library will read for the page (content and fonts' ToUnicode
+// maps) through the remaining budget, so the library never inflates more than the budget allows.
+func (b *streamBudget) checkPage(page pdf.Page) error {
+	b.page = min(maxPageStreamBytes, b.document)
+
 	contents := page.V.Key("Contents")
 
 	streams := []pdf.Value{contents}
@@ -197,36 +165,42 @@ func checkPageStreams(page pdf.Page) error {
 	}
 
 	for _, s := range streams {
-		if err := checkStream(s); err != nil {
+		n, err := inflateLimited(s, b.page)
+		if err != nil {
 			return err
 		}
+
+		b.page -= n
+		b.document -= n
 	}
 
 	return nil
 }
 
-func checkStream(s pdf.Value) error {
+// inflateLimited reads the inflated stream and returns its size; more than limit bytes is an error.
+func inflateLimited(s pdf.Value, limit int64) (int64, error) {
 	if s.Kind() != pdf.Stream {
-		return nil
+		return 0, nil
 	}
 
 	if columns := s.Key("DecodeParms").Key("Columns").Int64(); columns > maxPredictorColumns {
-		return fmt.Errorf("stream predictor has %d columns: %w: %w", columns, ErrInvalidDocument, errPDFLimit)
+		return 0, fmt.Errorf("stream predictor has %d columns: %w: %w", columns, ErrInvalidDocument, errPDFLimit)
 	}
 
 	rc := s.Reader()
 	defer rc.Close()
 
-	n, err := io.Copy(io.Discard, io.LimitReader(rc, maxStreamBytes+1))
+	n, err := io.Copy(io.Discard, io.LimitReader(rc, limit+1))
 	if err != nil {
-		return fmt.Errorf("failed to inflate pdf stream: %w: %w", ErrInvalidDocument, err)
+		return 0, fmt.Errorf("failed to inflate pdf stream: %w: %w", ErrInvalidDocument, err)
 	}
 
-	if n > maxStreamBytes {
-		return fmt.Errorf("pdf stream inflates to more than %d bytes: %w: %w", maxStreamBytes, ErrInvalidDocument, errPDFLimit)
+	if n > limit {
+		return 0, fmt.Errorf("pdf streams inflate to more than %d bytes per page or %d per document: %w: %w",
+			maxPageStreamBytes, maxPDFStreamBytes, ErrInvalidDocument, errPDFLimit)
 	}
 
-	return nil
+	return n, nil
 }
 
 type pdfLine struct {

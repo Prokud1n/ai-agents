@@ -11,12 +11,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
 	"github.com/Prokud1n/ai-agents/internal/knowledge/chunk"
 	"github.com/Prokud1n/ai-agents/internal/knowledge/extract"
 )
 
-var ErrIngestFailed = errors.New("some files were not ingested")
+var (
+	ErrIngestFailed = errors.New("some files were not ingested")
+	ErrOutsideRoot  = errors.New("path is outside KB_ROOT")
+)
 
 type knowledgeService interface {
 	Ingest(ctx context.Context, data knowledge.IngestDocumentData) (knowledge.IngestResult, error)
@@ -31,21 +35,42 @@ type File struct {
 	Source string
 }
 
-// Runner executes kb commands and prints results for a human.
-type Runner struct {
-	svc knowledgeService
-	out io.Writer
-	log *slog.Logger
+type textExtractor interface {
+	Text(ctx context.Context, name string, data []byte) (string, error)
 }
 
-func NewRunner(svc *knowledge.Service, log *slog.Logger) *Runner {
-	return &Runner{svc: svc, out: os.Stdout, log: log}
+// Runner executes kb commands and prints results for a human.
+type Runner struct {
+	svc       knowledgeService
+	extractor textExtractor
+	root      string // KB_ROOT
+	out       io.Writer
+	log       *slog.Logger
+}
+
+// NewRunner parses PDFs in child processes: this executable re-run with the hidden extract-pdf
+// command (see internal.RunKB), with an empty environment, so the parser sees no secrets.
+func NewRunner(svc *knowledge.Service, cfg *config.KnowledgeBase, log *slog.Logger) (*Runner, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find the kb executable for the pdf parser: %w", err)
+	}
+
+	worker := &extract.PDFWorker{Path: exe, Args: []string{extract.WorkerCommand}}
+
+	return &Runner{
+		svc:       svc,
+		extractor: extract.NewExtractor(worker),
+		root:      cfg.Root,
+		out:       os.Stdout,
+		log:       log,
+	}, nil
 }
 
 func (r *Runner) Run(ctx context.Context, cmd *Command) error {
 	switch cmd.Action {
 	case IngestAction:
-		return r.ingest(ctx, cmd.Arg, cmd.Kind)
+		return r.ingest(ctx, cmd)
 	case SearchAction:
 		return r.search(ctx, cmd)
 	case DeleteAction:
@@ -91,20 +116,20 @@ func (r *Runner) reembed(ctx context.Context) error {
 }
 
 // ingest loads one file or every supported file under a folder; a failed file does not stop the others.
-func (r *Runner) ingest(ctx context.Context, root string, kind knowledge.Kind) error {
-	files, err := CollectFiles(root)
+func (r *Runner) ingest(ctx context.Context, cmd *Command) error {
+	files, err := CollectFiles(r.root, cmd.Arg)
 	if err != nil {
 		return err
 	}
 
 	if len(files) == 0 {
-		return fmt.Errorf("no .md, .txt, .docx or .pdf files in %s: %w", root, ErrUsage)
+		return fmt.Errorf("no .md, .txt, .docx or .pdf files in %s: %w", cmd.Arg, ErrUsage)
 	}
 
 	failed := 0
 
 	for _, file := range files {
-		res, err := r.ingestFile(ctx, file, kind)
+		res, err := r.ingestFile(ctx, file, cmd)
 		if err != nil {
 			failed++
 
@@ -124,22 +149,25 @@ func (r *Runner) ingest(ctx context.Context, root string, kind knowledge.Kind) e
 	return nil
 }
 
-func (r *Runner) ingestFile(ctx context.Context, file File, kind knowledge.Kind) (knowledge.IngestResult, error) {
+// ingestFile reads and extracts one file. A file that cannot be read as its format (including a PDF
+// whose parser process crashed) is a validation error of that file only.
+func (r *Runner) ingestFile(ctx context.Context, file File, cmd *Command) (knowledge.IngestResult, error) {
 	data, err := ReadFileLimited(file.Path, extract.MaxFileBytes)
 	if err != nil {
-		return knowledge.IngestResult{}, err
+		return knowledge.IngestResult{}, fmt.Errorf("%w: %w", knowledge.ErrValidation, err)
 	}
 
-	text, err := extract.Text(ctx, file.Path, data)
+	text, err := r.extractor.Text(ctx, file.Path, data)
 	if err != nil {
-		return knowledge.IngestResult{}, fmt.Errorf("failed to extract text: %w", err)
+		return knowledge.IngestResult{}, fmt.Errorf("failed to extract text: %w: %w", knowledge.ErrValidation, err)
 	}
 
 	res, err := r.svc.Ingest(ctx, knowledge.IngestDocumentData{
 		Source: file.Source,
 		Title:  DocumentTitle(text, file.Path),
-		Kind:   kind,
+		Kind:   cmd.Kind,
 		Text:   text,
+		Force:  cmd.Force,
 	})
 	if err != nil {
 		return knowledge.IngestResult{}, fmt.Errorf("failed to ingest document: %w", err)
@@ -183,32 +211,47 @@ func ReadFileLimited(path string, limit int64) ([]byte, error) {
 }
 
 // CollectFiles returns the file itself or supported files under the folder (hidden ones skipped).
-// Source is the slash-separated path relative to root (for a single file, its name), so it does not
-// depend on the current directory or on how root was spelled.
-func CollectFiles(root string) ([]File, error) {
-	root = filepath.Clean(root)
-
-	info, err := os.Stat(root)
+// path must be inside root (both may be relative to the current directory; symlinks are resolved).
+// Source is the slash-separated path relative to root, so a file has the same source whether it was
+// ingested alone or with its folder, and files of different folders never collide.
+func CollectFiles(root, path string) ([]File, error) {
+	rootDir, err := resolvePath(root)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open %s: %w", root, err)
+		return nil, fmt.Errorf("failed to open KB_ROOT: %w", err)
+	}
+
+	target, err := resolvePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %s: %w", path, err)
+	}
+
+	if _, err := sourceOf(rootDir, target); err != nil {
+		return nil, err
+	}
+
+	info, err := os.Stat(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %s: %w", path, err)
 	}
 
 	if !info.IsDir() {
-		if !extract.Supported(root) {
-			return nil, fmt.Errorf("%s: %w", root, extract.ErrUnsupportedFormat)
+		if !extract.Supported(target) {
+			return nil, fmt.Errorf("%s: %w", path, extract.ErrUnsupportedFormat)
 		}
 
-		return []File{{Path: root, Source: filepath.Base(root)}}, nil
+		source, err := sourceOf(rootDir, target)
+
+		return []File{{Path: target, Source: source}}, err
 	}
 
 	var files []File
 
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(target, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if p != root && strings.HasPrefix(d.Name(), ".") {
+		if p != target && strings.HasPrefix(d.Name(), ".") {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -220,20 +263,49 @@ func CollectFiles(root string) ([]File, error) {
 			return nil
 		}
 
-		rel, err := filepath.Rel(root, p)
+		source, err := sourceOf(rootDir, p)
 		if err != nil {
-			return fmt.Errorf("failed to resolve source of %s: %w", p, err)
+			return err
 		}
 
-		files = append(files, File{Path: p, Source: filepath.ToSlash(rel)})
+		files = append(files, File{Path: p, Source: source})
 
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to walk %s: %w", root, err)
+		return nil, fmt.Errorf("failed to walk %s: %w", path, err)
 	}
 
 	return files, nil
+}
+
+// resolvePath returns the absolute path with symlinks resolved.
+func resolvePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve %s: %w", path, err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve %s: %w", path, err)
+	}
+
+	return resolved, nil
+}
+
+// sourceOf returns path relative to root with slashes; a path outside root is ErrOutsideRoot.
+func sourceOf(root, path string) (string, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve source of %s: %w", path, err)
+	}
+
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s (KB_ROOT is %s): %w", path, root, ErrOutsideRoot)
+	}
+
+	return filepath.ToSlash(rel), nil
 }
 
 // DocumentTitle is the first level-1 heading, or the file name without extension.

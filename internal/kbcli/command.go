@@ -13,12 +13,14 @@ import (
 
 // Usage is printed on invalid arguments.
 const Usage = `usage:
-  kb ingest <file or folder> [-kind brand|product|post|other]   load .md, .txt, .docx, .pdf files
+  kb ingest <file or folder> [-kind brand|product|post|other] [-force]
+                                                                 load .md, .txt, .docx, .pdf files from KB_ROOT
   kb search "<query>" [-limit 5] [-kind brand,post]              find fragments by meaning
   kb delete <source>                                             remove a document (source as printed by ingest)
   kb reembed                                                     fill in missing embeddings, move to the current model
 
-A document's source is its path relative to the folder given to ingest (for a single file, its name).`
+Files are ingested only from KB_ROOT (default ./kb); a document's source is its path relative to it.
+Without -kind an existing document keeps its kind (a new one is "other"); changing the kind needs -force.`
 
 var ErrUsage = errors.New("invalid arguments")
 
@@ -37,6 +39,7 @@ type Command struct {
 	Kind   knowledge.Kind
 	Kinds  []knowledge.Kind
 	Limit  int
+	Force  bool // ingest: allow changing the kind of existing documents
 }
 
 // ParseCommand parses arguments without the program name. Flags may go before or after the positional argument.
@@ -54,7 +57,8 @@ func ParseCommand(args []string) (Command, error) {
 
 	switch cmd.Action {
 	case IngestAction:
-		fs.StringVar(&kind, "kind", string(knowledge.OtherKind), "document kind")
+		fs.StringVar(&kind, "kind", "", "document kind; empty keeps the existing one")
+		fs.BoolVar(&cmd.Force, "force", false, "allow changing the kind of existing documents")
 	case SearchAction:
 		fs.StringVar(&kind, "kind", "", "comma-separated kinds to search in")
 		fs.IntVar(&cmd.Limit, "limit", knowledge.DefaultLimit, "number of results")
@@ -92,6 +96,10 @@ func ParseCommand(args []string) (Command, error) {
 func withKinds(cmd *Command, kind string) error {
 	switch cmd.Action {
 	case IngestAction:
+		if kind == "" {
+			return nil
+		}
+
 		k, err := knowledge.ParseKind(kind)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrUsage, err)

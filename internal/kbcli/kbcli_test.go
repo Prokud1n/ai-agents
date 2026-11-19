@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -31,6 +32,34 @@ const (
 	subDocxFile = "sub/" + docxFile
 )
 
+// testWorkerEnv makes the test binary act as the PDF child process, like `kb extract-pdf`.
+const testWorkerEnv = "KBCLI_TEST_PDF_WORKER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(testWorkerEnv) == "1" {
+		os.Exit(extract.RunPDFWorker(os.Stdin, os.Stdout, os.Stderr))
+	}
+
+	os.Exit(m.Run())
+}
+
+func newTestRunner(t *testing.T, svc knowledgeService, root string, out io.Writer) *Runner {
+	t.Helper()
+
+	exe, err := os.Executable()
+	require.NoError(t, err)
+
+	worker := &extract.PDFWorker{Path: exe, Env: []string{testWorkerEnv + "=1", "GORACE=atexit_sleep_ms=0"}}
+
+	return &Runner{
+		svc:       svc,
+		extractor: extract.NewExtractor(worker),
+		root:      root,
+		out:       out,
+		log:       slog.New(slog.DiscardHandler),
+	}
+}
+
 func TestParseCommand(t *testing.T) {
 	t.Parallel()
 
@@ -43,7 +72,7 @@ func TestParseCommand(t *testing.T) {
 		{
 			name:     "ingest with default kind",
 			input:    []string{ingestCmd, brandName},
-			expected: Command{Action: IngestAction, Arg: brandName, Kind: knowledge.OtherKind},
+			expected: Command{Action: IngestAction, Arg: brandName},
 		},
 		{
 			name:     "ingest with kind after path",
@@ -79,6 +108,11 @@ func TestParseCommand(t *testing.T) {
 		{name: "unknown search kind", input: []string{searchCmd, "a", kindFlag, "brand,recipe"}, expectErr: true},
 		{name: "flag of another command", input: []string{deleteCmd, testSource, kindFlag, brandName}, expectErr: true},
 		{name: "bad limit", input: []string{searchCmd, "a", "-limit", "many"}, expectErr: true},
+		{
+			name:     "ingest with force",
+			input:    []string{ingestCmd, "-force", "a", kindFlag, brandName},
+			expected: Command{Action: IngestAction, Arg: "a", Kind: knowledge.BrandKind, Force: true},
+		},
 		{name: "reembed", input: []string{string(ReembedAction)}, expected: Command{Action: ReembedAction}},
 		{name: "reembed with argument", input: []string{string(ReembedAction), "x"}, expectErr: true},
 	}
@@ -103,48 +137,47 @@ func TestParseCommand(t *testing.T) {
 func TestCollectFiles(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+
 	for _, name := range []string{voiceFile, notesFile, "photo.jpg", ".hidden.md", subDocxFile, ".git/x.md"} {
 		path := filepath.Join(dir, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
 		require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
 	}
 
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, voiceFile), []byte("x"), 0o600))
+
 	file := func(rel string) File { return File{Path: filepath.Join(dir, rel), Source: rel} }
+	all := []File{file(notesFile), file(subDocxFile), file(voiceFile)}
 
 	tests := []struct {
 		name      string
+		root      string
 		input     string
 		expected  []File
-		expectErr bool
+		expectErr error
 	}{
-		{
-			name:     "folder: supported, not hidden, recursive, sources relative to root",
-			input:    dir,
-			expected: []File{file(notesFile), file(subDocxFile), file(voiceFile)},
-		},
-		{
-			name:     "root spelled differently gives the same sources",
-			input:    dir + "/./sub/..",
-			expected: []File{file(notesFile), file(subDocxFile), file(voiceFile)},
-		},
-		{
-			name:     "subfolder as root",
-			input:    filepath.Join(dir, "sub"),
-			expected: []File{{Path: filepath.Join(dir, subDocxFile), Source: docxFile}},
-		},
-		{name: "single file: source is its name", input: filepath.Join(dir, voiceFile), expected: []File{file(voiceFile)}},
-		{name: "unsupported file", input: filepath.Join(dir, "photo.jpg"), expectErr: true},
-		{name: "missing path", input: filepath.Join(dir, "nope"), expectErr: true},
+		{name: "root itself: supported, not hidden, recursive", root: dir, input: dir, expected: all},
+		{name: "root spelled differently", root: dir + "/./sub/..", input: dir, expected: all},
+		{name: "subfolder: sources stay relative to root", root: dir, input: filepath.Join(dir, "sub"), expected: []File{file(subDocxFile)}},
+		{name: "single file in a subfolder", root: dir, input: filepath.Join(dir, subDocxFile), expected: []File{file(subDocxFile)}},
+		{name: "single file", root: dir, input: filepath.Join(dir, voiceFile), expected: []File{file(voiceFile)}},
+		{name: "file outside root", root: dir, input: filepath.Join(outside, voiceFile), expectErr: ErrOutsideRoot},
+		{name: "folder outside root", root: filepath.Join(dir, "sub"), input: dir, expectErr: ErrOutsideRoot},
+		{name: "unsupported file", root: dir, input: filepath.Join(dir, "photo.jpg"), expectErr: extract.ErrUnsupportedFormat},
+		{name: "missing path", root: dir, input: filepath.Join(dir, "nope"), expectErr: os.ErrNotExist},
+		{name: "missing root", root: filepath.Join(dir, "nope"), input: dir, expectErr: os.ErrNotExist},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := CollectFiles(tt.input)
-			if tt.expectErr {
-				require.Error(t, err)
+			got, err := CollectFiles(tt.root, tt.input)
+			if tt.expectErr != nil {
+				require.ErrorIs(t, err, tt.expectErr)
 
 				return
 			}
@@ -246,22 +279,50 @@ func TestRunnerIngest(t *testing.T) {
 
 	svc := &fakeService{failOn: "broken.md"}
 	out := &bytes.Buffer{}
-	runner := &Runner{svc: svc, out: out, log: slog.New(slog.DiscardHandler)}
+	runner := newTestRunner(t, svc, dir, out)
 
-	err := runner.Run(context.Background(), &Command{Action: IngestAction, Arg: dir, Kind: knowledge.BrandKind})
+	err := runner.Run(context.Background(), &Command{Action: IngestAction, Arg: dir, Kind: knowledge.BrandKind, Force: true})
 
 	require.ErrorIs(t, err, ErrIngestFailed)
 	require.Len(t, svc.ingested, 1)
-	assert.Equal(t, knowledge.IngestDocumentData{Source: voiceFile, Title: "Голос", Kind: knowledge.BrandKind, Text: "# Голос\n\nна ты"}, svc.ingested[0])
+	assert.Equal(t, knowledge.IngestDocumentData{
+		Source: voiceFile, Title: "Голос", Kind: knowledge.BrandKind, Text: "# Голос\n\nна ты", Force: true,
+	}, svc.ingested[0])
 	assert.Contains(t, out.String(), "created   "+voiceFile+" (1 chunks)")
 	assert.Contains(t, out.String(), "failed    broken.md")
+}
+
+// A PDF that crashes its parser process fails as a validation error of that file; the kb process
+// (here: the test) survives and goes on with the next file.
+func TestRunnerIngestHostilePDF(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	hostile, err := os.ReadFile(filepath.Join("..", "knowledge", "extract", "testdata", "pdf-objstm-self.pdf"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a-hostile.pdf"), hostile, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, voiceFile), []byte("# Голос\n\nна ты"), 0o600))
+
+	svc := &fakeService{}
+	runner := newTestRunner(t, svc, dir, &bytes.Buffer{})
+
+	file := File{Path: filepath.Join(dir, "a-hostile.pdf"), Source: "a-hostile.pdf"}
+	_, err = runner.ingestFile(context.Background(), file, &Command{Action: IngestAction})
+	require.ErrorIs(t, err, knowledge.ErrValidation)
+	require.ErrorIs(t, err, extract.ErrInvalidDocument)
+
+	err = runner.Run(context.Background(), &Command{Action: IngestAction, Arg: dir})
+
+	require.ErrorIs(t, err, ErrIngestFailed)
+	require.Len(t, svc.ingested, 1)
+	assert.Equal(t, voiceFile, svc.ingested[0].Source)
 }
 
 func TestRunnerReembed(t *testing.T) {
 	t.Parallel()
 
 	out := &bytes.Buffer{}
-	runner := &Runner{svc: &fakeService{}, out: out, log: slog.New(slog.DiscardHandler)}
+	runner := newTestRunner(t, &fakeService{}, t.TempDir(), out)
 
 	require.NoError(t, runner.Run(context.Background(), &Command{Action: ReembedAction}))
 
@@ -273,7 +334,7 @@ func TestRunnerSearchAndDelete(t *testing.T) {
 	t.Parallel()
 
 	out := &bytes.Buffer{}
-	runner := &Runner{svc: &fakeService{}, out: out, log: slog.New(slog.DiscardHandler)}
+	runner := newTestRunner(t, &fakeService{}, t.TempDir(), out)
 
 	require.NoError(t, runner.Run(context.Background(), &Command{Action: SearchAction, Arg: testQuery}))
 	require.NoError(t, runner.Run(context.Background(), &Command{Action: DeleteAction, Arg: testSource}))

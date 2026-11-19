@@ -58,9 +58,10 @@ func (s *Service) Ingest(ctx context.Context, data IngestDocumentData) (IngestRe
 		Checksum:       Checksum(data.Text),
 		EmbeddingModel: s.embedder.Model(),
 		ChunkerVersion: chunk.Version,
+		Force:          data.Force,
 	}
 
-	if res, unchanged, err := s.skipUnchanged(ctx, doc); err != nil || unchanged {
+	if res, unchanged, err := s.checkExisting(ctx, doc); err != nil || unchanged {
 		return res, err
 	}
 
@@ -80,15 +81,28 @@ func (s *Service) Ingest(ctx context.Context, data IngestDocumentData) (IngestRe
 	return res, nil
 }
 
-// skipUnchanged reports whether the stored version is current; then only its title and kind are
-// updated, and chunks with embeddings are kept. ReplaceDocument checks again under a lock.
-func (s *Service) skipUnchanged(ctx context.Context, doc *documentRow) (res IngestResult, unchanged bool, err error) {
+// checkExisting resolves the document's kind against the stored one and reports whether the stored
+// version is current; then only its title and kind are updated, and chunks with embeddings are kept.
+// ReplaceDocument checks again under a lock.
+func (s *Service) checkExisting(ctx context.Context, doc *documentRow) (res IngestResult, unchanged bool, err error) {
 	existing, err := s.repo.GetDocumentBySource(ctx, doc.Source)
 	if errors.Is(err, ErrNotFound) {
+		if doc.Kind == "" {
+			doc.Kind = OtherKind
+		}
+
 		return IngestResult{}, false, nil
 	}
 
 	if err != nil {
+		return IngestResult{}, false, err
+	}
+
+	if doc.Kind == "" {
+		doc.Kind = existing.Kind
+	}
+
+	if err := doc.checkKind(&existing); err != nil {
 		return IngestResult{}, false, err
 	}
 
@@ -241,28 +255,21 @@ func (s *Service) Reembed(ctx context.Context) (ReembedResult, error) {
 		return res, err
 	}
 
-	ids, err := s.repo.DocumentsWithOtherModel(ctx, model)
+	docs, err := s.repo.DocumentsWithOtherModel(ctx, model)
 	if err != nil {
 		return res, err
 	}
 
-	for _, id := range ids {
-		chunks, err := s.repo.DocumentChunks(ctx, id)
+	for i := range docs {
+		chunks, err := s.reembedDocument(ctx, &docs[i], model)
 		if err != nil {
 			return res, err
 		}
 
-		chunkIDs, vectors, err := s.embedPending(ctx, chunks)
-		if err != nil {
-			return res, fmt.Errorf("failed to embed chunks of document %d: %w", id, err)
+		if chunks > 0 { // 0: the document was deleted or re-ingested with the model meanwhile
+			res.Documents++
+			res.Chunks += chunks
 		}
-
-		if err := s.repo.SetDocumentEmbeddings(ctx, id, model, chunkIDs, vectors); err != nil {
-			return res, err
-		}
-
-		res.Documents++
-		res.Chunks += len(chunks)
 	}
 
 	if res.StaleChunking, err = s.repo.CountStaleChunking(ctx, chunk.Version); err != nil {
@@ -273,6 +280,39 @@ func (s *Service) Reembed(ctx context.Context) (ReembedResult, error) {
 		"chunks", res.Chunks, "stale_chunking", res.StaleChunking, "model", model)
 
 	return res, nil
+}
+
+// reembedDocument moves the document's chunks to the model and returns their number. If a concurrent
+// ingest changed the document meanwhile, it is re-read once: an ingest with the current model (or a
+// delete) leaves nothing to do; a second conflict is returned as ErrConflict.
+func (s *Service) reembedDocument(ctx context.Context, doc *staleDocument, model string) (int, error) {
+	for attempt := 0; ; attempt++ {
+		chunks, err := s.repo.DocumentChunks(ctx, doc.id)
+		if err != nil {
+			return 0, err
+		}
+
+		chunkIDs, vectors, err := s.embedPending(ctx, chunks)
+		if err != nil {
+			return 0, fmt.Errorf("failed to embed chunks of %q: %w", doc.source, err)
+		}
+
+		err = s.repo.SetDocumentEmbeddings(ctx, doc, model, chunkIDs, vectors)
+		if err == nil || !errors.Is(err, ErrConflict) || attempt > 0 {
+			return len(chunks), err
+		}
+
+		current, err := s.repo.GetDocumentBySource(ctx, doc.source)
+		if errors.Is(err, ErrNotFound) {
+			return 0, nil // deleted meanwhile
+		}
+
+		if err != nil || current.EmbeddingModel == model {
+			return 0, err
+		}
+
+		doc.id, doc.model = current.ID, current.EmbeddingModel
+	}
 }
 
 func (s *Service) reembedCorrections(ctx context.Context, model string) (int, error) {
@@ -371,12 +411,10 @@ func normalizeIngestData(data IngestDocumentData) (IngestDocumentData, error) {
 		return IngestDocumentData{}, fmt.Errorf("document source is empty: %w", ErrValidation)
 	}
 
-	if data.Kind == "" {
-		data.Kind = OtherKind
-	}
-
-	if _, err := ParseKind(string(data.Kind)); err != nil {
-		return IngestDocumentData{}, err
+	if data.Kind != "" {
+		if _, err := ParseKind(string(data.Kind)); err != nil {
+			return IngestDocumentData{}, err
+		}
 	}
 
 	if data.Text == "" {

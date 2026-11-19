@@ -85,9 +85,9 @@ func TestNormalizeIngestData(t *testing.T) {
 		expectErr bool
 	}{
 		{
-			name:     "defaults: kind other, title from source",
+			name:     "defaults: title from source, kind resolved later",
 			input:    IngestDocumentData{Source: " " + voiceSource + " ", Text: "текст\r\n"},
-			expected: IngestDocumentData{Source: voiceSource, Title: voiceSource, Kind: OtherKind, Text: "текст"},
+			expected: IngestDocumentData{Source: voiceSource, Title: voiceSource, Kind: "", Text: "текст"},
 		},
 		{
 			name:     "kept values",
@@ -142,6 +142,37 @@ func TestDocumentSameVersion(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.expected, tt.input.sameVersion(&stored))
+		})
+	}
+}
+
+func TestDocumentCheckKind(t *testing.T) {
+	t.Parallel()
+
+	stored := Document{Kind: BrandKind}
+
+	tests := []struct {
+		name      string
+		input     documentRow
+		expectErr bool
+	}{
+		{name: "same kind", input: documentRow{Kind: BrandKind}},
+		{name: "other kind", input: documentRow{Kind: ProductKind}, expectErr: true},
+		{name: "other kind with force", input: documentRow{Kind: ProductKind, Force: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.input.checkKind(&stored)
+			if tt.expectErr {
+				require.ErrorIs(t, err, ErrConflict)
+
+				return
+			}
+
+			require.NoError(t, err)
 		})
 	}
 }
