@@ -557,7 +557,7 @@ write_report() {
 		llm_usage_report
 		if [[ $ENV_OK == true ]]; then
 			printf '\n## Образы\n\n```\n'
-			compose --profile telegram config --images 2>/dev/null | sort
+			compose --profile telegram config --images 2>/dev/null | sort -u
 			printf -- '---\n'
 			docker image inspect --format '{{index .RepoTags 0}} {{.Id}} {{.Created}}' ai-agents-app:local 2>/dev/null || true
 			docker image inspect --format '{{index .RepoTags 0}} {{.Id}} {{.Created}}' ai-agents-media:local 2>/dev/null || true
