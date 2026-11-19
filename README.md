@@ -5,6 +5,8 @@
 ## Локальный запуск
 
 Нужны Docker и Docker Compose v2.
+Установка с нуля (macOS, Linux-VPS), справочник переменных `.env` и где взять ключи — в [docs/SETUP.md](docs/SETUP.md);
+сквозная проверка всего окружения с реальными ключами — `make m0-check` (отчёт в `m0-results/report.md`).
 Ручная проверка всех кирпичей с реальными ключами по шагам — [docs/M0-MANUAL.md](docs/M0-MANUAL.md).
 
 ```bash
