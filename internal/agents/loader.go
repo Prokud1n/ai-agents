@@ -210,6 +210,10 @@ func resolveSkills(
 			skill, err = loadSkill(fsys, path.Join(dir, skillsDirName, name), name)
 		case isShared:
 			skill = sharedSkill
+		case strings.HasPrefix(name, templatePrefix):
+			err = invalid(fmt.Sprintf("skill directories starting with %q are templates and are skipped: "+
+				"rename the skill (expected a local %s or a shared %s)",
+				templatePrefix, localPath, path.Join(shared.root, name, skillFileName)))
 		default:
 			err = invalid(fmt.Sprintf("not found: expected a local %s or a shared %s",
 				localPath, path.Join(shared.root, name, skillFileName)))

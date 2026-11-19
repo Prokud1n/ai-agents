@@ -99,6 +99,10 @@ func TestLoadRegistryInvalid(t *testing.T) {
 				filepath.Join(invalidCaseDir("skill_conflict"), skillsDirName, planSkill, skillFileName) + ")",
 		},
 		{name: "shared_skill_invalid", file: "skills/tone/SKILL.md", expected: descriptionRequired},
+		{
+			name: "template_skill", file: agentFile,
+			expected: `skill "_draft": skill directories starting with "_" are templates and are skipped: rename the skill`,
+		},
 	}
 
 	for _, tt := range tests {

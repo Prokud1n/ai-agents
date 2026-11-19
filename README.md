@@ -129,10 +129,16 @@ docker run --rm --env-file .env --user "$(id -u):$(id -g)" -v "$PWD:/work" ai-ag
 `agents/<name>/` и поменяй `name`. Новый инструмент регистрируется модулем в fx-группе `agents.ToolsGroup`.
 
 Ручная проверка с настоящим ключом (`ANTHROPIC_API_KEY` в `.env`): ответ агента и расход токенов и денег.
+Настоящих агентов пока нет (они появятся в T2.x), а шаблон `_example` не загружается, поэтому проверяй слой
+на копии шаблона:
 
 ```bash
-make agent-run AGENT=<name> PROMPT="Привет! Представься."
+cp -r agents/_example agents/test
+sed -i 's/^name: _example$/name: test/' agents/test/agent.md   # name должно совпадать с именем папки
+make agent-run AGENT=test PROMPT="Привет! Представься."
 ```
+
+`agents/test/` в `.gitignore`: копия попадает в образ при сборке, но не в коммит.
 
 ## База знаний бренда
 
@@ -161,13 +167,16 @@ make kb-reembed                                      # дозаполнить э
 CI (`.github/workflows/ci.yml`): job `tidy` делает `go mod tidy` и на ветках `feature/**`, `fix/**`, `refactoring/**`
 сам коммитит `go.mod`/`go.sum` (после этого сделай `git pull`), затем `check` и `compose-smoke` проверяют итоговый коммит.
 `check` требует, чтобы ветка содержала актуальный `main`: перед мержем сделай rebase. Новые миграции ветки
-должны иметь номер больше последней миграции в `main` (golang-migrate молча пропускает меньший номер).
+должны иметь номер больше последней миграции в `main` (golang-migrate молча пропускает меньший номер), а уже
+смерженные миграции нельзя править, удалять и переименовывать.
 
 ### Интеграционные тесты
 
 Тесты с `Integration` в имени работают с PostgreSQL из compose и подключаются через `pgtest.Connect`: он создаёт
 для каждого теста отдельную базу `pgtest_*`, накатывает в неё все миграции и удаляет её в конце теста.
-Без `INTEGRATION=1` они пропускаются, поэтому `make test` базы не требует.
+Без `INTEGRATION=1` они пропускаются, поэтому `make test` базы не требует. `make test-integration` печатает
+подробный вывод (`-v`) и падает, если какой-то тест пропущен (`--- SKIP`) или не прошёл ни один: интеграционный тест
+при `INTEGRATION=1` не должен вызывать `t.Skip`.
 
 ```bash
 make up && make test-integration

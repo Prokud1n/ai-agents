@@ -65,9 +65,10 @@ func run(args []string, out io.Writer) error {
 	}()
 
 	result, err := runtime.Run(ctx, &agents.RunAgentData{Agent: opts.agent, Input: opts.prompt, Model: opts.model})
-	// A partial result (max_tokens, refusal) comes with an error: print it, the tokens are already billed.
+	// A partial result (max_tokens, refusal, iteration limit) comes with an error: print it marked as
+	// partial, the tokens are already billed.
 	if result != nil {
-		printResult(out, result, usage)
+		printResult(out, result, usage, partialReason(err))
 	}
 
 	if err != nil {
@@ -97,10 +98,32 @@ func parseFlags(args []string) (options, error) {
 }
 
 // printResult prints the answer and usage; the cost is calculated by the requested model, as in llm_usage.
-func printResult(out io.Writer, result *agents.Result, usage *llmusage.Service) {
+// partialReasons are the errors that come with a partial result.
+var partialReasons = []error{agents.ErrIterationLimit, agents.ErrMaxTokens, agents.ErrRefusal, agents.ErrInvalidResponse}
+
+// partialReason says why a result that came with err is partial; empty when the result is complete.
+func partialReason(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	for _, reason := range partialReasons {
+		if errors.Is(err, reason) {
+			return reason.Error()
+		}
+	}
+
+	return "run failed"
+}
+
+func printResult(out io.Writer, result *agents.Result, usage *llmusage.Service, partial string) {
 	cost := "unknown (no price for the model in LLM_PRICES)"
 	if nano, ok := usage.Cost(result.Model, result.Tokens); ok {
 		cost = "$" + llmusage.FormatUSD(nano)
+	}
+
+	if partial != "" {
+		fmt.Fprintf(out, "--- partial answer: %s ---\n", partial)
 	}
 
 	fmt.Fprintln(out, result.Text)

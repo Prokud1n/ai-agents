@@ -98,28 +98,34 @@ jobs:
           fi
           echo "The branch contains origin/main ($(git rev-parse --short origin/main))"
 
-      # golang-migrate silently skips a migration whose number is below the latest applied one, so a
-      # branch must add migrations numbered above every migration in main.
-      - name: Require new migrations to be numbered above main
+      # Merged migrations are immutable, and golang-migrate silently skips a migration whose number is
+      # below the latest applied one. So against main a branch may only add .sql migrations, numbered above
+      # every migration in main. --no-renames turns a rename into D (old) + A (new), so it is caught too.
+      - name: Require new migrations to be numbered above main and merged ones unchanged
         if: github.ref != 'refs/heads/main'
         run: |
           latest=$(git ls-tree --name-only origin/main migrations/ \
             | sed -n 's|^migrations/\([0-9]\{1,\}\)_.*\.sql$|\1|p' | sort -n | tail -n 1)
           latest=$((10#${latest:-0}))
           status=0
-          for file in $(git diff --name-only --diff-filter=A origin/main -- migrations/); do
-            number=$(basename "$file" | sed -n 's|^\([0-9]\{1,\}\)_.*\.sql$|\1|p')
-            if [[ -z "$number" ]]; then
-              [[ "$file" == *.sql ]] && { echo "::error file=$file::migration must be named NNN_description.(up|down).sql"; status=1; }
+          while IFS=$'\t' read -r change file; do
+            [[ -n "$file" && "$file" == *.sql ]] || continue
+            if [[ "$change" != A ]]; then
+              echo "::error file=$file::merged migration changed (git status $change): do not edit, delete or rename merged migrations, add a new one"
+              status=1
               continue
             fi
-            if (( 10#$number <= latest )); then
+            number=$(basename "$file" | sed -n 's|^\([0-9]\{1,\}\)_.*\.sql$|\1|p')
+            if [[ -z "$number" ]]; then
+              echo "::error file=$file::migration must be named NNN_description.(up|down).sql"
+              status=1
+            elif (( 10#$number <= latest )); then
               echo "::error file=$file::migration number $number must be above the latest in main ($latest): renumber it"
               status=1
             fi
-          done
+          done < <(git diff --no-renames --name-status origin/main -- migrations/)
           if (( status == 0 )); then
-            echo "New migrations are numbered above main ($latest)"
+            echo "Migrations: merged ones unchanged, new ones numbered above main ($latest)"
           fi
           exit "$status"
 

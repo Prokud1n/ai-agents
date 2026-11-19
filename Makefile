@@ -19,11 +19,22 @@ test:
 	go test -race ./...
 
 # Integration tests (names contain "Integration", see internal/pgtest) against PostgreSQL from compose,
-# published on 127.0.0.1:POSTGRES_HOST_PORT and migrated by the migrate service: make up && make test-integration
+# published on 127.0.0.1:POSTGRES_HOST_PORT; each test gets its own migrated database: make up && make test-integration
+# The verbose output goes to the log as it runs (tee) and is the proof that the tests ran: with INTEGRATION=1
+# a skipped test, or no integration test passed at all, fails the target. bash + pipefail keeps the exit
+# status of go test through the pipe.
+test-integration: SHELL := /bin/bash
+test-integration: .SHELLFLAGS := -o pipefail -c
 test-integration:
-	set -a; . ./.env; set +a; \
-	POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=$${POSTGRES_HOST_PORT:-5432} INTEGRATION=1 \
-	go test -race -count=1 -run Integration ./...
+	@log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
+	$(HOST_DB_ENV) INTEGRATION=1 go test -race -count=1 -v -run Integration ./... 2>&1 | tee "$$log"; \
+	status=$$?; \
+	if grep -q -e '--- SKIP' "$$log"; then \
+		echo "test-integration: tests were skipped with INTEGRATION=1"; status=1; \
+	elif ! grep -q -e '--- PASS: TestIntegration' "$$log"; then \
+		echo "test-integration: no integration test passed"; status=1; \
+	fi; \
+	exit $$status
 
 lint:
 	$(GOLANGCI_LINT) run ./...
@@ -56,7 +67,8 @@ media-image:
 	docker build --target media -t ai-agents-media:local .
 
 # Run one agent with a prompt inside compose (needs ANTHROPIC_API_KEY in .env):
-#   make agent-run AGENT=copywriter PROMPT="Привет!"
+#   make agent-run AGENT=<name> PROMPT="Привет!"
+# Until real agents exist, use a copy of the template: see README ("Агенты и LLM").
 # The image is built by the migrate service, which also applies migrations (usage is recorded to llm_usage).
 agent-run:
 	docker compose run --rm --build migrate up

@@ -314,11 +314,13 @@ func TestRuntimeRunErrors(t *testing.T) {
 		requests  int
 	}{
 		{
-			name:      "iteration limit",
-			data:      &RunAgentData{Agent: coachAgent, Input: "Loop"},
-			responses: []fakeResponse{toolUseResponse(echoToolName, `{"text":"again"}`)},
-			expected:  ErrIterationLimit,
-			requests:  maxToolIterations,
+			name: "history ends with an assistant message and no input (a prefill)",
+			data: &RunAgentData{Agent: coachAgent, Messages: []anthropic.Message{
+				{Role: anthropic.UserRole, Content: []anthropic.ContentBlock{anthropic.TextBlock(userInput)}},
+				{Role: anthropic.AssistantRole, Content: []anthropic.ContentBlock{anthropic.TextBlock(checkText)}},
+			}},
+			responses: []fakeResponse{finalResponse()},
+			expected:  ErrInvalidRunData,
 		},
 		{
 			name:      "tool_use stop reason without tool_use blocks",
@@ -578,4 +580,30 @@ func TestRuntimeRecordsUsageAfterCancel(t *testing.T) {
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
 	require.NoError(t, recorder.ctxErr, "usage is recorded with a context that is not cancelled")
 	assert.True(t, recorder.hasDeadline, "usage recording has its own timeout")
+}
+
+// ErrIterationLimit comes with a partial result: the history up to the last tool results and the tokens.
+func TestRuntimeRunIterationLimit(t *testing.T) {
+	t.Parallel()
+
+	api := &fakeAPI{responses: []fakeResponse{toolUseResponse(echoToolName, `{"text":"again"}`)}}
+	runtime, recorder := newTestRuntime(t, api)
+
+	result, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: userInput})
+
+	require.ErrorIs(t, err, ErrIterationLimit)
+	require.NotNil(t, result)
+	assert.Equal(t, maxToolIterations, result.Calls)
+	assert.Equal(t, checkText, result.Text)
+	assert.Equal(t, anthropic.ToolUseStopReason, result.StopReason)
+	assert.Equal(t, int64(10*maxToolIterations), result.Tokens.Input)
+	assert.Len(t, recorder.records, maxToolIterations)
+	assert.Len(t, api.sentRequests(), maxToolIterations)
+
+	// user input, then an assistant tool_use and a user tool_result per turn: every tool_use is answered.
+	require.Len(t, result.Messages, 1+2*maxToolIterations)
+	last := result.Messages[len(result.Messages)-1]
+	assert.Equal(t, anthropic.UserRole, last.Role)
+	require.Len(t, last.Content, 1)
+	assert.Equal(t, anthropic.ToolResultContentType, last.Content[0].Type)
 }
