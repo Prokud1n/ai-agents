@@ -5,6 +5,8 @@
 .idea
 .env
 bin
+# make m0-check results (logs, transcript)
+m0-results
 *.md
 docker-compose.yml
 .env.local

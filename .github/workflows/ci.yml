@@ -242,6 +242,24 @@ jobs:
             exit 1
           fi
 
+      - name: Shellcheck m0-check
+        run: shellcheck --version | sed -n 2p && shellcheck -x scripts/m0-check.sh
+
+      # Without keys: environment and stack PASS, LLM, knowledge base, transcription and Telegram SKIP.
+      # The script itself exits non-zero on any FAIL; the summary is checked too, so a step that is
+      # silently skipped (or one that starts needing a key) is caught here.
+      - name: M0 check (no keys)
+        shell: bash
+        run: |
+          make m0-check
+          cat m0-results/report.md
+          for step in "1. Окружение" "2. Стек"; do
+            grep -q "^| ${step}[^|]* | PASS |" m0-results/report.md || { echo "::error::m0-check: ${step} is not PASS"; exit 1; }
+          done
+          for step in "3. LLM" "4. База знаний" "5. Транскрипция" "6. Telegram"; do
+            grep -q "^| ${step}[^|]* | SKIP |" m0-results/report.md || { echo "::error::m0-check: ${step} is not SKIP"; exit 1; }
+          done
+
       - name: Show logs
         if: failure()
         run: docker compose logs

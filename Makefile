@@ -90,3 +90,10 @@ kb-delete:
 
 kb-reembed:
 	$(HOST_DB_ENV) go run ./cmd/kb reembed
+
+# M0: end-to-end check of the environment and every brick with real keys (docs/SETUP.md, "Проверка M0").
+# Steps without a key are skipped; the summary goes to m0-results/report.md:
+#   make m0-check [M0_VIDEO=./clip.mp4]
+.PHONY: m0-check
+m0-check:
+	M0_VIDEO="$(M0_VIDEO)" ./scripts/m0-check.sh

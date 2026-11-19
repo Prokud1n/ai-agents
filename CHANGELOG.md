@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration tests against PostgreSQL from compose (`internal/pgtest`, `INTEGRATION=1`, `make test-integration`),
   run in the CI job `compose-smoke`.
 - CI: `check` requires new migrations to be numbered above the latest migration in `main`.
+- `docs/SETUP.md`: setup from scratch on macOS and a Linux VPS, reference of every `.env` variable, where to get the
+  API keys, `KB_ROOT` layout, start/stop/reset and common problems.
+- `make m0-check` (`scripts/m0-check.sh`): end-to-end M0 check of the environment, the stack (`/readyz`, migrations),
+  an agent run, knowledge base ingest/search/delete, transcription (`M0_VIDEO=...`) and the Telegram Bot API; steps
+  without keys are skipped, secrets are never printed, only its own temporary agent and document are created and
+  removed. Summary in `m0-results/report.md` (with LLM usage and image versions). CI runs it without keys in
+  `compose-smoke`, after shellcheck.
 
 - Brand knowledge base (`internal/knowledge`): documents split into chunks with embeddings (pgvector, HNSW, cosine),
   search with kind filter (HNSW iterative scan) among vectors of the current embedding model; ingest is idempotent and
