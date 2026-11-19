@@ -12,8 +12,9 @@ import (
 
 // Registry holds the agents loaded from AGENTS_DIR and the registered tools.
 type Registry struct {
-	agents map[string]*Agent
-	tools  map[string]Tool
+	agents       map[string]*Agent
+	tools        map[string]Tool
+	sharedSkills []string
 }
 
 type priceLookup interface {
@@ -29,13 +30,14 @@ func NewRegistry(
 	log *slog.Logger,
 	tools []Tool,
 ) (*Registry, error) {
-	registry, err := LoadRegistry(cfg.Dir, tools)
+	registry, err := LoadRegistry(cfg.Dir, cfg.SkillsDir, tools)
 	if err != nil {
 		return nil, err
 	}
 
 	ctx := context.Background()
-	log.InfoContext(ctx, "agents: loaded", "dir", cfg.Dir, "names", registry.Names(), "tools", sortedKeys(registry.tools))
+	log.InfoContext(ctx, "agents: loaded", "dir", cfg.Dir, "skills_dir", cfg.SkillsDir,
+		"names", registry.Names(), "shared_skills", registry.sharedSkills, "tools", sortedKeys(registry.tools))
 
 	if len(registry.agents) == 0 {
 		log.WarnContext(ctx, "agents: no agents found, agent runs are not possible", "dir", cfg.Dir)
@@ -52,19 +54,25 @@ func NewRegistry(
 	return registry, nil
 }
 
-// LoadRegistry loads agents from dir; tools are all tools agents may reference.
-func LoadRegistry(dir string, tools []Tool) (*Registry, error) {
+// LoadRegistry loads shared skills from skillsDir and agents from agentsDir; tools are all tools agents
+// may reference. A missing skillsDir means no shared skills.
+func LoadRegistry(agentsDir, skillsDir string, tools []Tool) (*Registry, error) {
 	byName, err := registerTools(tools)
 	if err != nil {
 		return nil, err
 	}
 
-	loaded, err := loadAgents(os.DirFS(dir), dir, byName)
+	shared, err := loadSharedSkills(os.DirFS(skillsDir), skillsDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load agents from %q: %w", dir, err)
+		return nil, fmt.Errorf("failed to load shared skills from %q: %w", skillsDir, err)
 	}
 
-	return &Registry{agents: loaded, tools: byName}, nil
+	loaded, err := loadAgents(os.DirFS(agentsDir), agentsDir, shared, byName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load agents from %q: %w", agentsDir, err)
+	}
+
+	return &Registry{agents: loaded, tools: byName, sharedSkills: sortedKeys(shared.byName)}, nil
 }
 
 // registerTools checks tool names (unique, the API format, not load_skill) and input schemas (valid JSON).

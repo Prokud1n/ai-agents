@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -118,8 +119,7 @@ func newTestRuntime(t *testing.T, api *fakeAPI) (*Runtime, *fakeRecorder) {
 	server := httptest.NewServer(api)
 	t.Cleanup(server.Close)
 
-	registry, err := LoadRegistry(validAgentsDir, testTools())
-	require.NoError(t, err)
+	registry := loadTestRegistry(t)
 
 	log := slog.New(slog.DiscardHandler)
 	client := anthropic.NewClient(&config.Anthropic{
@@ -182,8 +182,15 @@ func TestRuntimeRun(t *testing.T) {
 			expectedToolResult: "PLAN BODY: three workouts a week.",
 		},
 		{
+			name:               "load_skill adds the agent's override to a shared skill",
+			responses:          []fakeResponse{toolUseResponse(LoadSkillToolName, `{"name":"tone"}`), finalResponse()},
+			requests:           2,
+			calls:              2,
+			expectedToolResult: toneBody + paragraphBreak + overrideHeading + paragraphBreak + coachOverride,
+		},
+		{
 			name:               "unknown skill is a tool error",
-			responses:          []fakeResponse{toolUseResponse(LoadSkillToolName, `{"name":"ghost"}`), finalResponse()},
+			responses:          []fakeResponse{toolUseResponse(LoadSkillToolName, `{"name":"`+ghostSkill+`"}`), finalResponse()},
 			requests:           2,
 			calls:              2,
 			expectedToolResult: `unknown skill "ghost", available skills: plan, tone`,
@@ -275,6 +282,8 @@ func TestRuntimeRequest(t *testing.T) {
 	assert.Contains(t, first.System[0].Text, "You are a test coach.")
 	assert.Contains(t, first.System[0].Text, "- `plan`: Plans a week of workouts.")
 	assert.NotContains(t, first.System[0].Text, "PLAN BODY")
+	assert.NotContains(t, first.System[0].Text, coachOverride)
+	assert.Contains(t, first.System[0].Text, SafetyRules)
 
 	names := make([]string, 0, len(first.Tools))
 	for _, tool := range first.Tools {
@@ -385,8 +394,9 @@ func TestRuntimeRunKeepsHistory(t *testing.T) {
 	require.Len(t, requests, 1)
 	assert.Equal(t, "claude-override", requests[0].Model)
 	assert.Equal(t, 77, requests[0].MaxTokens)
-	assert.Empty(t, requests[0].Tools)
-	assert.Equal(t, "You are a plain agent.", requests[0].System[0].Text)
+	require.Len(t, requests[0].Tools, 1, "plain has skills but no tools: only load_skill")
+	assert.Equal(t, LoadSkillToolName, requests[0].Tools[0].Name)
+	assert.True(t, strings.HasPrefix(requests[0].System[0].Text, "You are a plain agent."+paragraphBreak+SafetyRules))
 }
 
 // TestRuntimeRunStopReasons: a cut or refused answer returns an error with the partial result, and its
@@ -553,8 +563,7 @@ func (r *ctxRecorder) Record(ctx context.Context, _ *llmusage.RecordUsageData) e
 func TestRuntimeRecordsUsageAfterCancel(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(validAgentsDir, testTools())
-	require.NoError(t, err)
+	registry := loadTestRegistry(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -563,7 +572,7 @@ func TestRuntimeRecordsUsageAfterCancel(t *testing.T) {
 	runtime := NewRuntime(registry, &cancellingCreator{cancel: cancel}, recorder,
 		&config.LLM{DefaultModel: testModel, DefaultMaxTokens: 1024}, slog.New(slog.DiscardHandler))
 
-	_, err = runtime.Run(ctx, &RunAgentData{Agent: plainAgent, Input: userInput})
+	_, err := runtime.Run(ctx, &RunAgentData{Agent: plainAgent, Input: userInput})
 	require.NoError(t, err)
 
 	require.ErrorIs(t, ctx.Err(), context.Canceled)

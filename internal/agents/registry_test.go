@@ -60,7 +60,7 @@ func TestNewRegistryWarnings(t *testing.T) {
 
 			log := slog.New(slog.NewJSONHandler(&logs, nil))
 
-			registry, err := NewRegistry(&config.Agents{Dir: tt.dir}, &config.LLM{DefaultModel: testModel},
+			registry, err := NewRegistry(&config.Agents{Dir: tt.dir, SkillsDir: validSkillsDir}, &config.LLM{DefaultModel: testModel},
 				tt.prices, log, testTools())
 			require.NoError(t, err)
 			require.NotNil(t, registry)

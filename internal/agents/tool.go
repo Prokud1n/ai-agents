@@ -84,5 +84,5 @@ func (t *loadSkillTool) Execute(_ context.Context, input json.RawMessage) (strin
 			in.Name, strings.Join(t.agent.skillNames(), ", ")))
 	}
 
-	return skill.Body, nil
+	return skill.instructions(), nil
 }

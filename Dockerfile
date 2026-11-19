@@ -46,8 +46,10 @@ ENTRYPOINT ["/app/transcribe"]
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=build /out/ /app/
-# Agent definitions (AGENTS_DIR=./agents is relative to the working directory).
+# Agent definitions and shared skills (AGENTS_DIR=./agents, SKILLS_DIR=./skills are relative to the
+# working directory).
 COPY agents/ /app/agents/
+COPY skills/ /app/skills/
 WORKDIR /app
 
 USER nonroot:nonroot

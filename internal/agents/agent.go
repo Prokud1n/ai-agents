@@ -10,6 +10,7 @@ const (
 	// templatePrefix marks directories that are not loaded as agents, e.g. the _example template.
 	templatePrefix = "_"
 	logKeyAgent    = "agent"
+	paragraphBreak = "\n\n"
 )
 
 var (
@@ -33,12 +34,26 @@ type Agent struct {
 	Prompt string
 }
 
-// Skill is an instruction loaded from agents/<agent>/skills/<name>/SKILL.md. The system prompt lists
-// only Name and Description; the model loads Body on demand with the load_skill tool.
+// Skill is an instruction from SKILL.md: shared (SKILLS_DIR/<name>/) or local to an agent
+// (agents/<agent>/skills/<name>/). The system prompt lists only Name and Description; the model loads
+// the instructions on demand with the load_skill tool.
 type Skill struct {
 	Name        string
 	Description string
 	Body        string
+	// Override is the agent's own addition from skill_overrides in agent.md (empty if none).
+	Override string
+}
+
+const overrideHeading = "## Additions for this agent"
+
+// instructions is what load_skill returns: the skill body plus the agent's override, if any.
+func (s *Skill) instructions() string {
+	if s.Override == "" {
+		return s.Body
+	}
+
+	return s.Body + paragraphBreak + overrideHeading + paragraphBreak + s.Override
 }
 
 func (a *Agent) skill(name string) (Skill, bool) {

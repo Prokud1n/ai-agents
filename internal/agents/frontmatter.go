@@ -22,6 +22,8 @@ type agentFrontmatter struct {
 	Model       string   `yaml:"model"`
 	Tools       []string `yaml:"tools"`
 	Skills      []string `yaml:"skills"`
+	// SkillOverrides adds the agent's own instruction to a skill it lists: skill name -> text.
+	SkillOverrides map[string]string `yaml:"skill_overrides"`
 }
 
 // skillFrontmatter is the YAML header of SKILL.md.

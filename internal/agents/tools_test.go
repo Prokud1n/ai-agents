@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -13,7 +16,11 @@ const (
 	secretToolName = "secret"
 	coachAgent     = "coach"
 	plainAgent     = "plain"
-	validAgentsDir = "testdata/valid"
+	validAgentsDir = "testdata/valid/agents"
+	validSkillsDir = "testdata/valid/skills"
+	agentsSubdir   = "agents"
+	planSkill      = "plan"
+	ghostSkill     = "ghost"
 )
 
 var errToolFailed = errors.New("boom")
@@ -64,4 +71,14 @@ func testTools() []Tool {
 			return "secret", nil
 		}},
 	}
+}
+
+// loadTestRegistry loads testdata/valid: agents coach and plain sharing the skill tone.
+func loadTestRegistry(t *testing.T) *Registry {
+	t.Helper()
+
+	registry, err := LoadRegistry(validAgentsDir, validSkillsDir, testTools())
+	require.NoError(t, err)
+
+	return registry
 }
