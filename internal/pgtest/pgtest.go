@@ -2,6 +2,11 @@
 //
 // An integration test has "Integration" in its name and calls Connect, which skips the test unless
 // INTEGRATION=1. Run them with `make up && make test-integration` (in CI: the job "compose-smoke").
+//
+// Rule: with INTEGRATION=1 a test with "Integration" in its name must not skip (no t.Skip of its own,
+// no skipping subtests): `make test-integration` treats any "--- SKIP" as a failure, because a skipped
+// test proves nothing. A test that cannot run in that environment fails or does not have "Integration"
+// in its name.
 // The server is configured with the usual POSTGRES_* variables, the same as cmd/migrate.
 //
 // Isolation: Connect creates a new database for every test, applies all migrations to it and drops it

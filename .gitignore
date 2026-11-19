@@ -5,3 +5,5 @@
 docker-compose.override.yml
 /bin/
 .claude/settings.local.json
+# Local copy of agents/_example for make agent-run (README)
+/agents/test/

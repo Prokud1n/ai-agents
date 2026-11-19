@@ -9,7 +9,8 @@ var (
 	ErrAgentNotFound = errors.New("agent not found")
 	// ErrIterationLimit is returned when the model keeps calling tools after maxToolIterations turns.
 	ErrIterationLimit = errors.New("tool use iteration limit reached")
-	// ErrInvalidRunData is returned for a run without input.
+	// ErrInvalidRunData is returned for a run without input, or with a history ending with an assistant
+	// message and no new input.
 	ErrInvalidRunData = errors.New("invalid run data")
 	// ErrMaxTokens is returned with a partial Result when the answer was cut by max_tokens
 	// (or by the context window).

@@ -79,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pgtest.Connect` gives every integration test its own temporary database with all migrations applied and drops it
   afterwards, instead of truncating tables of `POSTGRES_DB`; `pgtest.Truncate` is removed and integration tests may
   run in parallel.
+- CI: the migrations check in `check` also fails on a changed, deleted or renamed merged migration
+  (`git diff --no-renames --name-status`); `make test-integration` runs verbose (`-v`, streamed through `tee`,
+  with `HOST_DB_ENV`) and fails if a test is skipped with `INTEGRATION=1` or no integration test passed; the rule
+  is documented in `internal/pgtest`.
+- Agent runs: a history ending with an assistant message and no new input is `ErrInvalidRunData` (no accidental
+  prefill); `ErrIterationLimit` returns the partial result (history, tokens) like `ErrMaxTokens`, and `agent-run`
+  marks a partial answer with its reason; a listed skill in a `_` directory reports that such directories are skipped.
+- README: how to try the LLM layer with a copy of `agents/_example` in `agents/test` (ignored by git).
 - Migration file naming in CODE_STYLE.md: `NNN_description.up.sql` + `NNN_description.down.sql`.
 - `/readyz` dependencies are registered in `internal/readiness`; providers no longer import `internal/health`.
 - docker compose builds the app image once (in `migrate`); `app` reuses it.

@@ -55,7 +55,8 @@ func NewRuntime(
 // pause_turn sends the paused turn back as is and continues. max_tokens (and a full context window)
 // returns ErrMaxTokens, refusal returns ErrRefusal, an unknown one ErrInvalidResponse: in these cases
 // the partial Result comes with the error, and its Messages are safe to pass to the next run
-// (tool_use blocks without a tool_result are removed).
+// (tool_use blocks without a tool_result are removed). ErrIterationLimit comes with a partial Result too:
+// the history up to the last tool results, the tokens and the text of the last turn.
 func (r *Runtime) Run(ctx context.Context, data *RunAgentData) (*Result, error) {
 	agent, err := r.registry.Get(data.Agent)
 	if err != nil {
@@ -81,6 +82,8 @@ func (r *Runtime) Run(ctx context.Context, data *RunAgentData) (*Result, error) 
 
 		result.Calls++
 		result.Tokens = result.Tokens.Add(tokensOf(resp.Usage))
+		result.Text = resp.Text()
+		result.StopReason = resp.StopReason
 		assistant := anthropic.Message{Role: anthropic.AssistantRole, Content: resp.Content}
 
 		switch resp.StopReason {
@@ -101,7 +104,9 @@ func (r *Runtime) Run(ctx context.Context, data *RunAgentData) (*Result, error) 
 		}
 	}
 
-	return nil, fmt.Errorf("failed to run agent %q: no final answer after %d model turns: %w",
+	result.Messages = messages
+
+	return result, fmt.Errorf("failed to run agent %q: no final answer after %d model turns: %w",
 		agent.Name, maxToolIterations, ErrIterationLimit)
 }
 
@@ -112,9 +117,6 @@ func finish(
 	messages []anthropic.Message,
 	resp *anthropic.MessageResponse,
 ) (*Result, error) {
-	result.Text = resp.Text()
-	result.StopReason = resp.StopReason
-
 	var stopErr error
 
 	switch resp.StopReason {
@@ -276,9 +278,16 @@ func toolErrorMessage(tool string, err error) string {
 }
 
 // initialMessages copies the history and appends the new input, so the caller's slice is never modified.
+// A history ending with an assistant message needs a new Input: otherwise the model would continue that
+// message (a prefill) instead of answering.
 func initialMessages(data *RunAgentData) ([]anthropic.Message, error) {
 	if len(data.Messages) == 0 && data.Input == "" {
 		return nil, fmt.Errorf("failed to run agent %q: input is empty: %w", data.Agent, ErrInvalidRunData)
+	}
+
+	if data.Input == "" && data.Messages[len(data.Messages)-1].Role == anthropic.AssistantRole {
+		return nil, fmt.Errorf("failed to run agent %q: the history ends with an assistant message and input is empty: %w",
+			data.Agent, ErrInvalidRunData)
 	}
 
 	messages := make([]anthropic.Message, 0, len(data.Messages)+1)
