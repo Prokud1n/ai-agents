@@ -33,7 +33,7 @@ func TestDropHallucinations(t *testing.T) {
 		{Word: "Субтитры", Start: 4.5, End: 5.5},
 		{Word: wordOne, Start: 8.1, End: 8.4},
 		{Word: "Спасибо", Start: 12.5, End: 13},
-		{Word: "Раз", Start: 16.1, End: 16.4}, {Word: "два", Start: 16.5, End: 16.8},
+		{Word: "Раз,", Start: 16.1, End: 16.4}, {Word: "два", Start: 16.5, End: 16.8},
 	}
 
 	tests := []struct {
