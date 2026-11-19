@@ -14,17 +14,24 @@ const (
 	compressionRatioThreshold = 2.4
 )
 
+// isHallucination: a confident "no speech" with a poorly decoded text, or a repetition loop that is
+// also poorly decoded or over silence. A high compression ratio alone is not enough: in Whisper it only
+// triggers a re-decode, and a trainer's count ("Раз, два, три, четыре." ×4 is 2.9) or rhythmic cues
+// ("И вверх, и вниз…" ×5 is 3.56) are real speech that compresses just as well.
 func isHallucination(s whisper.Segment) bool {
-	if s.NoSpeechProb > noSpeechThreshold && s.AvgLogprob < logprobThreshold {
+	lowConfidence := s.AvgLogprob < logprobThreshold
+	noSpeech := s.NoSpeechProb > noSpeechThreshold
+
+	if noSpeech && lowConfidence {
 		return true
 	}
 
-	// A highly compressible segment is the same phrase repeated in a loop.
-	return s.CompressionRatio > compressionRatioThreshold
+	return s.CompressionRatio > compressionRatioThreshold && (lowConfidence || noSpeech)
 }
 
 // dropHallucinations removes hallucinated segments and the words inside them.
-func dropHallucinations(t *whisper.Transcript) whisper.Transcript {
+// It returns the filtered transcript and the dropped segments (for logging).
+func dropHallucinations(t *whisper.Transcript) (whisper.Transcript, []whisper.Segment) {
 	kept := make([]whisper.Segment, 0, len(t.Segments))
 	dropped := make([]whisper.Segment, 0)
 
@@ -39,7 +46,7 @@ func dropHallucinations(t *whisper.Transcript) whisper.Transcript {
 	}
 
 	if len(dropped) == 0 {
-		return *t
+		return *t, dropped
 	}
 
 	words := make([]whisper.Word, 0, len(t.Words))
@@ -62,7 +69,7 @@ func dropHallucinations(t *whisper.Transcript) whisper.Transcript {
 		Text:     strings.Join(texts, " "),
 		Words:    words,
 		Segments: kept,
-	}
+	}, dropped
 }
 
 func insideAny(w whisper.Word, segments []whisper.Segment) bool {

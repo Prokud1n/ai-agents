@@ -123,11 +123,13 @@ func localFiles(src, dst string) (in, out string, err error) {
 }
 
 // run executes a binary with a timeout. stderr goes to a fixed-size tail buffer (and to stderrSink, if set).
-func (r *Runner) run(ctx context.Context, binary string, args []string, stderrSink io.Writer) (string, error) {
+func (r *Runner) run(parent context.Context, binary string, args []string, stderrSink io.Writer) (string, error) {
+	ctx := parent
+
 	if r.timeout > 0 {
 		var cancel context.CancelFunc
 
-		ctx, cancel = context.WithTimeout(ctx, r.timeout)
+		ctx, cancel = context.WithTimeoutCause(parent, r.timeout, errTimeout)
 		defer cancel()
 	}
 
@@ -143,14 +145,25 @@ func (r *Runner) run(ctx context.Context, binary string, args []string, stderrSi
 	}
 
 	if err := cmd.Run(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			err = fmt.Errorf("%w after %s: %w", errTimeout, r.timeout, err)
-		}
+		err = explainStop(parent, ctx, r.timeout, err)
 
 		return "", fmt.Errorf("failed to run %s: %w: %s", binary, err, tailLines(stderr.String(), stderrTailLines))
 	}
 
 	return stdout.String(), nil
+}
+
+// explainStop tells apart the runner's own timeout (FFMPEG_TIMEOUT) and the caller's context
+// (its deadline or cancellation), so a slow file and an impatient caller are not reported the same way.
+func explainStop(parent, ctx context.Context, timeout time.Duration, err error) error {
+	switch {
+	case parent.Err() != nil:
+		return fmt.Errorf("stopped by the caller's context (%w): %w", context.Cause(parent), err)
+	case errors.Is(context.Cause(ctx), errTimeout):
+		return fmt.Errorf("%w after %s (FFMPEG_TIMEOUT): %w", errTimeout, timeout, err)
+	default:
+		return err
+	}
 }
 
 func parseDuration(s string) (float64, error) {

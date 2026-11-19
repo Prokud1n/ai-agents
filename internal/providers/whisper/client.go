@@ -87,9 +87,10 @@ func (c *Client) CheckAPIKey() error {
 }
 
 // Transcribe uploads one audio file and returns its transcript with word and segment timestamps.
-// Retried with exponential backoff (Retry-After is honored): 429 except insufficient quota, 5xx, and
-// connection errors before the body was sent. A timeout or a failure after the body was sent is not
-// retried: the API may have processed and billed the request.
+// Retried with exponential backoff (Retry-After is honored): 429 except insufficient quota, 5xx except 504,
+// and connection errors before the body was sent. Not retried, as the API has likely processed and billed
+// the request: a timeout, a failure after the body was sent, and 504. A retried 500/502/503 may still
+// repeat a request that was processed: a proxy can fail after the API answered.
 func (c *Client) Transcribe(ctx context.Context, data TranscribeData) (*Transcript, error) {
 	if err := c.CheckAPIKey(); err != nil {
 		return nil, err
@@ -275,7 +276,8 @@ func isRetryable(ctx context.Context, err error) bool {
 			return se.Code != insufficientQuotaCode
 		}
 
-		return se.StatusCode >= http.StatusInternalServerError
+		// A gateway timeout means the upstream was still working on the request.
+		return se.StatusCode >= http.StatusInternalServerError && se.StatusCode != http.StatusGatewayTimeout
 	}
 
 	return errors.Is(err, errNotSent)
