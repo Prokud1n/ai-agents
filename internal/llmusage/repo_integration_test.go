@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	usageTable   = "llm_usage"
 	customModel  = "claude-custom"
 	datedModel   = "claude-sonnet-5-5-20261101"
 	copywriter   = "copywriter"
@@ -26,10 +25,11 @@ const (
 )
 
 // TestIntegrationUsage records usage into a real llm_usage table and checks exact sums.
-// Not parallel: it owns the llm_usage table.
+// pgtest gives the test its own database, so the table starts empty.
 func TestIntegrationUsage(t *testing.T) {
+	t.Parallel()
+
 	client := pgtest.Connect(t)
-	pgtest.Truncate(t, client, usageTable)
 
 	service, err := NewService(&config.LLM{Prices: integPrices}, newRepo(client), slog.New(slog.DiscardHandler))
 	require.NoError(t, err)

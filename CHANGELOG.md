@@ -58,8 +58,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run in the CI job `compose-smoke`.
 - CI: `check` requires new migrations to be numbered above the latest migration in `main`.
 
+- Brand knowledge base (`internal/knowledge`): documents split into chunks with embeddings (pgvector, HNSW, cosine),
+  search with kind filter (HNSW iterative scan) among vectors of the current embedding model; ingest is idempotent and
+  re-indexes a document when its text, the embedding model or the chunker version changes (advisory lock per source);
+  limits of 1,000,000 characters and 1000 chunks per document. Trainer's corrections with exact similarity search per
+  agent and task kind for few-shot examples; a correction is saved even when embeddings are unavailable.
+  `search_knowledge_base` tool function for agents. Migration `003_knowledge_base`.
+- Text extraction from `.md`, `.txt`, `.docx` (headings, lists and text boxes kept) and `.pdf` (text layer only), files
+  up to 32 MB. PDF parsing is hardened against hostile files: own page-tree walk (at most 1000 pages, no trust in
+  `/Count`, `/Kids` cycles rejected), streams inflated through a limit, glyph limits, 30 s timeout.
+- Embeddings client for the OpenAI Embeddings API (`EMBEDDINGS_MODEL`, default `text-embedding-3-small`) with batching
+  (at most 2048 inputs) and retries on 429/5xx and network errors (honouring `retry-after-ms` / `Retry-After`; no retry
+  on `insufficient_quota`); the app starts without `OPENAI_API_KEY`. Shared `OPENAI_API_KEY` / `OPENAI_BASE_URL` config.
+- `kb` CLI (`cmd/kb`): `kb ingest <path> [-kind brand]`, `kb search "<query>" [-limit 5]`, `kb delete <source>`,
+  `kb reembed` (fills in missing vectors and moves documents and corrections to the current model); make targets
+  `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
+
 ### Changed
 
+- `pgtest.Connect` gives every integration test its own temporary database with all migrations applied and drops it
+  afterwards, instead of truncating tables of `POSTGRES_DB`; `pgtest.Truncate` is removed and integration tests may
+  run in parallel.
 - Migration file naming in CODE_STYLE.md: `NNN_description.up.sql` + `NNN_description.down.sql`.
 - `/readyz` dependencies are registered in `internal/readiness`; providers no longer import `internal/health`.
 - docker compose builds the app image once (in `migrate`); `app` reuses it.

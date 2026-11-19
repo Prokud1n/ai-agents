@@ -6,6 +6,7 @@ require (
 	github.com/caarlos0/env/v11 v11.4.2
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/jackc/pgx/v5 v5.13.0
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/stretchr/testify v1.12.1
