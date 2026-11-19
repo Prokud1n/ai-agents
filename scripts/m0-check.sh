@@ -3,7 +3,8 @@
 #
 #   make m0-check                       # шаги без ключей пропускаются (SKIP)
 #   make m0-check M0_VIDEO=./clip.mp4   # плюс транскрипция этого видео
-#   M0_BOT_TOKEN=... make m0-check      # плюс getMe тестового бота через локальный Bot API
+#   read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKEN
+#                                       # плюс getMe тестового бота через локальный Bot API (токен не в истории)
 #
 # Шаги: 1 окружение, 2 стек, 3 LLM, 4 база знаний, 5 транскрипция, 6 Telegram Bot API; сводка — в конце
 # и в m0-results/report.md. Код выхода 1, если хоть один шаг FAIL; 130 — прерван (Ctrl-C).
@@ -13,6 +14,11 @@
 # что создал сам (в trap, в том числе при прерывании). Если такой путь или документ уже есть — FAIL.
 # `down -v` не делает. Повторный запуск безопасен.
 set -euo pipefail
+
+# Токен тестового бота — в неэкспортируемую переменную: дочерние процессы (make, docker, go) его не наследуют.
+BOT_TOKEN=${M0_BOT_TOKEN-}
+export -n BOT_TOKEN
+unset M0_BOT_TOKEN
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT="$PWD"
@@ -186,8 +192,7 @@ mask_logs() {
 		value=$(env_get "$name")
 		((${#value} < 12)) || secrets+=("$value")
 	done
-	value=${M0_BOT_TOKEN-}
-	[[ -z "$value" ]] || secrets+=("$value")
+	[[ -z "$BOT_TOKEN" ]] || secrets+=("$BOT_TOKEN")
 
 	for file in "$RESULTS_DIR"/*.log "$RESULTS_DIR"/*.out; do
 		[[ -f "$file" ]] || continue
@@ -209,7 +214,8 @@ mask_logs() {
 
 cleanup() {
 	local status=$?
-	# Повторный Ctrl-C не обрывает уборку.
+	# Повторный Ctrl-C не обрывает уборку: в том числе kb delete ниже доработает до конца, а не оставит
+	# тестовый документ в базе знаний.
 	trap '' INT TERM
 	if [[ $AGENT_CREATED == true ]]; then
 		rm -rf "$AGENT_DIR"
@@ -322,7 +328,7 @@ step_env() {
 	for name in ANTHROPIC_API_KEY OPENAI_API_KEY TELEGRAM_API_ID TELEGRAM_API_HASH; do
 		info "$name: $(describe_secret "$(env_get "$name")")"
 	done
-	info "M0_BOT_TOKEN: $(describe_secret "${M0_BOT_TOKEN-}")"
+	info "M0_BOT_TOKEN: $(describe_secret "$BOT_TOKEN")"
 
 	if ((${#problems[@]} > 0)); then
 		result env FAIL "$(join "${problems[@]}")"
@@ -613,23 +619,20 @@ step_transcribe() {
 
 # --- 6. Telegram Bot API ---------------------------------------------------------------------------
 
-# bot_get_me <token>: getMe через локальный сервер изнутри контейнера. Токен идёт через stdin (не в аргументах
-# и не в логах), ответ не сохраняется; при ошибке печатается её начало без токена.
+# bot_get_me <token>: getMe через локальный сервер изнутри контейнера. Токен приходит через stdin, а запрос
+# собирает встроенный printf shell контейнера и отправляет nc: токена нет ни в аргументах процессов (ps хоста и
+# контейнера), ни в логах. Ответ не сохраняется; при ошибке печатается её начало без токена.
 bot_get_me() {
 	local token=$1 response
-	# shellcheck disable=SC2016 # $t и $url раскрывает shell контейнера
+	# shellcheck disable=SC2016 # $t раскрывает shell контейнера
 	response=$(printf '%s\n' "$token" | compose --profile telegram exec -T telegram-bot-api sh -c '
 		read -r t
-		url="http://127.0.0.1:8081/bot$t/getMe"
-		if command -v curl >/dev/null 2>&1; then curl -sS --max-time 20 "$url"
-		elif command -v wget >/dev/null 2>&1; then wget -qO- -T 20 "$url"
-		else echo "no curl or wget in the container"; exit 1
-		fi' 2>&1 || true)
+		printf "GET /bot%s/getMe HTTP/1.0\r\nHost: localhost\r\n\r\n" "$t" | nc -w 20 127.0.0.1 8081' 2>&1 || true)
 	if [[ "$response" == *'"ok":true'* ]]; then
 		return 0
 	fi
 	response=${response//"$token"/***}
-	printf '%s' "$response" | head -c 200 | tr '\n' ' '
+	printf '%s' "$response" | tr '\r\n' '  ' | head -c 200
 	return 1
 }
 
@@ -644,11 +647,12 @@ step_telegram() {
 	fi
 
 	local running log="$RESULTS_DIR/telegram.log"
-	running=$(compose --profile telegram ps -q --status running telegram-bot-api 2>/dev/null || true)
-
 	info "docker compose --profile telegram up -d --wait telegram-bot-api…"
-	# Bot API, поднятый только для проверки, trap остановит; запущенный пользователем — не трогает.
-	[[ -n "$running" ]] || TELEGRAM_STARTED=true
+	# Bot API, поднятый только для проверки, trap остановит; запущенный пользователем — не трогает. Если
+	# состояние узнать не удалось, считаем сервис чужим и не останавливаем.
+	if running=$(compose --profile telegram ps -q --status running telegram-bot-api 2>/dev/null) && [[ -z "$running" ]]; then
+		TELEGRAM_STARTED=true
+	fi
 	if ! compose --profile telegram up -d --wait --wait-timeout 120 telegram-bot-api >"$log" 2>&1; then
 		compose --profile telegram logs --tail 20 telegram-bot-api >>"$log" 2>&1 || true
 		result telegram FAIL "bot-api не стал healthy: m0-results/telegram.log"
@@ -664,7 +668,7 @@ step_telegram() {
 		return 0
 	fi
 
-	local token=${M0_BOT_TOKEN-} error
+	local token=$BOT_TOKEN error
 	if [[ -z "$token" ]]; then
 		result telegram PASS "порт 8081 открыт, ключи не проверены (проверка: M0_BOT_TOKEN тестового бота)"
 		return 0

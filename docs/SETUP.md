@@ -65,6 +65,8 @@ cp .env.dist .env
 Формат `.env`: `KEY=VALUE`, по строке на переменную. Кавычки допустимы для `make` и `docker compose`, но
 `docker run --env-file` (ручной запуск образа `media` из README) их не снимает: для него пиши значения без кавычек.
 `make m0-check` передаёт переменные в `docker run` сам, кавычки ему не мешают.
+`make m0-check` читает `.env` построчно и не раскрывает в нём `${VAR}`, `~` и `\"`, поэтому пути (например, `KB_ROOT`)
+пиши явно: `KB_ROOT=./kb`, а не `KB_ROOT=~/kb` или `${HOME}/kb`.
 
 > **Продакшн.** Обязательно смени `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `S3_ACCESS_KEY` и `S3_SECRET_KEY`: значения
 > из `.env.dist` публичны. Сгенерировать: `openssl rand -base64 32 | tr -d '/+='`. Пароль Postgres задаётся только
