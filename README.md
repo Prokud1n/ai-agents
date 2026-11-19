@@ -5,6 +5,7 @@
 ## Локальный запуск
 
 Нужны Docker и Docker Compose v2.
+Ручная проверка всех кирпичей с реальными ключами по шагам — [docs/M0-MANUAL.md](docs/M0-MANUAL.md).
 
 ```bash
 cp .env.dist .env   # безопасные dev-значения по умолчанию
