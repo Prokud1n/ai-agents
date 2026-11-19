@@ -215,7 +215,7 @@ func inflateLimited(s pdf.Value, limit int64, countHex bool) (size, hexStrings i
 	defer rc.Close()
 
 	var (
-		sink    io.Writer = io.Discard
+		sink    = io.Discard
 		counter hexCounter
 	)
 
