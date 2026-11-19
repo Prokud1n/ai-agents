@@ -1,0 +1,106 @@
+package ffmpeg
+
+import (
+	"fmt"
+	"path/filepath"
+	"strconv"
+	"time"
+)
+
+// Audio prepared for speech recognition: mono 16 kHz is what Whisper works with internally,
+// and 32 kbit/s MP3 is ~14 MB per hour, so an hour fits into one 25 MB upload.
+const (
+	AudioExtension = ".mp3"
+
+	audioCodec      = "libmp3lame"
+	audioBitrate    = "32k"
+	audioSampleRate = "16000"
+	audioChannels   = "1"
+
+	inputFlag = "-i"
+	// Inputs come from users (Telegram files): only local files may be opened, never URLs,
+	// concat: lists or other protocols that a crafted name or playlist could point to.
+	fileProtocol      = "file"
+	protocolWhitelist = "-protocol_whitelist"
+
+	timePrecision = 3  // milliseconds are enough for ffmpeg time arguments
+	float64Bits   = 64 // bit size for strconv
+)
+
+// SilenceOptions define a pause for silencedetect: quieter than NoiseDB for at least MinDuration.
+type SilenceOptions struct {
+	NoiseDB     float64
+	MinDuration time.Duration
+}
+
+// localFile turns a path into an explicit local file URL: "-x.mp4", "http://h/x" or "concat:a|b"
+// become "file:/abs/dir/-x.mp4", ... and are never read as an option or another protocol.
+func localFile(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path %q: %w", path, err)
+	}
+
+	return fileProtocol + ":" + abs, nil
+}
+
+// commonArgs make ffmpeg non-interactive, overwrite the output and keep stderr free of the banner and progress.
+func commonArgs() []string {
+	return []string{"-hide_banner", "-nostdin", "-nostats", "-y"}
+}
+
+// inputArgs take a local file URL from localFile.
+func inputArgs(input string) []string {
+	return []string{protocolWhitelist, fileProtocol, inputFlag, input}
+}
+
+func encodeArgs() []string {
+	return []string{
+		"-vn",
+		"-ac", audioChannels,
+		"-ar", audioSampleRate,
+		"-c:a", audioCodec,
+		"-b:a", audioBitrate,
+	}
+}
+
+func extractAudioArgs(src, dst string) []string {
+	args := append(commonArgs(), inputArgs(src)...)
+	// "0:a:0" takes the first audio stream and fails with a clear message if there is none.
+	args = append(args, "-map", "0:a:0")
+	args = append(args, encodeArgs()...)
+
+	return append(args, dst)
+}
+
+func cutAudioArgs(src, dst string, start, duration float64) []string {
+	args := commonArgs()
+	// -ss before -i seeks the input; with re-encoding the cut is still sample-accurate.
+	args = append(args, "-ss", formatSeconds(start), "-t", formatSeconds(duration))
+	args = append(args, inputArgs(src)...)
+	args = append(args, encodeArgs()...)
+
+	return append(args, dst)
+}
+
+func durationArgs(input string) []string {
+	args := []string{
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+	}
+
+	return append(args, inputArgs(input)...)
+}
+
+func silenceDetectArgs(input string, opts SilenceOptions) []string {
+	filter := "silencedetect=noise=" + formatSeconds(opts.NoiseDB) + "dB:d=" + formatSeconds(opts.MinDuration.Seconds())
+
+	args := append(commonArgs(), inputArgs(input)...)
+
+	return append(args, "-af", filter, "-f", "null", "-")
+}
+
+func formatSeconds(seconds float64) string {
+	return strconv.FormatFloat(seconds, 'f', timePrecision, float64Bits)
+}
