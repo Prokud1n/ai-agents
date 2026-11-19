@@ -26,11 +26,11 @@ func (r *repo) insert(ctx context.Context, e *Entry) error {
 
 	_, err := r.db.GetWriteConnection().Exec(ctx, `
 		INSERT INTO llm_usage (
-			agent, model, request_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-			cost_usd, duration_ms, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::numeric, $9, $10)`,
-		e.Agent, e.Model, e.RequestID, e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead, e.Tokens.CacheWrite,
-		cost, e.Duration.Milliseconds(), e.CreatedAt,
+			agent, model, response_model, request_id, input_tokens, output_tokens, cache_read_tokens,
+			cache_write_tokens, cost_usd, duration_ms, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::numeric, $10, $11)`,
+		e.Agent, e.Model, e.ResponseModel, e.RequestID, e.Tokens.Input, e.Tokens.Output, e.Tokens.CacheRead,
+		e.Tokens.CacheWrite, cost, e.Duration.Milliseconds(), e.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert llm usage: %w", err)

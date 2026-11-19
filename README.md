@@ -106,13 +106,14 @@ docker run --rm --env-file .env --user "$(id -u):$(id -g)" -v "$PWD:/work" ai-ag
 
 Агент — папка `agents/<name>/`: `agent.md` (YAML frontmatter `name`, `display_name`, `model`, `tools`, `skills` + тело —
 системный промпт роли) и `skills/<skill>/SKILL.md` (frontmatter `name`, `description` + тело — инструкция).
-Шаблон — `agents/_example/`. Агенты проверяются при старте: ошибка в папке — приложение не стартует, текст в логе.
-Новый инструмент для агентов регистрируется модулем в fx-группе `agent_tools` (`agents.ToolsGroup`).
+Агенты проверяются при старте: ошибка в папке — приложение не стартует, текст в логе.
+Папки с префиксом `_` — шаблоны, они не загружаются. Шаблон — `agents/_example/`: скопируй его в `agents/<name>/`
+и поменяй `name` на имя папки. Новый инструмент для агентов регистрируется модулем в fx-группе `agents.ToolsGroup`.
 
 Ручная проверка с настоящим ключом (`ANTHROPIC_API_KEY` в `.env`): ответ агента и расход токенов и денег.
 
 ```bash
-make agent-run AGENT=_example PROMPT="Привет! Представься."
+make agent-run AGENT=<name> PROMPT="Привет! Представься."
 ```
 
 ## Разработка
@@ -121,4 +122,17 @@ make agent-run AGENT=_example PROMPT="Привет! Представься."
 
 CI (`.github/workflows/ci.yml`): job `tidy` делает `go mod tidy` и на ветках `feature/**`, `fix/**`, `refactoring/**`
 сам коммитит `go.mod`/`go.sum` (после этого сделай `git pull`), затем `check` и `compose-smoke` проверяют итоговый коммит.
-`check` требует, чтобы ветка содержала актуальный `main`: перед мержем сделай rebase.
+`check` требует, чтобы ветка содержала актуальный `main`: перед мержем сделай rebase. Новые миграции ветки
+должны иметь номер больше последней миграции в `main` (golang-migrate молча пропускает меньший номер).
+
+### Интеграционные тесты
+
+Тесты с `Integration` в имени работают с PostgreSQL из compose (миграции накатывает сервис `migrate`) и
+подключаются через `internal/pgtest`. Без `INTEGRATION=1` они пропускаются, поэтому `make test` базы не требует.
+
+```bash
+make up && make test-integration
+```
+
+В CI они идут в job `compose-smoke`. Каждый пакет работает только со своими таблицами и чистит их через
+`pgtest.Truncate`; тесты, которые делят таблицу, не вызывают `t.Parallel`.

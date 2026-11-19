@@ -1,7 +1,9 @@
 package agents
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +35,7 @@ func TestLoadRegistryValid(t *testing.T) {
 
 	plain, err := registry.Get(plainAgent)
 	require.NoError(t, err)
-	assert.Equal(t, "claude-test", plain.Model)
+	assert.Equal(t, plainModel, plain.Model)
 	assert.Equal(t, "You are a plain agent.", plain.Prompt)
 	assert.Empty(t, plain.Skills)
 
@@ -93,6 +95,10 @@ func TestLoadRegistryErrors(t *testing.T) {
 			tools: append(testTools(), &fakeTool{name: echoToolName}),
 		},
 		{name: "tool named load_skill", dir: validAgentsDir, tools: []Tool{&fakeTool{name: LoadSkillToolName}}},
+		{name: "tool name with a dot", dir: validAgentsDir, tools: []Tool{&fakeTool{name: "kb.search"}}},
+		{name: "empty tool name", dir: validAgentsDir, tools: []Tool{&fakeTool{name: ""}}},
+		{name: "tool name over 64 chars", dir: validAgentsDir, tools: []Tool{&fakeTool{name: strings.Repeat("a", 65)}}},
+		{name: "invalid input schema", dir: validAgentsDir, tools: []Tool{&fakeTool{name: "kb", schema: `{"type":`}}},
 	}
 
 	for _, tt := range tests {
@@ -107,16 +113,34 @@ func TestLoadRegistryErrors(t *testing.T) {
 	}
 }
 
-// TestExampleAgent keeps the template in agents/_example valid: it is shipped in the image and loaded on start.
+func TestRegisterToolsValidNames(t *testing.T) {
+	t.Parallel()
+
+	tools := []Tool{&fakeTool{name: "Search_KB-2"}, &fakeTool{name: strings.Repeat("a", 64)}}
+
+	byName, err := registerTools(tools)
+
+	require.NoError(t, err)
+	assert.Len(t, byName, 2)
+}
+
+const exampleAgent = "_example"
+
+// TestExampleAgent keeps the template in agents/_example valid. Templates ("_" prefix) are not loaded
+// as agents, so the template is loaded directly, without registered tools.
 func TestExampleAgent(t *testing.T) {
 	t.Parallel()
 
-	registry, err := LoadRegistry(filepath.Join("..", "..", "agents"), nil) // the real AGENTS_DIR
-	require.NoError(t, err)
+	agentsDir := filepath.Join("..", "..", "agents") // the real AGENTS_DIR
 
-	example, err := registry.Get("_example")
+	example, err := loadAgent(os.DirFS(agentsDir), exampleAgent, nil)
 	require.NoError(t, err)
+	assert.Equal(t, exampleAgent, example.Name)
 	assert.NotEmpty(t, example.Prompt)
 	require.Len(t, example.Skills, 1)
 	assert.Equal(t, "greeting", example.Skills[0].Name)
+
+	registry, err := LoadRegistry(agentsDir, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, registry.Names(), exampleAgent, "templates are not loaded as agents")
 }

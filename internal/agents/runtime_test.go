@@ -84,17 +84,28 @@ func (f *fakeRecorder) Record(_ context.Context, data *llmusage.RecordUsageData)
 
 const testUsage = `{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":2,"cache_creation_input_tokens":1}`
 
-func finalResponse() fakeResponse {
+const (
+	checkText = "Let me check."
+	textBlock = `{"type":"text","text":"Let me check."}`
+	userInput = "Hello"
+)
+
+func response(stopReason anthropic.StopReason, content string) fakeResponse {
 	return fakeResponse{status: http.StatusOK, body: fmt.Sprintf(
-		`{"id":"msg","model":%q,"role":"assistant","stop_reason":"end_turn",`+
-			`"content":[{"type":"text","text":%q}],"usage":%s}`, testModel, finalAnswer, testUsage)}
+		`{"id":"msg","model":%q,"role":"assistant","stop_reason":%q,"content":[%s],"usage":%s}`,
+		testModel, stopReason, content, testUsage)}
+}
+
+func finalResponse() fakeResponse {
+	return response(anthropic.EndTurnStopReason, fmt.Sprintf(`{"type":"text","text":%q}`, finalAnswer))
+}
+
+func toolUseBlock(id, tool, input string) string {
+	return fmt.Sprintf(`{"type":"tool_use","id":%q,"name":%q,"input":%s}`, id, tool, input)
 }
 
 func toolUseResponse(tool, input string) fakeResponse {
-	return fakeResponse{status: http.StatusOK, body: fmt.Sprintf(
-		`{"id":"msg","model":%q,"role":"assistant","stop_reason":"tool_use",`+
-			`"content":[{"type":"text","text":"Let me check."},`+
-			`{"type":"tool_use","id":%q,"name":%q,"input":%s}],"usage":%s}`, testModel, toolUseID, tool, input, testUsage)}
+	return response(anthropic.ToolUseStopReason, textBlock+","+toolUseBlock(toolUseID, tool, input))
 }
 
 func errorResponse(status int) fakeResponse {
@@ -175,7 +186,7 @@ func TestRuntimeRun(t *testing.T) {
 			responses:          []fakeResponse{toolUseResponse(LoadSkillToolName, `{"name":"ghost"}`), finalResponse()},
 			requests:           2,
 			calls:              2,
-			expectedToolResult: `"ghost"`,
+			expectedToolResult: `unknown skill "ghost", available skills: plan, tone`,
 			expectedToolError:  true,
 		},
 		{
@@ -183,7 +194,7 @@ func TestRuntimeRun(t *testing.T) {
 			responses:          []fakeResponse{toolUseResponse(failToolName, `{}`), finalResponse()},
 			requests:           2,
 			calls:              2,
-			expectedToolResult: errToolFailed.Error(),
+			expectedToolResult: `tool "fail" failed with an internal error`,
 			expectedToolError:  true,
 		},
 		{
@@ -191,7 +202,7 @@ func TestRuntimeRun(t *testing.T) {
 			responses:          []fakeResponse{toolUseResponse(secretToolName, `{}`), finalResponse()},
 			requests:           2,
 			calls:              2,
-			expectedToolResult: "not available to this agent",
+			expectedToolResult: `tool "secret" is not available to this agent`,
 			expectedToolError:  true,
 		},
 		{
@@ -209,7 +220,7 @@ func TestRuntimeRun(t *testing.T) {
 			api := &fakeAPI{responses: tt.responses}
 			runtime, recorder := newTestRuntime(t, api)
 
-			result, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: "Hello"})
+			result, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: userInput})
 			require.NoError(t, err)
 
 			assert.Equal(t, finalAnswer, result.Text)
@@ -225,6 +236,7 @@ func TestRuntimeRun(t *testing.T) {
 			require.Len(t, recorder.records, tt.calls)
 			assert.Equal(t, coachAgent, recorder.records[0].Agent)
 			assert.Equal(t, testModel, recorder.records[0].Model)
+			assert.Equal(t, testModel, recorder.records[0].ResponseModel)
 			assert.NotEmpty(t, recorder.records[0].RequestID)
 
 			requests := api.sentRequests()
@@ -236,7 +248,8 @@ func TestRuntimeRun(t *testing.T) {
 
 			toolResult := lastToolResult(t, &requests[len(requests)-1])
 			assert.Equal(t, toolUseID, toolResult.ToolUseID)
-			assert.Contains(t, toolResult.Content, tt.expectedToolResult)
+			assert.Equal(t, tt.expectedToolResult, toolResult.Content)
+			assert.NotContains(t, toolResult.Content, errToolFailed.Error(), "error details stay in the log")
 			assert.Equal(t, tt.expectedToolError, toolResult.IsError)
 		})
 	}
@@ -249,7 +262,7 @@ func TestRuntimeRequest(t *testing.T) {
 	api := &fakeAPI{responses: []fakeResponse{toolUseResponse(echoToolName, `{"text":"hi"}`), finalResponse()}}
 	runtime, _ := newTestRuntime(t, api)
 
-	_, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: "Hello"})
+	_, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: userInput})
 	require.NoError(t, err)
 
 	requests := api.sentRequests()
@@ -299,8 +312,15 @@ func TestRuntimeRunErrors(t *testing.T) {
 			requests:  maxToolIterations,
 		},
 		{
+			name:      "tool_use stop reason without tool_use blocks",
+			data:      &RunAgentData{Agent: coachAgent, Input: userInput},
+			responses: []fakeResponse{response(anthropic.ToolUseStopReason, textBlock)},
+			expected:  ErrInvalidResponse,
+			requests:  1,
+		},
+		{
 			name:      "unknown agent",
-			data:      &RunAgentData{Agent: "ghost", Input: "Hi"},
+			data:      &RunAgentData{Agent: "ghost", Input: userInput},
 			responses: []fakeResponse{finalResponse()},
 			expected:  ErrAgentNotFound,
 		},
@@ -312,7 +332,7 @@ func TestRuntimeRunErrors(t *testing.T) {
 		},
 		{
 			name:      "retries are exhausted",
-			data:      &RunAgentData{Agent: coachAgent, Input: "Hi"},
+			data:      &RunAgentData{Agent: coachAgent, Input: userInput},
 			responses: []fakeResponse{errorResponse(http.StatusServiceUnavailable)},
 			expected:  &anthropic.APIError{},
 			requests:  3,
@@ -367,4 +387,186 @@ func TestRuntimeRunKeepsHistory(t *testing.T) {
 	assert.Equal(t, 77, requests[0].MaxTokens)
 	assert.Empty(t, requests[0].Tools)
 	assert.Equal(t, "You are a plain agent.", requests[0].System[0].Text)
+}
+
+// TestRuntimeRunStopReasons: a cut or refused answer returns an error with the partial result, and its
+// history is safe for the next run: no tool_use is left without a tool_result.
+func TestRuntimeRunStopReasons(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		responses []fakeResponse
+		expected  error
+		// expectedText is the partial answer; expectedMessages is the length of the returned history.
+		expectedText     string
+		expectedMessages int
+		requests         int
+	}{
+		{
+			name: "max_tokens with a cut tool_use drops the tool_use",
+			responses: []fakeResponse{
+				response(anthropic.MaxTokensStopReason, textBlock+","+toolUseBlock(toolUseID, echoToolName, `{}`)),
+			},
+			expected:         ErrMaxTokens,
+			expectedText:     checkText,
+			expectedMessages: 2,
+			requests:         1,
+		},
+		{
+			name:             "max_tokens with only a tool_use drops the whole turn",
+			responses:        []fakeResponse{response(anthropic.MaxTokensStopReason, toolUseBlock(toolUseID, echoToolName, `{}`))},
+			expected:         ErrMaxTokens,
+			expectedMessages: 1,
+			requests:         1,
+		},
+		{
+			name:             "context window exceeded is reported as max_tokens",
+			responses:        []fakeResponse{response(anthropic.ContextWindowStopReason, textBlock)},
+			expected:         ErrMaxTokens,
+			expectedText:     checkText,
+			expectedMessages: 2,
+			requests:         1,
+		},
+		{
+			name:             "refusal",
+			responses:        []fakeResponse{response(anthropic.RefusalStopReason, `{"type":"text","text":"I can't help."}`)},
+			expected:         ErrRefusal,
+			expectedText:     "I can't help.",
+			expectedMessages: 2,
+			requests:         1,
+		},
+		{
+			name:             "unknown stop reason",
+			responses:        []fakeResponse{response(anthropic.StopReason("something_new"), textBlock)},
+			expected:         ErrInvalidResponse,
+			expectedText:     checkText,
+			expectedMessages: 2,
+			requests:         1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			api := &fakeAPI{responses: tt.responses}
+			runtime, recorder := newTestRuntime(t, api)
+
+			result, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: userInput})
+
+			require.ErrorIs(t, err, tt.expected)
+			require.NotNil(t, result)
+			assert.Equal(t, tt.expectedText, result.Text)
+			assert.Equal(t, 1, result.Calls)
+			require.Len(t, result.Messages, tt.expectedMessages)
+			assert.Len(t, recorder.records, 1, "a cut answer is billed and recorded")
+			assert.Len(t, api.sentRequests(), tt.requests)
+
+			for _, msg := range result.Messages {
+				for _, block := range msg.Content {
+					assert.NotEqual(t, anthropic.ToolUseContentType, block.Type)
+				}
+			}
+		})
+	}
+}
+
+func TestRuntimeRunPauseTurn(t *testing.T) {
+	t.Parallel()
+
+	api := &fakeAPI{responses: []fakeResponse{response(anthropic.PauseTurnStopReason, textBlock), finalResponse()}}
+	runtime, _ := newTestRuntime(t, api)
+
+	result, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: userInput})
+	require.NoError(t, err)
+
+	assert.Equal(t, finalAnswer, result.Text)
+	assert.Equal(t, 2, result.Calls)
+
+	requests := api.sentRequests()
+	require.Len(t, requests, 2)
+	// The paused turn is sent back as is, with no user message after it.
+	second := requests[1]
+	require.Len(t, second.Messages, 2)
+	assert.Equal(t, anthropic.AssistantRole, second.Messages[1].Role)
+	assert.Equal(t, checkText, second.Messages[1].Content[0].Text)
+}
+
+func TestRuntimeRunTwoToolCalls(t *testing.T) {
+	t.Parallel()
+
+	api := &fakeAPI{responses: []fakeResponse{
+		response(anthropic.ToolUseStopReason, toolUseBlock("toolu_a", echoToolName, `{"text":"one"}`)+","+
+			toolUseBlock("toolu_b", failToolName, `{}`)),
+		finalResponse(),
+	}}
+	runtime, _ := newTestRuntime(t, api)
+
+	_, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: userInput})
+	require.NoError(t, err)
+
+	requests := api.sentRequests()
+	require.Len(t, requests, 2)
+
+	last := requests[1].Messages[2]
+	require.Equal(t, anthropic.UserRole, last.Role)
+	require.Len(t, last.Content, 2)
+	assert.Equal(t, "toolu_a", last.Content[0].ToolUseID)
+	assert.Equal(t, "echo: one", last.Content[0].Content)
+	assert.False(t, last.Content[0].IsError)
+	assert.Equal(t, "toolu_b", last.Content[1].ToolUseID)
+	assert.True(t, last.Content[1].IsError)
+}
+
+// cancellingCreator cancels the run's context right after a successful call, as a client disconnect would.
+type cancellingCreator struct {
+	cancel context.CancelFunc
+}
+
+func (c *cancellingCreator) CreateMessage(
+	context.Context,
+	*anthropic.MessageRequest,
+) (*anthropic.MessageResponse, error) {
+	c.cancel()
+
+	return &anthropic.MessageResponse{
+		Model:      testModel,
+		StopReason: anthropic.EndTurnStopReason,
+		Content:    []anthropic.ContentBlock{anthropic.TextBlock(finalAnswer)},
+		Usage:      anthropic.Usage{InputTokens: 1, OutputTokens: 1},
+	}, nil
+}
+
+type ctxRecorder struct {
+	ctxErr      error
+	hasDeadline bool
+}
+
+func (r *ctxRecorder) Record(ctx context.Context, _ *llmusage.RecordUsageData) error {
+	r.ctxErr = ctx.Err()
+	_, r.hasDeadline = ctx.Deadline()
+
+	return nil
+}
+
+func TestRuntimeRecordsUsageAfterCancel(t *testing.T) {
+	t.Parallel()
+
+	registry, err := LoadRegistry(validAgentsDir, testTools())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	recorder := &ctxRecorder{}
+	runtime := NewRuntime(registry, &cancellingCreator{cancel: cancel}, recorder,
+		&config.LLM{DefaultModel: testModel, DefaultMaxTokens: 1024}, slog.New(slog.DiscardHandler))
+
+	_, err = runtime.Run(ctx, &RunAgentData{Agent: plainAgent, Input: userInput})
+	require.NoError(t, err)
+
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
+	require.NoError(t, recorder.ctxErr, "usage is recorded with a context that is not cancelled")
+	assert.True(t, recorder.hasDeadline, "usage recording has its own timeout")
 }

@@ -21,7 +21,9 @@ type Result struct {
 	// Text is the final answer: text blocks of the last assistant message.
 	Text string
 	// Messages is the whole conversation including the new turns; pass it to the next run to continue.
-	Messages   []anthropic.Message
+	// With ErrMaxTokens or ErrRefusal it holds the partial turn without unanswered tool_use blocks.
+	Messages []anthropic.Message
+	// Model is the requested model: usage costs are calculated by it.
 	Model      string
 	StopReason anthropic.StopReason
 	// Calls is the number of API calls (model turns) made.

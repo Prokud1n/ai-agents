@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -27,9 +28,10 @@ const okBody = `{"id":"msg_1","model":"m","role":"assistant","stop_reason":"end_
 	`"usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":1,"cache_creation_input_tokens":4}}`
 
 type scriptedResponse struct {
-	status     int
-	retryAfter string
-	body       string
+	status      int
+	retryAfter  string
+	shouldRetry string
+	body        string
 }
 
 type scriptedServer struct {
@@ -48,6 +50,10 @@ func (s *scriptedServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp := s.responses[min(len(s.headers), len(s.responses))-1]
 	if resp.retryAfter != "" {
 		w.Header().Set("retry-after", resp.retryAfter)
+	}
+
+	if resp.shouldRetry != "" {
+		w.Header().Set(shouldRetryHeader, resp.shouldRetry)
 	}
 
 	w.Header().Set("request-id", testRequestID)
@@ -123,6 +129,22 @@ func TestCreateMessage(t *testing.T) {
 		{
 			name: "non-json error body", responses: []scriptedResponse{{status: http.StatusForbidden, body: "denied"}},
 			expectedCalls: 1, expectedStatus: http.StatusForbidden,
+		},
+		{
+			name: "x-should-retry true retries a 409",
+			responses: []scriptedResponse{
+				{status: http.StatusConflict, shouldRetry: "true", body: `{"error":{"type":"conflict","message":"x"}}`},
+				ok,
+			},
+			expectedCalls: 2,
+		},
+		{
+			name: "x-should-retry false stops a 500",
+			responses: []scriptedResponse{
+				{status: http.StatusInternalServerError, shouldRetry: "false", body: `{"error":{"type":"api_error","message":"x"}}`},
+				ok,
+			},
+			expectedCalls: 1, expectedStatus: http.StatusInternalServerError, expectedType: "api_error",
 		},
 	}
 
@@ -216,26 +238,121 @@ func TestBackoff(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		attempt    int
-		retryAfter time.Duration
-		expected   time.Duration
+		name     string
+		attempt  int
+		expected time.Duration
 	}{
 		{name: "first retry", attempt: 0, expected: time.Second},
 		{name: "doubles", attempt: 2, expected: 4 * time.Second},
 		{name: "capped", attempt: 10, expected: 30 * time.Second},
 		{name: "huge attempt does not overflow", attempt: 1000, expected: 30 * time.Second},
-		{name: "longer retry-after wins", attempt: 0, retryAfter: 7 * time.Second, expected: 7 * time.Second},
-		{name: "retry-after is capped", attempt: 0, retryAfter: time.Hour, expected: 30 * time.Second},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, backoff(time.Second, 30*time.Second, tt.attempt, tt.retryAfter))
+			assert.Equal(t, tt.expected, backoff(time.Second, 30*time.Second, tt.attempt))
 		})
 	}
+}
+
+func TestEqualJitter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input time.Duration
+	}{
+		{name: "zero", input: 0},
+		{name: "one nanosecond", input: 1},
+		{name: "second", input: time.Second},
+		{name: "minute", input: time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			for range 100 {
+				got := equalJitter(tt.input)
+				assert.GreaterOrEqual(t, got, tt.input/2)
+				assert.LessOrEqual(t, got, tt.input)
+			}
+		})
+	}
+}
+
+func TestParseShouldRetry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected *bool
+	}{
+		{name: "retry", input: "true", expected: new(true)},
+		{name: "do not retry, upper case", input: " FALSE ", expected: new(false)},
+		{name: "absent", input: "", expected: nil},
+		{name: "garbage", input: "maybe", expected: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, parseShouldRetry(tt.input))
+		})
+	}
+}
+
+// A timeout is not retried: the server may have processed (and billed) the request.
+func TestCreateMessageTimeoutIsNotRetried(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+
+	release := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	// Cleanups run in reverse order: the handler is released before the server closes.
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	client := NewClient(&config.Anthropic{
+		APIKey:         fakeAuth,
+		BaseURL:        srv.URL,
+		Timeout:        50 * time.Millisecond,
+		MaxRetries:     2,
+		RetryBaseDelay: time.Millisecond,
+		RetryMaxDelay:  5 * time.Millisecond,
+	}, slog.New(slog.DiscardHandler))
+
+	_, err := client.CreateMessage(context.Background(), testRequest())
+
+	var netErr net.Error
+
+	require.ErrorAs(t, err, &netErr)
+	assert.True(t, netErr.Timeout())
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	assert.Equal(t, 1, calls)
 }
 
 func TestParseRetryAfter(t *testing.T) {

@@ -1,6 +1,6 @@
 // Command agent-run runs one agent with a prompt and prints the answer and its usage:
 //
-//	agent-run -agent _example -prompt "Привет!"
+//	agent-run -agent copywriter -prompt "Привет!"
 //
 // It is for manual checks with a real ANTHROPIC_API_KEY; usage is recorded to PostgreSQL like in the app.
 package main
@@ -65,11 +65,14 @@ func run(args []string, out io.Writer) error {
 	}()
 
 	result, err := runtime.Run(ctx, &agents.RunAgentData{Agent: opts.agent, Input: opts.prompt, Model: opts.model})
+	// A partial result (max_tokens, refusal) comes with an error: print it, the tokens are already billed.
+	if result != nil {
+		printResult(out, result, usage)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to run agent: %w", err)
 	}
-
-	printResult(out, result, usage)
 
 	return nil
 }
@@ -93,6 +96,7 @@ func parseFlags(args []string) (options, error) {
 	return opts, nil
 }
 
+// printResult prints the answer and usage; the cost is calculated by the requested model, as in llm_usage.
 func printResult(out io.Writer, result *agents.Result, usage *llmusage.Service) {
 	cost := "unknown (no price for the model in LLM_PRICES)"
 	if nano, ok := usage.Cost(result.Model, result.Tokens); ok {

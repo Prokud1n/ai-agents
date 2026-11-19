@@ -15,6 +15,8 @@ type APIError struct {
 	Type       string // error.type from the body, e.g. "rate_limit_error"
 	Message    string
 	RequestID  string
+	// ShouldRetry is the x-should-retry response header; nil when the header is absent.
+	ShouldRetry *bool
 }
 
 func (e *APIError) Error() string {
@@ -22,9 +24,13 @@ func (e *APIError) Error() string {
 		e.StatusCode, e.Type, e.RequestID, e.Message)
 }
 
-// Retryable reports whether the request may succeed when repeated: rate limits and server errors
-// (including 529 overloaded).
+// Retryable reports whether the request may succeed when repeated. The server's x-should-retry
+// header wins; without it rate limits and server errors (including 529 overloaded) are retried.
 func (e *APIError) Retryable() bool {
+	if e.ShouldRetry != nil {
+		return *e.ShouldRetry
+	}
+
 	return e.StatusCode == http.StatusTooManyRequests || e.StatusCode >= http.StatusInternalServerError
 }
 

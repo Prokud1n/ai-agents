@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe media-image agent-run
+.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe media-image agent-run test-integration
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -14,6 +14,13 @@ build:
 
 test:
 	go test -race ./...
+
+# Integration tests (names contain "Integration", see internal/pgtest) against PostgreSQL from compose,
+# published on 127.0.0.1:POSTGRES_HOST_PORT and migrated by the migrate service: make up && make test-integration
+test-integration:
+	set -a; . ./.env; set +a; \
+	POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=$${POSTGRES_HOST_PORT:-5432} INTEGRATION=1 \
+	go test -race -count=1 -run Integration ./...
 
 lint:
 	$(GOLANGCI_LINT) run ./...
@@ -46,7 +53,7 @@ media-image:
 	docker build --target media -t ai-agents-media:local .
 
 # Run one agent with a prompt inside compose (needs ANTHROPIC_API_KEY in .env):
-#   make agent-run AGENT=_example PROMPT="Привет!"
+#   make agent-run AGENT=copywriter PROMPT="Привет!"
 # The image is built by the migrate service, which also applies migrations (usage is recorded to llm_usage).
 agent-run:
 	docker compose run --rm --build migrate up

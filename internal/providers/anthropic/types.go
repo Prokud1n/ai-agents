@@ -23,9 +23,15 @@ const (
 type StopReason string
 
 const (
-	EndTurnStopReason   StopReason = "end_turn"
-	ToolUseStopReason   StopReason = "tool_use"
-	MaxTokensStopReason StopReason = "max_tokens"
+	EndTurnStopReason      StopReason = "end_turn"
+	StopSequenceStopReason StopReason = "stop_sequence"
+	ToolUseStopReason      StopReason = "tool_use"
+	MaxTokensStopReason    StopReason = "max_tokens"
+	// PauseTurnStopReason: the server paused a long turn; send the assistant content back to continue.
+	PauseTurnStopReason StopReason = "pause_turn"
+	RefusalStopReason   StopReason = "refusal"
+	// ContextWindowStopReason: the response hit the model context window.
+	ContextWindowStopReason StopReason = "model_context_window_exceeded"
 )
 
 // MessageRequest is the body of POST /v1/messages (the subset the agents need).

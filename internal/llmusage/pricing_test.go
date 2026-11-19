@@ -8,7 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const sonnet = "claude-sonnet-5-5"
+const (
+	sonnet       = "claude-sonnet-5-5"
+	unknownModel = "claude-unknown"
+	bigCostUSD   = "3.125000000"
+)
 
 func TestParsePrices(t *testing.T) {
 	t.Parallel()
@@ -80,7 +84,7 @@ func TestPricesCost(t *testing.T) {
 			// 2*1M + 10*100k + 2.5*10k + 0.1*1M = 2 + 1 + 0.025 + 0.1 USD
 			tokens:       Tokens{Input: 1_000_000, Output: 100_000, CacheWrite: 10_000, CacheRead: 1_000_000},
 			expectedNano: 3_125_000_000,
-			expectedUSD:  "3.125000000",
+			expectedUSD:  bigCostUSD,
 			expectedOK:   true,
 		},
 		{
@@ -92,7 +96,7 @@ func TestPricesCost(t *testing.T) {
 			expectedOK:   true,
 		},
 		{name: "no tokens", model: sonnet, expectedUSD: "0.000000000", expectedOK: true},
-		{name: "unknown model", model: "claude-unknown", tokens: Tokens{Input: 1}, expectedUSD: "0.000000000"},
+		{name: "unknown model", model: unknownModel, tokens: Tokens{Input: 1}, expectedUSD: "0.000000000"},
 	}
 
 	for _, tt := range tests {
@@ -118,7 +122,7 @@ func TestParseUSD(t *testing.T) {
 		expectErr bool
 	}{
 		{name: "zero", input: "0", expected: 0},
-		{name: "numeric text", input: "3.125000000", expected: 3_125_000_000},
+		{name: "numeric text", input: bigCostUSD, expected: 3_125_000_000},
 		{name: "short fraction", input: "0.5", expected: 500_000_000},
 		{name: "too precise", input: "0.0000000001", expectErr: true},
 		{name: "garbage", input: "abc", expectErr: true},
@@ -163,7 +167,7 @@ func TestNewEntry(t *testing.T) {
 		expectedCost *int64
 	}{
 		{name: "priced model", model: sonnet, expectedCost: new(int64(30_000))},
-		{name: "unpriced model has no cost", model: "claude-unknown"},
+		{name: "unpriced model has no cost", model: unknownModel},
 	}
 
 	for _, tt := range tests {
@@ -171,11 +175,14 @@ func TestNewEntry(t *testing.T) {
 			t.Parallel()
 
 			entry := newEntry(prices, &RecordUsageData{
-				Agent: "a", Model: tt.model, RequestID: "req", Tokens: Tokens{Input: 10, Output: 1},
-				Duration: time.Second, CreatedAt: now,
+				Agent: "a", Model: tt.model, ResponseModel: "claude-dated-20261101", RequestID: "req",
+				Tokens: Tokens{Input: 10, Output: 1}, Duration: time.Second, CreatedAt: now,
 			})
 
+			// The price is looked up by the requested model, the response model is kept for reference.
 			assert.Equal(t, tt.expectedCost, entry.CostNano)
+			assert.Equal(t, tt.model, entry.Model)
+			assert.Equal(t, "claude-dated-20261101", entry.ResponseModel)
 			assert.Equal(t, now, entry.CreatedAt)
 			assert.Equal(t, Tokens{Input: 10, Output: 1}, entry.Tokens)
 		})
@@ -196,9 +203,9 @@ func TestSummarize(t *testing.T) {
 		{
 			name: "totals over agents and models",
 			rows: []SummaryRow{
-				{Agent: "copywriter", Model: sonnet, Calls: 2, Tokens: Tokens{Input: 10, Output: 5}, CostNano: 70},
-				{Agent: "marketer", Model: sonnet, Calls: 1, Tokens: Tokens{CacheRead: 3, CacheWrite: 4}, CostNano: 30},
-				{Agent: "marketer", Model: "custom", Calls: 4, Tokens: Tokens{Input: 1}, UnpricedCalls: 4},
+				{Agent: copywriter, Model: sonnet, Calls: 2, Tokens: Tokens{Input: 10, Output: 5}, CostNano: 70},
+				{Agent: marketer, Model: sonnet, Calls: 1, Tokens: Tokens{CacheRead: 3, CacheWrite: 4}, CostNano: 30},
+				{Agent: marketer, Model: "custom", Calls: 4, Tokens: Tokens{Input: 1}, UnpricedCalls: 4},
 			},
 			expected: SummaryRow{
 				Calls:         7,
@@ -219,6 +226,30 @@ func TestSummarize(t *testing.T) {
 			assert.Equal(t, tt.rows, got.Rows)
 			assert.Equal(t, tt.expected, got.Total)
 			assert.Equal(t, FormatUSD(tt.expected.CostNano), got.Total.CostUSD())
+		})
+	}
+}
+
+func TestServiceHasPrice(t *testing.T) {
+	t.Parallel()
+
+	service := &Service{prices: Prices{sonnet: {Input: 1}}}
+
+	tests := []struct {
+		name     string
+		model    string
+		expected bool
+	}{
+		{name: "priced", model: sonnet, expected: true},
+		{name: "unpriced", model: unknownModel, expected: false},
+		{name: "empty", model: "", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, service.HasPrice(tt.model))
 		})
 	}
 }

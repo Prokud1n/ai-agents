@@ -7,10 +7,17 @@ const (
 	agentFileName = "agent.md"
 	skillFileName = "SKILL.md"
 	skillsDirName = "skills"
+	// templatePrefix marks directories that are not loaded as agents, e.g. the _example template.
+	templatePrefix = "_"
+	logKeyAgent    = "agent"
 )
 
-// namePattern is the format of agent, skill and tool names; an agent or skill name equals its directory name.
-var namePattern = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]*$`)
+var (
+	// namePattern is the format of agent and skill names; an agent or skill name equals its directory name.
+	namePattern = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]*$`)
+	// toolNamePattern is the tool name format accepted by the Claude API.
+	toolNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+)
 
 // Agent is a role loaded from agents/<name>/agent.md.
 type Agent struct {

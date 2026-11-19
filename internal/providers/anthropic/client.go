@@ -3,11 +3,14 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,14 +20,15 @@ import (
 )
 
 const (
-	messagesPath     = "/v1/messages"
-	apiVersion       = "2023-06-01"
-	authHeader       = "x-api-key"
-	versionHeader    = "anthropic-version"
-	requestIDHeader  = "request-id"
-	retryAfterHeader = "retry-after"
-	maxErrorBodySize = 64 << 10
-	maxBackoffShift  = 20 // caps 2^attempt so the delay never overflows
+	messagesPath      = "/v1/messages"
+	apiVersion        = "2023-06-01"
+	authHeader        = "x-api-key"
+	versionHeader     = "anthropic-version"
+	requestIDHeader   = "request-id"
+	retryAfterHeader  = "retry-after"
+	shouldRetryHeader = "x-should-retry"
+	maxErrorBodySize  = 64 << 10
+	maxBackoffShift   = 20 // caps 2^attempt so the delay never overflows
 )
 
 // Client is a thin client for the Claude Messages API: one endpoint, retries on 429/5xx.
@@ -36,6 +40,8 @@ type Client struct {
 	retryBaseDelay time.Duration
 	retryMaxDelay  time.Duration
 	log            *slog.Logger
+	// jitter randomizes a retry delay so that parallel runs do not retry in lockstep.
+	jitter func(time.Duration) time.Duration
 }
 
 func NewClient(cfg *config.Anthropic, log *slog.Logger) *Client {
@@ -47,6 +53,7 @@ func NewClient(cfg *config.Anthropic, log *slog.Logger) *Client {
 		retryBaseDelay: cfg.RetryBaseDelay,
 		retryMaxDelay:  cfg.RetryMaxDelay,
 		log:            log,
+		jitter:         equalJitter,
 	}
 }
 
@@ -55,8 +62,9 @@ func (c *Client) Configured() bool {
 	return c.apiKey != ""
 }
 
-// CreateMessage sends a Messages API request. 429, 5xx and network errors are retried
-// up to MaxRetries times with exponential backoff (or the server's retry-after, if longer).
+// CreateMessage sends a Messages API request. 429, 5xx and network errors are retried up to MaxRetries
+// times with exponential backoff and jitter (or the server's retry-after, if longer); x-should-retry
+// from the server overrides the status rule. A timeout is not retried: the request may be already billed.
 func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	if !c.Configured() {
 		return nil, ErrAPIKeyMissing
@@ -77,7 +85,7 @@ func (c *Client) CreateMessage(ctx context.Context, req *MessageRequest) (*Messa
 			return nil, fmt.Errorf("failed to create message: %w", err)
 		}
 
-		delay := backoff(c.retryBaseDelay, c.retryMaxDelay, attempt, retryAfter)
+		delay := max(c.jitter(backoff(c.retryBaseDelay, c.retryMaxDelay, attempt)), min(retryAfter, c.retryMaxDelay))
 		c.log.WarnContext(ctx, "anthropic: retrying request",
 			"error", err, "attempt", attempt+1, "delay", delay.String())
 
@@ -107,7 +115,10 @@ func (c *Client) send(ctx context.Context, body []byte) (*MessageResponse, time.
 	requestID := httpResp.Header.Get(requestIDHeader)
 
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, parseRetryAfter(httpResp.Header.Get(retryAfterHeader)), decodeAPIError(httpResp, requestID)
+		apiErr := decodeAPIError(httpResp, requestID)
+		apiErr.ShouldRetry = parseShouldRetry(httpResp.Header.Get(shouldRetryHeader))
+
+		return nil, parseRetryAfter(httpResp.Header.Get(retryAfterHeader)), apiErr
 	}
 
 	var resp MessageResponse
@@ -157,7 +168,8 @@ func (e *transportError) Unwrap() error {
 }
 
 // retryable: API errors with 429/5xx and network errors, but never a cancelled or expired context.
-// A broken 200 response is not retried: the request is already billed.
+// Not retried either, because the request may be already billed: a broken 200 response and a timeout
+// (the server may have processed the request after the client gave up).
 func retryable(ctx context.Context, err error) bool {
 	if ctx.Err() != nil {
 		return false
@@ -169,19 +181,48 @@ func retryable(ctx context.Context, err error) bool {
 	}
 
 	var transportErr *transportError
-
-	return errors.As(err, &transportErr)
-}
-
-// backoff returns base * 2^attempt capped by maxDelay; a longer retry-after from the server wins,
-// but is capped by maxDelay too, so one call never waits unbounded.
-func backoff(base, maxDelay time.Duration, attempt int, retryAfter time.Duration) time.Duration {
-	delay := maxDelay
-	if shift := min(attempt, maxBackoffShift); base <= maxDelay>>shift {
-		delay = base << shift
+	if !errors.As(err, &transportErr) {
+		return false
 	}
 
-	return max(delay, min(retryAfter, maxDelay))
+	var netErr net.Error
+
+	return !errors.As(err, &netErr) || !netErr.Timeout()
+}
+
+// backoff returns base * 2^attempt capped by maxDelay. CreateMessage applies jitter to it and waits
+// at least the server's retry-after, capped by maxDelay too, so one call never waits unbounded.
+func backoff(base, maxDelay time.Duration, attempt int) time.Duration {
+	if shift := min(attempt, maxBackoffShift); base <= maxDelay>>shift {
+		return base << shift
+	}
+
+	return maxDelay
+}
+
+// equalJitter returns a random delay in [d/2, d]: retries spread out but still back off.
+func equalJitter(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(half)+1))
+	if err != nil {
+		return d
+	}
+
+	return half + time.Duration(n.Int64())
+}
+
+// parseShouldRetry reads x-should-retry ("true" or "false"); anything else means no hint.
+func parseShouldRetry(value string) *bool {
+	shouldRetry, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return nil
+	}
+
+	return &shouldRetry
 }
 
 // parseRetryAfter reads the delay in whole seconds; the HTTP-date form is not used by the API.

@@ -20,6 +20,7 @@ var errToolFailed = errors.New("boom")
 
 type fakeTool struct {
 	name    string
+	schema  string // empty: a valid default schema
 	execute func(input json.RawMessage) (string, error)
 }
 
@@ -31,7 +32,11 @@ func (t *fakeTool) Description() string {
 	return "test tool " + t.name
 }
 
-func (*fakeTool) InputSchema() json.RawMessage {
+func (t *fakeTool) InputSchema() json.RawMessage {
+	if t.schema != "" {
+		return json.RawMessage(t.schema)
+	}
+
 	return json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`)
 }
 

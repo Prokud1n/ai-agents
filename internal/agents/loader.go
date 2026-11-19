@@ -9,7 +9,8 @@ import (
 	"strings"
 )
 
-// loadAgents loads every subdirectory of fsys as an agent (hidden ones, starting with ".", are skipped).
+// loadAgents loads every subdirectory of fsys as an agent. Directories starting with "." (hidden) or "_"
+// (templates such as _example) are skipped.
 // All problems are collected and returned together, each prefixed with its file path under root.
 func loadAgents(fsys fs.FS, root string, tools map[string]Tool) (map[string]*Agent, error) {
 	entries, err := fs.ReadDir(fsys, ".")
@@ -22,7 +23,7 @@ func loadAgents(fsys fs.FS, root string, tools map[string]Tool) (map[string]*Age
 	var errs []error
 
 	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), templatePrefix) {
 			continue
 		}
 

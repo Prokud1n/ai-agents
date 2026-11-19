@@ -4,17 +4,19 @@ import "time"
 
 // Entry is the usage of one Claude API call.
 type Entry struct {
-	Agent     string
-	Model     string
-	RequestID string
-	Tokens    Tokens
+	Agent string
+	// Model is the requested model (the price is looked up by it); ResponseModel is from the response.
+	Model         string
+	ResponseModel string
+	RequestID     string
+	Tokens        Tokens
 	// CostNano is the cost in nano-dollars; nil when the model has no price.
 	CostNano  *int64
 	Duration  time.Duration
 	CreatedAt time.Time
 }
 
-// SummaryRow is the usage of one agent with one model over a period.
+// SummaryRow is the usage of one agent with one (requested) model over a period.
 type SummaryRow struct {
 	Agent  string
 	Model  string

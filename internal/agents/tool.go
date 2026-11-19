@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
 )
@@ -74,13 +75,13 @@ func (t *loadSkillTool) InputSchema() json.RawMessage {
 func (t *loadSkillTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var in loadSkillInput
 	if err := json.Unmarshal(input, &in); err != nil {
-		return "", fmt.Errorf("failed to decode load_skill input: %w", err)
+		return "", NewToolError(`input must be {"name": "<skill name>"}`)
 	}
 
 	skill, ok := t.agent.skill(in.Name)
 	if !ok {
-		return "", fmt.Errorf("failed to load skill %q: available skills: %v: %w",
-			in.Name, t.agent.skillNames(), ErrInvalidRunData)
+		return "", NewToolError(fmt.Sprintf("unknown skill %q, available skills: %s",
+			in.Name, strings.Join(t.agent.skillNames(), ", ")))
 	}
 
 	return skill.Body, nil

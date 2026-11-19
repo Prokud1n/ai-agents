@@ -30,7 +30,15 @@ func (s *Service) Cost(model string, t Tokens) (int64, bool) {
 	return s.prices.Cost(model, t)
 }
 
-// Record stores the usage of one API call. A model without a price is stored with a NULL cost.
+// HasPrice reports whether LLM_PRICES has a price for the model.
+func (s *Service) HasPrice(model string) bool {
+	_, ok := s.prices[model]
+
+	return ok
+}
+
+// Record stores the usage of one API call. The cost is calculated by the requested model (data.Model);
+// a model without a price is stored with a NULL cost.
 func (s *Service) Record(ctx context.Context, data *RecordUsageData) error {
 	entry := newEntry(s.prices, data)
 
@@ -57,12 +65,13 @@ func (s *Service) UsageSummary(ctx context.Context, since time.Time) (Summary, e
 
 func newEntry(prices Prices, data *RecordUsageData) Entry {
 	entry := Entry{
-		Agent:     data.Agent,
-		Model:     data.Model,
-		RequestID: data.RequestID,
-		Tokens:    data.Tokens,
-		Duration:  data.Duration,
-		CreatedAt: data.CreatedAt,
+		Agent:         data.Agent,
+		Model:         data.Model,
+		ResponseModel: data.ResponseModel,
+		RequestID:     data.RequestID,
+		Tokens:        data.Tokens,
+		Duration:      data.Duration,
+		CreatedAt:     data.CreatedAt,
 	}
 
 	if cost, ok := prices.Cost(data.Model, data.Tokens); ok {
