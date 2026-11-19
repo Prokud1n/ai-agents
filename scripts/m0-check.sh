@@ -507,7 +507,8 @@ EOF
 	local printed
 	printed=$(grep -F "$file (" <<<"$out" | grep -v '^failed' | sed -E 's/^[a-z]+ +(.*) \([0-9]+ chunks\)$/\1/' | head -n 1)
 	if [[ "$printed" != "$expected" ]]; then
-		# Файл с уникальным именем загружен этим прогоном: удаляем документ под тем source, что напечатал ingest.
+		# Не должно случаться (source = путь от KB_ROOT), но файл с уникальным именем загружен этим прогоном:
+		# удаляем документ под тем source, что напечатал ingest.
 		[[ -z "$printed" ]] || KB_SOURCE=$printed
 		result kb FAIL "ingest напечатал source «${printed}», ожидался «${expected}» (KB_ROOT): m0-results/kb.log"
 		return 0
