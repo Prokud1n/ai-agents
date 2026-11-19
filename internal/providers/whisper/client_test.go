@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,8 +49,11 @@ func expectedFixture() *Transcript {
 		Duration: 4.21,
 		Text:     "Привет! Сегодня делаем присед.",
 		Segments: []Segment{
-			{ID: 0, Start: 0, End: 1.12, Text: " Привет!", NoSpeechProb: 0.012},
-			{ID: 1, Start: 1.6, End: 3.94, Text: " Сегодня делаем присед.", NoSpeechProb: 0.004},
+			{ID: 0, Start: 0, End: 1.12, Text: " Привет!", NoSpeechProb: 0.012, AvgLogprob: -0.31, CompressionRatio: 0.82},
+			{
+				ID: 1, Start: 1.6, End: 3.94, Text: " Сегодня делаем присед.",
+				NoSpeechProb: 0.004, AvgLogprob: -0.27, CompressionRatio: 0.91,
+			},
 		},
 		Words: []Word{
 			{Word: "Привет", Start: 0, End: 0.86},
@@ -179,12 +183,18 @@ func readMultipart(r *http.Request) (form map[string][]string, fileName, fileCon
 func newTestClient(t *testing.T, baseURL, apiKey string) *Client {
 	t.Helper()
 
+	return newTestClientWithTimeout(t, baseURL, apiKey, 5*time.Second)
+}
+
+func newTestClientWithTimeout(t *testing.T, baseURL, apiKey string, timeout time.Duration) *Client {
+	t.Helper()
+
 	return NewClient(
 		&config.OpenAI{APIKey: apiKey, BaseURL: baseURL + "/"},
 		&config.Whisper{
 			Model:          testModel,
 			Language:       "ru",
-			RequestTimeout: 5 * time.Second,
+			RequestTimeout: timeout,
 			MaxRetries:     2,
 			RetryBaseDelay: time.Millisecond,
 		},
@@ -316,6 +326,94 @@ func TestClientTranscribe(t *testing.T) {
 
 			if tt.expectedForm != nil {
 				assert.Equal(t, tt.expectedForm, api.lastForm)
+			}
+		})
+	}
+}
+
+// TestClientRetrySafety: a request that may have reached the API is not repeated, so it is not billed twice.
+func TestClientRetrySafety(t *testing.T) {
+	t.Parallel()
+
+	var slowCalls, droppedCalls atomic.Int32
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slowCalls.Add(1)
+
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			return
+		}
+
+		select {
+		case <-r.Context().Done():
+		case <-time.After(time.Second):
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(slow.Close)
+
+	// Reads the whole body, then drops the connection without an answer.
+	dropped := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		droppedCalls.Add(1)
+
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			return
+		}
+
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+
+		if err := conn.Close(); err != nil {
+			return
+		}
+	}))
+	t.Cleanup(dropped.Close)
+
+	refused := httptest.NewServer(http.NotFoundHandler())
+	refusedURL := refused.URL
+	refused.Close()
+
+	tests := []struct {
+		name          string
+		url           string
+		timeout       time.Duration
+		calls         *atomic.Int32
+		expectedCalls int32
+		expectedInErr string
+	}{
+		{
+			name: "request timeout is not retried", url: slow.URL, timeout: 50 * time.Millisecond,
+			calls: &slowCalls, expectedCalls: 1, expectedInErr: "after 1 attempt(s)",
+		},
+		{
+			name: "connection lost after the body was sent is not retried", url: dropped.URL, timeout: 5 * time.Second,
+			calls: &droppedCalls, expectedCalls: 1, expectedInErr: "after 1 attempt(s)",
+		},
+		{
+			name: "connection refused before sending is retried", url: refusedURL, timeout: 5 * time.Second,
+			expectedInErr: "after 3 attempt(s)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			audio := filepath.Join(t.TempDir(), "chunk.mp3")
+			require.NoError(t, os.WriteFile(audio, []byte(audioBody), 0o600))
+
+			client := newTestClientWithTimeout(t, tt.url, testAPIKey, tt.timeout)
+
+			_, err := client.Transcribe(t.Context(), TranscribeData{Path: audio})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedInErr)
+
+			if tt.calls != nil {
+				assert.Equal(t, tt.expectedCalls, tt.calls.Load())
 			}
 		})
 	}

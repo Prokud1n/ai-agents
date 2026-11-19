@@ -20,16 +20,20 @@ const (
 	chunkName      = "chunk-"
 )
 
-var ErrEmptyPath = errors.New("input path is empty")
+var (
+	ErrEmptyPath           = errors.New("input path is empty")
+	ErrUnsupportedLanguage = errors.New("unsupported language")
+)
 
 type audioProcessor interface {
 	ExtractAudio(ctx context.Context, src, dst string) error
 	CutAudio(ctx context.Context, src, dst string, start, duration float64) error
 	Duration(ctx context.Context, path string) (float64, error)
-	DetectSilences(ctx context.Context, path string) ([]ffmpeg.Silence, error)
+	DetectSilences(ctx context.Context, path string, opts ffmpeg.SilenceOptions) ([]ffmpeg.Silence, error)
 }
 
 type transcriber interface {
+	CheckAPIKey() error
 	Transcribe(ctx context.Context, data whisper.TranscribeData) (*whisper.Transcript, error)
 }
 
@@ -39,28 +43,32 @@ type Service struct {
 	audio           audioProcessor
 	transcriber     transcriber
 	defaultLanguage string
+	silence         ffmpeg.SilenceOptions
 	maxUploadSize   int64
 	log             *slog.Logger
 }
 
-func NewService(audio audioProcessor, tr transcriber, cfg *config.Whisper, log *slog.Logger) *Service {
+func NewService(
+	audio audioProcessor,
+	tr transcriber,
+	whisperCfg *config.Whisper,
+	cfg *config.Transcription,
+	log *slog.Logger,
+) *Service {
 	return &Service{
 		audio:           audio,
 		transcriber:     tr,
-		defaultLanguage: cfg.Language,
+		defaultLanguage: whisperCfg.Language,
+		silence:         ffmpeg.SilenceOptions{NoiseDB: cfg.SilenceNoiseDB, MinDuration: cfg.SilenceMinDuration},
 		maxUploadSize:   whisper.MaxFileSize,
 		log:             log,
 	}
 }
 
 func (s *Service) Transcribe(ctx context.Context, data TranscribeData) (*Result, error) {
-	if data.Path == "" {
-		return nil, fmt.Errorf("failed to transcribe: %w", ErrEmptyPath)
-	}
-
-	language := data.Language
-	if language == "" {
-		language = s.defaultLanguage
+	language, err := s.validate(data)
+	if err != nil {
+		return nil, err
 	}
 
 	dir, err := os.MkdirTemp("", tempDirPattern)
@@ -101,10 +109,38 @@ func (s *Service) Transcribe(ctx context.Context, data TranscribeData) (*Result,
 	result.Language = language
 
 	if result.Language == "" {
-		result.Language = parts[0].Transcript.Language
+		result.Language = isoLanguage(parts[0].Transcript.Language)
 	}
 
 	return &result, nil
+}
+
+// validate fails fast, before the audio is prepared: no API key, no input, an unknown language.
+// It returns the language to request; empty means auto-detect.
+func (s *Service) validate(data TranscribeData) (string, error) {
+	if err := s.transcriber.CheckAPIKey(); err != nil {
+		return "", err
+	}
+
+	if data.Path == "" {
+		return "", fmt.Errorf("failed to transcribe: %w", ErrEmptyPath)
+	}
+
+	requested := data.Language
+	if requested == "" {
+		requested = s.defaultLanguage
+	}
+
+	if requested == "" {
+		return "", nil
+	}
+
+	language, ok := normalizeLanguage(requested)
+	if !ok {
+		return "", fmt.Errorf("failed to transcribe in %q: %w", requested, ErrUnsupportedLanguage)
+	}
+
+	return language, nil
 }
 
 func (s *Service) planAudioChunks(ctx context.Context, audio string, duration float64) ([]chunk, error) {
@@ -114,11 +150,11 @@ func (s *Service) planAudioChunks(ctx context.Context, audio string, duration fl
 	}
 
 	maxChunk := chunkDurationLimit(duration, info.Size(), s.maxUploadSize)
-	if duration <= maxChunk {
+	if duration-maxChunk < minTailDuration {
 		return []chunk{{Start: 0, End: duration}}, nil
 	}
 
-	silences, err := s.audio.DetectSilences(ctx, audio)
+	silences, err := s.audio.DetectSilences(ctx, audio, s.silence)
 	if err != nil {
 		// Without pauses the audio is still cut at fixed points with an overlap.
 		s.log.ErrorContext(ctx, "transcription: failed to detect silences", "error", err)
@@ -151,10 +187,14 @@ func (s *Service) transcribeChunks(
 			return nil, fmt.Errorf("failed to transcribe chunk %d of %d: %w", i+1, len(chunks), err)
 		}
 
-		s.log.InfoContext(ctx, "transcription: chunk done", "chunk", i+1, "of", len(chunks), "words", len(transcript.Words))
+		filtered := dropHallucinations(*transcript)
 
-		parts = append(parts, chunkTranscript{Chunk: c, Transcript: *transcript})
-		prompt = promptTail(transcript.Text)
+		s.log.InfoContext(ctx, "transcription: chunk done",
+			"chunk", i+1, "of", len(chunks), "words", len(filtered.Words),
+			"dropped_segments", len(transcript.Segments)-len(filtered.Segments))
+
+		parts = append(parts, chunkTranscript{Chunk: c, Transcript: filtered})
+		prompt = promptTail(filtered.Text)
 	}
 
 	return parts, nil

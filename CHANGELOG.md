@@ -21,11 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TELEGRAM_BOT_API_URL` config for the upcoming Telegram integration.
 - Make targets `up`, `down`, `logs`, `migrate`, `migrate-down`; tests run with `-race`.
 - Transcription (T3.1): `transcribe -in video.mp4 [-lang ru] [-out result.json]` prints JSON with the text, segments and
-  word timestamps (seconds). ffmpeg extracts mono 16 kHz MP3, long audio is split in pauses (or with an overlap)
-  to fit the 25 MB Whisper limit and merged back; the Whisper client retries 429/5xx. Config: `OPENAI_API_KEY`,
-  `OPENAI_BASE_URL`, `WHISPER_*`; without a key the app starts and only transcription fails.
-- Docker target `media` (alpine + ffmpeg, non-root) with the `transcribe` binary; `make transcribe`, `make media-image`.
-- CI: ffmpeg integration tests in `check`; `media-image` job builds the media target and extracts audio from a generated clip.
+  word timestamps (seconds) and an ISO language code. ffmpeg extracts mono 16 kHz MP3 from local files only (`file:`
+  inputs, `-protocol_whitelist file`, timeout `FFMPEG_TIMEOUT`); long audio is split in pauses
+  (`TRANSCRIPTION_SILENCE_*`) or with an overlap to fit the 25 MB Whisper limit and merged without repeating
+  the overlap. Segments Whisper hallucinates on silence or music are dropped. The Whisper client retries 429/5xx
+  and connection errors before the request is sent, never a request that may have been processed. Config:
+  `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `WHISPER_*`, read by the command only; without a key it fails before
+  preparing the audio.
+- TODO: OpenAI shuts `whisper-1` (the only model with word timestamps) down on 2027-02-26; a replacement is to be chosen.
+- Docker target `media` (alpine + ffmpeg 8.1, non-root, `WORKDIR /work`) with the `transcribe` binary;
+  `make transcribe`, `make media-image`.
+- CI: ffmpeg integration tests in `check`; `media-image` job builds the media target, runs the ffmpeg tests inside it
+  and extracts audio from a generated clip.
 - CI: `tidy` job that commits `go mod tidy` results to `feature/**` branches and re-runs checks on the new commit;
   `compose-smoke` job; actions pinned by SHA with least-privilege permissions.
 

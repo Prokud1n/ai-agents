@@ -89,10 +89,18 @@ docker compose --profile telegram up -d
 
 ```bash
 make transcribe ARGS="-in video.mp4 -out result.json"   # -lang ru по умолчанию (WHISPER_LANGUAGE)
-# или в образе с ffmpeg:
-make media-image
-docker run --rm --env-file .env --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work ai-agents-media:local -in video.mp4 -out result.json
 ```
+
+В образе с ffmpeg: текущая папка монтируется в `/work` (рабочая папка образа). Пути `-in` и `-out` — относительно неё,
+`--user` нужен, чтобы `result.json` на хосте принадлежал вам и был доступен для записи:
+
+```bash
+make media-image
+docker run --rm --env-file .env --user "$(id -u):$(id -g)" -v "$PWD:/work" ai-agents-media:local \
+  -in video.mp4 -out result.json
+```
+
+Если в роликах фоновая музыка и паузы не находятся, подними `TRANSCRIPTION_SILENCE_NOISE_DB` (например, до `-25`).
 
 ## Разработка
 

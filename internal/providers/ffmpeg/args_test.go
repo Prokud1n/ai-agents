@@ -1,13 +1,19 @@
 package ffmpeg
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-const testAudio = "/tmp/audio.mp3"
+const (
+	testAudio = "file:/tmp/audio.mp3"
+	testVideo = "file:/in/video one.mp4"
+)
 
 func concat(parts ...[]string) []string {
 	var out []string
@@ -23,6 +29,9 @@ func TestBuildArgs(t *testing.T) {
 
 	common := []string{"-hide_banner", "-nostdin", "-nostats", "-y"}
 	encode := []string{"-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "32k"}
+	input := func(path string) []string {
+		return []string{"-protocol_whitelist", "file", inputFlag, path}
+	}
 
 	tests := []struct {
 		name     string
@@ -30,40 +39,30 @@ func TestBuildArgs(t *testing.T) {
 		expected []string
 	}{
 		{
-			name:  "extract audio",
-			input: extractAudioArgs("/in/video one.mp4", testAudio),
-			expected: concat(
-				common, []string{inputFlag, "/in/video one.mp4", "-map", "0:a:0"}, encode, []string{testAudio},
-			),
+			name:     "extract audio",
+			input:    extractAudioArgs(testVideo, testAudio),
+			expected: concat(common, input(testVideo), []string{"-map", "0:a:0"}, encode, []string{testAudio}),
 		},
 		{
 			name:  "cut audio",
-			input: cutAudioArgs(testAudio, "/tmp/chunk-001.mp3", 598.25, 601.5),
+			input: cutAudioArgs(testAudio, "file:/tmp/chunk-1.mp3", 598.25, 601.5),
 			expected: concat(
-				common, []string{"-ss", "598.250", "-t", "601.500", inputFlag, testAudio},
-				encode, []string{"/tmp/chunk-001.mp3"},
+				common, []string{"-ss", "598.250", "-t", "601.500"}, input(testAudio), encode, []string{"file:/tmp/chunk-1.mp3"},
 			),
 		},
 		{
-			name:  "probe duration",
+			name:  "probe duration reads the input through -i",
 			input: durationArgs(testAudio),
-			expected: []string{
-				"-v", "error", "-show_entries", "format=duration",
-				"-of", "default=noprint_wrappers=1:nokey=1", testAudio,
-			},
-		},
-		{
-			name:  "detect silences",
-			input: silenceDetectArgs(testAudio),
 			expected: concat(
-				common, []string{inputFlag, testAudio, "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"},
+				[]string{"-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1"},
+				input(testAudio),
 			),
 		},
 		{
-			name:  "shell metacharacters stay one argument",
-			input: extractAudioArgs("/in/$(rm -rf ~); echo `id`.mp4", "/tmp/a b.mp3"),
+			name:  "detect silences with configured level",
+			input: silenceDetectArgs(testAudio, SilenceOptions{NoiseDB: -25, MinDuration: 300 * time.Millisecond}),
 			expected: concat(
-				common, []string{inputFlag, "/in/$(rm -rf ~); echo `id`.mp4", "-map", "0:a:0"}, encode, []string{"/tmp/a b.mp3"},
+				common, input(testAudio), []string{"-af", "silencedetect=noise=-25.000dB:d=0.300", "-f", "null", "-"},
 			),
 		},
 	}
@@ -73,6 +72,37 @@ func TestBuildArgs(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.expected, tt.input)
+		})
+	}
+}
+
+func TestLocalFile(t *testing.T) {
+	t.Parallel()
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "absolute path", input: "/data/video.mp4", expected: "file:/data/video.mp4"},
+		{name: "relative path", input: "video.mp4", expected: "file:" + filepath.Join(cwd, "video.mp4")},
+		{name: "leading dash is not an option", input: "-version", expected: "file:" + filepath.Join(cwd, "-version")},
+		{name: "url is a file name", input: "http://example.com/x.mp4", expected: "file:" + filepath.Join(cwd, "http:/example.com/x.mp4")},
+		{name: "concat protocol is a file name", input: "concat:/etc/passwd|b.mp4", expected: "file:" + filepath.Join(cwd, "concat:/etc/passwd|b.mp4")},
+		{name: "file prefix is a file name", input: "file:/etc/passwd", expected: "file:" + filepath.Join(cwd, "file:/etc/passwd")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := localFile(tt.input)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }

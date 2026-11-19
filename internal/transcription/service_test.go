@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,7 @@ type cutCall struct {
 }
 
 type fakeAudio struct {
+	extracted   bool
 	duration    float64
 	silences    []ffmpeg.Silence
 	extractErr  error
@@ -40,6 +42,10 @@ type fakeAudio struct {
 }
 
 func (f *fakeAudio) ExtractAudio(_ context.Context, _, dst string) error {
+	f.mu.Lock()
+	f.extracted = true
+	f.mu.Unlock()
+
 	if f.extractErr != nil {
 		return f.extractErr
 	}
@@ -59,7 +65,7 @@ func (f *fakeAudio) Duration(context.Context, string) (float64, error) {
 	return f.duration, nil
 }
 
-func (f *fakeAudio) DetectSilences(context.Context, string) ([]ffmpeg.Silence, error) {
+func (f *fakeAudio) DetectSilences(context.Context, string, ffmpeg.SilenceOptions) ([]ffmpeg.Silence, error) {
 	return f.silences, f.silencesErr
 }
 
@@ -67,9 +73,14 @@ func (f *fakeAudio) DetectSilences(context.Context, string) ([]ffmpeg.Silence, e
 type fakeTranscriber struct {
 	transcripts []whisper.Transcript
 	err         error
+	keyErr      error
 
 	mu       sync.Mutex
 	requests []whisper.TranscribeData
+}
+
+func (f *fakeTranscriber) CheckAPIKey() error {
+	return f.keyErr
 }
 
 func (f *fakeTranscriber) Transcribe(_ context.Context, data whisper.TranscribeData) (*whisper.Transcript, error) {
@@ -87,7 +98,16 @@ func (f *fakeTranscriber) Transcribe(_ context.Context, data whisper.TranscribeD
 }
 
 func newTestService(audio audioProcessor, tr transcriber) *Service {
-	return NewService(audio, tr, &config.Whisper{Language: langRU}, slog.New(slog.DiscardHandler))
+	return newTestServiceWithLanguage(audio, tr, langRU)
+}
+
+func newTestServiceWithLanguage(audio audioProcessor, tr transcriber, defaultLanguage string) *Service {
+	return NewService(
+		audio, tr,
+		&config.Whisper{Language: defaultLanguage},
+		&config.Transcription{SilenceNoiseDB: -30, SilenceMinDuration: 500 * time.Millisecond},
+		slog.New(slog.DiscardHandler),
+	)
 }
 
 func TestServiceTranscribe(t *testing.T) {
@@ -186,17 +206,35 @@ func TestServiceTranscribeErrors(t *testing.T) {
 	errFFmpeg := errors.New("ffmpeg: Stream map '0:a:0' matches no streams")
 
 	tests := []struct {
-		name        string
-		input       TranscribeData
-		audio       *fakeAudio
-		trErr       error
-		expectedErr error
+		name            string
+		input           TranscribeData
+		audio           *fakeAudio
+		transcriber     *fakeTranscriber
+		expectedErr     error
+		expectExtracted bool
 	}{
-		{name: "empty path", input: TranscribeData{}, audio: &fakeAudio{}, expectedErr: ErrEmptyPath},
-		{name: "extraction fails", input: TranscribeData{Path: "v.mp4"}, audio: &fakeAudio{extractErr: errFFmpeg}, expectedErr: errFFmpeg},
 		{
-			name: "no api key", input: TranscribeData{Path: "v.mp4"}, audio: &fakeAudio{duration: 10},
-			trErr: whisper.ErrAPIKeyMissing, expectedErr: whisper.ErrAPIKeyMissing,
+			name: "no api key fails before audio is prepared", input: TranscribeData{Path: videoPath},
+			audio: &fakeAudio{duration: 10}, transcriber: &fakeTranscriber{keyErr: whisper.ErrAPIKeyMissing},
+			expectedErr: whisper.ErrAPIKeyMissing,
+		},
+		{
+			name: "empty path", input: TranscribeData{},
+			audio: &fakeAudio{}, transcriber: &fakeTranscriber{}, expectedErr: ErrEmptyPath,
+		},
+		{
+			name: "unsupported language", input: TranscribeData{Path: videoPath, Language: "russian"},
+			audio: &fakeAudio{}, transcriber: &fakeTranscriber{}, expectedErr: ErrUnsupportedLanguage,
+		},
+		{
+			name: "extraction fails", input: TranscribeData{Path: videoPath},
+			audio: &fakeAudio{extractErr: errFFmpeg}, transcriber: &fakeTranscriber{},
+			expectedErr: errFFmpeg, expectExtracted: true,
+		},
+		{
+			name: "transcription fails", input: TranscribeData{Path: videoPath},
+			audio: &fakeAudio{duration: 10}, transcriber: &fakeTranscriber{err: errFFmpeg},
+			expectedErr: errFFmpeg, expectExtracted: true,
 		},
 	}
 
@@ -204,10 +242,67 @@ func TestServiceTranscribeErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := newTestService(tt.audio, &fakeTranscriber{err: tt.trErr}).Transcribe(t.Context(), tt.input)
+			got, err := newTestService(tt.audio, tt.transcriber).Transcribe(t.Context(), tt.input)
 
 			require.ErrorIs(t, err, tt.expectedErr)
 			assert.Nil(t, got)
+			assert.Equal(t, tt.expectExtracted, tt.audio.extracted)
+		})
+	}
+}
+
+// Whisper "hears" text in silence and music; such segments are dropped with their words.
+func TestServiceTranscribeSilence(t *testing.T) {
+	t.Parallel()
+
+	hallucination := whisper.Transcript{
+		Language: "russian",
+		Text:     " Продолжение следует...",
+		Words: []whisper.Word{
+			{Word: "Продолжение", Start: 0.5, End: 1.4},
+			{Word: "следует", Start: 1.4, End: 2.2},
+		},
+		Segments: []whisper.Segment{
+			{Start: 0, End: 3, Text: " Продолжение следует...", NoSpeechProb: 0.92, AvgLogprob: -1.31, CompressionRatio: 0.8},
+		},
+	}
+
+	tests := []struct {
+		name            string
+		defaultLanguage string
+		input           TranscribeData
+		expected        *Result
+	}{
+		{
+			name:            "only silence gives an empty transcript",
+			defaultLanguage: langRU,
+			input:           TranscribeData{Path: videoPath},
+			expected:        &Result{Language: langRU, Duration: 3, Text: "", Words: []Word{}, Segments: []Segment{}},
+		},
+		{
+			name:            "requested language is normalized",
+			defaultLanguage: langRU,
+			input:           TranscribeData{Path: videoPath, Language: " EN "},
+			expected:        &Result{Language: langEN, Duration: 3, Text: "", Words: []Word{}, Segments: []Segment{}},
+		},
+		{
+			name:     "detected language is an ISO code",
+			input:    TranscribeData{Path: videoPath},
+			expected: &Result{Language: langRU, Duration: 3, Text: "", Words: []Word{}, Segments: []Segment{}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tr := &fakeTranscriber{transcripts: []whisper.Transcript{hallucination}}
+
+			got, err := newTestServiceWithLanguage(&fakeAudio{duration: 3}, tr, tt.defaultLanguage).
+				Transcribe(t.Context(), tt.input)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }

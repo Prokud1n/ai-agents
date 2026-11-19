@@ -10,10 +10,12 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
@@ -39,6 +41,10 @@ const (
 )
 
 var (
+	// errNotSent marks a failure before the request body was fully sent: the API cannot have processed
+	// (and billed) the request, so it is safe to retry.
+	errNotSent = errors.New("request was not sent")
+
 	// ErrAPIKeyMissing is returned on a call when OPENAI_API_KEY is not set: the application still starts.
 	ErrAPIKeyMissing = errors.New("openai api key is not configured (OPENAI_API_KEY)")
 	ErrFileTooLarge  = errors.New("audio file exceeds the 25 MB upload limit")
@@ -71,12 +77,22 @@ func NewClient(openAI *config.OpenAI, cfg *config.Whisper, log *slog.Logger) *Cl
 	}
 }
 
-// Transcribe uploads one audio file and returns its transcript with word and segment timestamps.
-// Requests failing with 429 (except insufficient quota), 5xx or a network error are retried
-// with exponential backoff; Retry-After is honored.
-func (c *Client) Transcribe(ctx context.Context, data TranscribeData) (*Transcript, error) {
+// CheckAPIKey lets callers fail before preparing audio when the key is not configured.
+func (c *Client) CheckAPIKey() error {
 	if c.apiKey == "" {
-		return nil, fmt.Errorf("failed to transcribe: %w", ErrAPIKeyMissing)
+		return fmt.Errorf("failed to transcribe: %w", ErrAPIKeyMissing)
+	}
+
+	return nil
+}
+
+// Transcribe uploads one audio file and returns its transcript with word and segment timestamps.
+// Retried with exponential backoff (Retry-After is honored): 429 except insufficient quota, 5xx, and
+// connection errors before the body was sent. A timeout or a failure after the body was sent is not
+// retried: the API may have processed and billed the request.
+func (c *Client) Transcribe(ctx context.Context, data TranscribeData) (*Transcript, error) {
+	if err := c.CheckAPIKey(); err != nil {
+		return nil, err
 	}
 
 	body, contentType, err := c.buildBody(data)
@@ -175,8 +191,22 @@ func (c *Client) send(ctx context.Context, body []byte, contentType string) (*Tr
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", contentType)
 
+	var sent atomic.Bool
+
+	req = req.WithContext(httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				sent.Store(true)
+			}
+		},
+	}))
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		if !sent.Load() && ctx.Err() == nil {
+			return nil, fmt.Errorf("failed to send request: %w: %w", errNotSent, err)
+		}
+
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -248,8 +278,7 @@ func isRetryable(ctx context.Context, err error) bool {
 		return se.StatusCode >= http.StatusInternalServerError
 	}
 
-	// Network errors and the per-request timeout: the parent context is still alive.
-	return true
+	return errors.Is(err, errNotSent)
 }
 
 func retryAfter(err error) time.Duration {

@@ -1,7 +1,10 @@
 package ffmpeg
 
 import (
+	"fmt"
+	"path/filepath"
 	"strconv"
+	"time"
 )
 
 // Audio prepared for speech recognition: mono 16 kHz is what Whisper works with internally,
@@ -14,19 +17,41 @@ const (
 	audioSampleRate = "16000"
 	audioChannels   = "1"
 
-	// silencedetect: a pause is at least silenceMinDuration below silenceNoiseLevel.
-	silenceNoiseLevel  = "-30dB"
-	silenceMinDuration = "0.5"
-
 	inputFlag = "-i"
+	// Inputs come from users (Telegram files): only local files may be opened, never URLs,
+	// concat: lists or other protocols that a crafted name or playlist could point to.
+	fileProtocol      = "file"
+	protocolWhitelist = "-protocol_whitelist"
 
 	timePrecision = 3  // milliseconds are enough for ffmpeg time arguments
 	float64Bits   = 64 // bit size for strconv
 )
 
+// SilenceOptions define a pause for silencedetect: quieter than NoiseDB for at least MinDuration.
+type SilenceOptions struct {
+	NoiseDB     float64
+	MinDuration time.Duration
+}
+
+// localFile turns a path into an explicit local file URL: "-x.mp4", "http://h/x" or "concat:a|b"
+// become "file:/abs/dir/-x.mp4", ... and are never read as an option or another protocol.
+func localFile(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path %q: %w", path, err)
+	}
+
+	return fileProtocol + ":" + abs, nil
+}
+
 // commonArgs make ffmpeg non-interactive, overwrite the output and keep stderr free of the banner and progress.
 func commonArgs() []string {
 	return []string{"-hide_banner", "-nostdin", "-nostats", "-y"}
+}
+
+// inputArgs take a local file URL from localFile.
+func inputArgs(input string) []string {
+	return []string{protocolWhitelist, fileProtocol, inputFlag, input}
 }
 
 func encodeArgs() []string {
@@ -37,10 +62,6 @@ func encodeArgs() []string {
 		"-c:a", audioCodec,
 		"-b:a", audioBitrate,
 	}
-}
-
-func inputArgs(path string) []string {
-	return []string{inputFlag, path}
 }
 
 func extractAudioArgs(src, dst string) []string {
@@ -62,22 +83,22 @@ func cutAudioArgs(src, dst string, start, duration float64) []string {
 	return append(args, dst)
 }
 
-func durationArgs(path string) []string {
-	return []string{
+func durationArgs(input string) []string {
+	args := []string{
 		"-v", "error",
 		"-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1",
-		path,
 	}
+
+	return append(args, inputArgs(input)...)
 }
 
-func silenceDetectArgs(path string) []string {
-	args := append(commonArgs(), inputArgs(path)...)
+func silenceDetectArgs(input string, opts SilenceOptions) []string {
+	filter := "silencedetect=noise=" + formatSeconds(opts.NoiseDB) + "dB:d=" + formatSeconds(opts.MinDuration.Seconds())
 
-	return append(args,
-		"-af", "silencedetect=noise="+silenceNoiseLevel+":d="+silenceMinDuration,
-		"-f", "null", "-",
-	)
+	args := append(commonArgs(), inputArgs(input)...)
+
+	return append(args, "-af", filter, "-f", "null", "-")
 }
 
 func formatSeconds(seconds float64) string {

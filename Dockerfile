@@ -26,13 +26,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # alpine:3.24
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS media
 
-RUN apk add --no-cache ffmpeg && \
+# ffmpeg is pinned to the 8.1 branch of alpine 3.24 (patch releases and security fixes still apply).
+RUN apk add --no-cache "ffmpeg=~8.1" && \
     addgroup -S -g 65532 nonroot && \
-    adduser -S -D -H -u 65532 -G nonroot -s /sbin/nologin nonroot
+    adduser -S -D -H -u 65532 -G nonroot -s /sbin/nologin nonroot && \
+    install -d -o 65532 -g 65532 /work
 
 COPY --from=build-media /out-media/ /app/
 
 USER 65532:65532
+# Mount the host directory with videos here; -out is written relative to it.
+WORKDIR /work
 
 ENTRYPOINT ["/app/transcribe"]
 

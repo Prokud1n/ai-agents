@@ -111,7 +111,7 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq --no-install-recommends ffmpeg
           fi
-          ffmpeg -hide_banner -version | head -n 1
+          ffmpeg -hide_banner -version | sed -n 1p
 
       - name: Test
         env:
@@ -217,29 +217,48 @@ jobs:
         run: docker build --target media -t ai-agents-media:ci .
 
       - name: Check ffmpeg and transcribe
+        # sed reads all the output (unlike head), so ffmpeg does not die with a broken pipe.
         run: |
-          docker run --rm --entrypoint ffmpeg ai-agents-media:ci -hide_banner -version | head -n 1
-          docker run --rm --entrypoint ffprobe ai-agents-media:ci -hide_banner -version | head -n 1
+          docker run --rm --entrypoint ffmpeg ai-agents-media:ci -hide_banner -version | sed -n 1p
+          docker run --rm --entrypoint ffprobe ai-agents-media:ci -hide_banner -version | sed -n 1p
           docker run --rm ai-agents-media:ci -h
           docker run --rm --entrypoint id ai-agents-media:ci
+          docker run --rm --entrypoint sh ai-agents-media:ci -c 'pwd && touch probe && echo "workdir is writable"'
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      # The ffmpeg runner tests (silencedetect parsing, cutting, hostile file names) against the
+      # ffmpeg of the image, not the runner's: a static test binary runs inside the container.
+      - name: Run ffmpeg tests inside the media image
+        run: |
+          CGO_ENABLED=0 go test -c -o ffmpeg.test ./internal/providers/ffmpeg
+          docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/ffmpeg.test:/app/ffmpeg.test:ro" \
+            --entrypoint /app/ffmpeg.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestRunner'
 
       - name: Extract audio from a generated clip
-        # Without OPENAI_API_KEY transcribe extracts and probes the audio, then stops at the API call:
-        # the key error proves the ffmpeg part works inside the image.
+        # Without OPENAI_API_KEY transcribe stops before the audio is prepared: the key error comes first.
+        # With a fake key and an unreachable API it extracts and probes the audio, then fails on the call.
         run: |
           set +e
-          docker run --rm --entrypoint sh ai-agents-media:ci -c '
+          docker run --rm -e OPENAI_API_KEY=sk-fake -e OPENAI_BASE_URL=http://127.0.0.1:9/v1 \
+            -e WHISPER_MAX_RETRIES=0 --entrypoint sh ai-agents-media:ci -c '
             ffmpeg -hide_banner -nostdin -loglevel error -y \
               -f lavfi -i "sine=frequency=440:duration=3" \
               -f lavfi -i "testsrc=duration=3:size=320x240:rate=25" \
               -c:v mpeg4 -c:a aac -shortest /tmp/clip.mp4 &&
-            LOG_LEVEL=debug /app/transcribe -in /tmp/clip.mp4
+            /app/transcribe -in /tmp/clip.mp4
           ' > out.txt 2>&1
           code=$?
           set -e
           cat out.txt
           if [[ $code -ne 1 ]] || ! grep -q '"transcription: audio prepared"' out.txt \
-            || ! grep -q 'openai api key is not configured' out.txt; then
-            echo "::error::expected audio extraction to succeed and the API call to fail without a key (exit $code)"
+            || ! grep -q 'connection refused' out.txt; then
+            echo "::error::expected audio extraction to succeed and the API call to fail (exit $code)"
             exit 1
           fi
+
+          docker run --rm ai-agents-media:ci -in /tmp/none.mp4 > nokey.txt 2>&1 || true
+          cat nokey.txt
+          grep -q 'openai api key is not configured' nokey.txt

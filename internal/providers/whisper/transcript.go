@@ -27,8 +27,11 @@ type Segment struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
 	Text  string  `json:"text"`
-	// Probability that the segment is silence: Whisper tends to hallucinate text in long pauses.
-	NoSpeechProb float64 `json:"no_speech_prob"`
+	// Whisper hallucinates text on silence and music: such segments have a high no_speech_prob with
+	// a low avg_logprob, or a high compression_ratio (the same phrase repeated).
+	NoSpeechProb     float64 `json:"no_speech_prob"`
+	AvgLogprob       float64 `json:"avg_logprob"`
+	CompressionRatio float64 `json:"compression_ratio"`
 }
 
 func parseTranscript(body []byte) (*Transcript, error) {

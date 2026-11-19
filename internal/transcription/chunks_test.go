@@ -16,6 +16,7 @@ const (
 	segmentHello = " Привет!"
 	wordSquat    = "присед"
 	wordKnees    = "колени"
+	wordOne      = "раз"
 )
 
 func TestChunkDurationLimit(t *testing.T) {
@@ -77,6 +78,16 @@ func TestPlanChunks(t *testing.T) {
 			expected: []chunk{{Start: 0, End: 600}, {Start: 598, End: 1198}, {Start: 1196, End: 1300}},
 		},
 		{
+			name:     "short tail is glued to the only chunk",
+			duration: 620, maxChunk: 600,
+			expected: []chunk{{Start: 0, End: 620}},
+		},
+		{
+			name:     "short tail is glued to the last chunk",
+			duration: 1210, maxChunk: 600,
+			expected: []chunk{{Start: 0, End: 600}, {Start: 598, End: 1210}},
+		},
+		{
 			name:     "too small limit is raised to the minimum",
 			duration: 100, maxChunk: 1,
 			expected: []chunk{{Start: 0, End: 60}, {Start: 58, End: 100}},
@@ -101,12 +112,14 @@ func TestMergeChunks(t *testing.T) {
 		expected Result
 	}{
 		{
-			name: "single chunk keeps whisper text and trims spaces",
+			name: "single chunk: text from segments, spaces trimmed",
 			input: []chunkTranscript{{
 				Chunk: chunk{Start: 0, End: 4},
 				Transcript: whisper.Transcript{
-					Text:     " Привет! Сегодня присед. ",
-					Words:    []whisper.Word{{Word: " Привет", Start: 0, End: 0.8}, {Word: "Сегодня", Start: 1.5, End: 2}, {Word: wordSquat, Start: 2, End: 2.6}},
+					Text: " Привет! Сегодня присед. ",
+					Words: []whisper.Word{
+						{Word: " " + wordHello, Start: 0, End: 0.8}, {Word: "Сегодня", Start: 1.5, End: 2}, {Word: wordSquat, Start: 2, End: 2.6},
+					},
 					Segments: []whisper.Segment{{Start: 0, End: 1, Text: segmentHello}, {Start: 1.5, End: 2.6, Text: " Сегодня присед."}},
 				},
 			}},
@@ -122,7 +135,6 @@ func TestMergeChunks(t *testing.T) {
 				{
 					Chunk: chunk{Start: 0, End: 551},
 					Transcript: whisper.Transcript{
-						Text:     "Раз.",
 						Words:    []whisper.Word{{Word: "Раз", Start: 549.1, End: 549.6}},
 						Segments: []whisper.Segment{{Start: 549, End: 549.7, Text: " Раз."}},
 					},
@@ -130,7 +142,6 @@ func TestMergeChunks(t *testing.T) {
 				{
 					Chunk: chunk{Start: 551, End: 900},
 					Transcript: whisper.Transcript{
-						Text:     "Два.",
 						Words:    []whisper.Word{{Word: "Два", Start: 1.3, End: 1.7}},
 						Segments: []whisper.Segment{{Start: 1.2, End: 1.8, Text: " Два."}},
 					},
@@ -143,61 +154,92 @@ func TestMergeChunks(t *testing.T) {
 			},
 		},
 		{
-			name: "overlap is split in half and the repeated junction word is dropped",
-			// Chunks overlap in [598, 600]; the boundary is 599.
+			// Fixed cut at 600 with the next chunk from 598: both chunks hear [598, 600], the boundary is 599.
+			name: "segments overlapping the junction are clipped, the overlap is not repeated",
 			input: []chunkTranscript{
 				{
 					Chunk: chunk{Start: 0, End: 600},
 					Transcript: whisper.Transcript{
 						Words: []whisper.Word{
-							{Word: "делаем", Start: 597.0, End: 597.6},
-							{Word: wordSquat, Start: 597.7, End: 598.9},
-							{Word: "медленно", Start: 599.2, End: 599.9}, // past the boundary: the next chunk owns it
+							{Word: "Опускаемся", Start: 595.2, End: 596},
+							{Word: "медленно", Start: 596.1, End: 597.4},
+							{Word: "вниз,", Start: 597.5, End: 598.2},
+							{Word: "держим", Start: 598.9, End: 599.5},
+							{Word: "спи", Start: 599.6, End: 600},
 						},
-						Segments: []whisper.Segment{{Start: 590, End: 598.9, Text: " Делаем присед"}},
+						Segments: []whisper.Segment{{Start: 595, End: 600, Text: " Опускаемся медленно вниз, держим спи"}},
 					},
 				},
 				{
 					Chunk: chunk{Start: 598, End: 900},
 					Transcript: whisper.Transcript{
 						Words: []whisper.Word{
-							{Word: "сед", Start: 0, End: 0.9},         // cut word fragment before the boundary
-							{Word: "Медленно,", Start: 1.1, End: 1.9}, // kept: starts after the boundary
-							{Word: "вниз", Start: 2.0, End: 2.4},
+							{Word: "низ,", Start: 0, End: 0.2},
+							{Word: "держим", Start: 0.95, End: 1.5},
+							{Word: "спину", Start: 1.6, End: 2.1},
+							{Word: "ровно.", Start: 2.2, End: 2.7},
 						},
 						Segments: []whisper.Segment{
-							{Start: 0, End: 0.9, Text: " сед"},
-							{Start: 1.1, End: 2.4, Text: " Медленно, вниз."},
+							{Start: 0, End: 2.8, Text: " низ, держим спину ровно."},
+							{Start: 3.5, End: 4.5, Text: " Выдох."},
 						},
 					},
 				},
 			},
 			expected: Result{
-				Text: "Делаем присед Медленно, вниз.",
+				Text: "Опускаемся медленно вниз, держим спину ровно. Выдох.",
 				Words: []Word{
-					{Word: "делаем", Start: 597, End: 597.6},
-					{Word: wordSquat, Start: 597.7, End: 598.9},
-					{Word: "Медленно,", Start: 599.1, End: 599.9},
-					{Word: "вниз", Start: 600, End: 600.4},
+					{Word: "Опускаемся", Start: 595.2, End: 596},
+					{Word: "медленно", Start: 596.1, End: 597.4},
+					{Word: "вниз,", Start: 597.5, End: 598.2},
+					{Word: "держим", Start: 598.9, End: 599.5},
+					{Word: "спину", Start: 599.6, End: 600.1},
+					{Word: "ровно.", Start: 600.2, End: 600.7},
 				},
-				Segments: []Segment{{Start: 590, End: 598.9, Text: "Делаем присед"}, {Start: 599.1, End: 600.4, Text: "Медленно, вниз."}},
+				Segments: []Segment{
+					{Start: 595, End: 599, Text: "Опускаемся медленно вниз, держим"},
+					{Start: 599, End: 600.8, Text: "спину ровно."},
+					{Start: 601.5, End: 602.5, Text: "Выдох."},
+				},
 			},
 		},
 		{
-			name: "same word on both sides of the junction is kept once",
-			// The previous chunk ends its last word just before the boundary 599, the next one repeats it after.
+			name: "word heard by both chunks at the junction is kept once",
 			input: []chunkTranscript{
 				{
 					Chunk:      chunk{Start: 0, End: 600},
 					Transcript: whisper.Transcript{Words: []whisper.Word{{Word: wordKnees, Start: 598.8, End: 599.4}}},
 				},
 				{
-					Chunk:      chunk{Start: 598, End: 700},
-					Transcript: whisper.Transcript{Words: []whisper.Word{{Word: "Колени.", Start: 1.05, End: 1.5}, {Word: wordKnees, Start: 3, End: 3.5}}},
+					Chunk: chunk{Start: 598, End: 700},
+					Transcript: whisper.Transcript{
+						Words: []whisper.Word{{Word: "Колени.", Start: 1.05, End: 1.5}, {Word: wordKnees, Start: 3, End: 3.5}},
+					},
 				},
 			},
 			expected: Result{
 				Words:    []Word{{Word: wordKnees, Start: 598.8, End: 599.4}, {Word: wordKnees, Start: 601, End: 601.5}},
+				Segments: []Segment{},
+			},
+		},
+		{
+			name: "real repetition across the junction without a pause is kept",
+			input: []chunkTranscript{
+				{
+					Chunk: chunk{Start: 0, End: 600},
+					Transcript: whisper.Transcript{Words: []whisper.Word{
+						{Word: wordOne, Start: 598.6, End: 598.95}, {Word: wordOne, Start: 599, End: 599.4},
+					}},
+				},
+				{
+					Chunk: chunk{Start: 598, End: 700},
+					Transcript: whisper.Transcript{Words: []whisper.Word{
+						{Word: wordOne, Start: 0.6, End: 0.95}, {Word: wordOne, Start: 1, End: 1.4},
+					}},
+				},
+			},
+			expected: Result{
+				Words:    []Word{{Word: wordOne, Start: 598.6, End: 598.95}, {Word: wordOne, Start: 599, End: 599.4}},
 				Segments: []Segment{},
 			},
 		},
