@@ -313,6 +313,10 @@ func TestServiceValidation(t *testing.T) {
 			_, err := svc.SaveCorrection(ctx, &SaveCorrectionData{TaskKind: "x", Original: "a", Corrected: "b"})
 			return err
 		}},
+		{name: "corrections without agent", call: func() error {
+			_, err := svc.FindSimilarCorrections(ctx, FindSimilarCorrectionsData{Query: "сладкое", TaskKind: "post"})
+			return err
+		}},
 		{name: "delete without source", call: func() error {
 			return svc.Delete(ctx, " ")
 		}},

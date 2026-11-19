@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `pgtest.Connect` gives every integration test its own temporary database with all migrations applied and drops it
+  afterwards, instead of truncating tables of `POSTGRES_DB`; `pgtest.Truncate` is removed and integration tests may
+  run in parallel.
 - Migration file naming in CODE_STYLE.md: `NNN_description.up.sql` + `NNN_description.down.sql`.
 - `/readyz` dependencies are registered in `internal/readiness`; providers no longer import `internal/health`.
 - docker compose builds the app image once (in `migrate`); `app` reuses it.

@@ -200,10 +200,14 @@ func (s *Service) SaveCorrection(ctx context.Context, input *SaveCorrectionData)
 	return c, nil
 }
 
-// FindSimilarCorrections returns corrections closest to the query, for few-shot examples.
+// FindSimilarCorrections returns the agent's corrections closest to the query, for few-shot examples.
 // If the query is empty or cannot be embedded, the most recent corrections are returned instead.
 func (s *Service) FindSimilarCorrections(ctx context.Context, data FindSimilarCorrectionsData) ([]Correction, error) {
 	filter := &FindSimilarCorrectionsData{Agent: strings.TrimSpace(data.Agent), TaskKind: strings.TrimSpace(data.TaskKind)}
+	if filter.Agent == "" {
+		return nil, fmt.Errorf("agent is required to find corrections: %w", ErrValidation)
+	}
+
 	limit := normalizeLimit(data.Limit)
 
 	query := strings.TrimSpace(data.Query)

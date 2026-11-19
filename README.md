@@ -155,12 +155,14 @@ CI (`.github/workflows/ci.yml`): job `tidy` делает `go mod tidy` и на �
 
 ### Интеграционные тесты
 
-Тесты с `Integration` в имени работают с PostgreSQL из compose (миграции накатывает сервис `migrate`) и
-подключаются через `internal/pgtest`. Без `INTEGRATION=1` они пропускаются, поэтому `make test` базы не требует.
+Тесты с `Integration` в имени работают с PostgreSQL из compose и подключаются через `pgtest.Connect`: он создаёт
+для каждого теста отдельную базу `pgtest_*`, накатывает в неё все миграции и удаляет её в конце теста.
+Без `INTEGRATION=1` они пропускаются, поэтому `make test` базы не требует.
 
 ```bash
 make up && make test-integration
 ```
 
-В CI они идут в job `compose-smoke`. Каждый пакет работает только со своими таблицами и чистит их через
-`pgtest.Truncate`; тесты, которые делят таблицу, не вызывают `t.Parallel`.
+В CI они идут в job `compose-smoke`. Тесты не видят данных друг друга и данных `POSTGRES_DB`, поэтому могут
+вызывать `t.Parallel`. Пользователю БД нужно право `CREATEDB` (у пользователя из compose оно есть). Базы `pgtest_*`,
+оставшиеся после убитого прогона, можно удалить вручную.

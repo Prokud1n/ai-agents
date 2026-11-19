@@ -264,7 +264,7 @@ func (r *repo) InsertCorrection(
 }
 
 // FindSimilarCorrections is an exact search: the (agent, task_kind) index narrows the rows, distances
-// are computed for all of them. Empty agent / taskKind match any.
+// are computed for all of them. The agent is required; an empty taskKind matches any.
 func (r *repo) FindSimilarCorrections(
 	ctx context.Context,
 	vector, model string,
@@ -276,7 +276,7 @@ func (r *repo) FindSimilarCorrections(
 		FROM kb_corrections
 		WHERE embedding IS NOT NULL
 		  AND embedding_model = $2
-		  AND ($3 = '' OR agent = $3)
+		  AND agent = $3
 		  AND ($4 = '' OR task_kind = $4)
 		ORDER BY embedding <=> $1::text::vector, id
 		LIMIT $5`
@@ -289,7 +289,7 @@ func (r *repo) FindRecentCorrections(ctx context.Context, filter *FindSimilarCor
 	const query = `
 		SELECT id, agent, task_kind, original, corrected, comment, created_at, 0::float8
 		FROM kb_corrections
-		WHERE ($1 = '' OR agent = $1)
+		WHERE agent = $1
 		  AND ($2 = '' OR task_kind = $2)
 		ORDER BY created_at DESC, id DESC
 		LIMIT $3`

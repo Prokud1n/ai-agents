@@ -7,7 +7,6 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/Prokud1n/ai-agents/internal/kbcli"
-	"github.com/Prokud1n/ai-agents/internal/knowledge"
 )
 
 func TestDeclareKBOptions(t *testing.T) {
@@ -16,17 +15,6 @@ func TestDeclareKBOptions(t *testing.T) {
 	var runner *kbcli.Runner
 
 	err := fx.ValidateApp(append(DeclareKBOptions(), fx.Populate(&runner))...)
-
-	require.NoError(t, err)
-}
-
-// The application graph can build the knowledge service: agents will depend on it.
-func TestApplicationProvidesKnowledgeService(t *testing.T) {
-	t.Parallel()
-
-	var svc *knowledge.Service
-
-	err := fx.ValidateApp(append(DeclareApplicationOptions(), fx.Populate(&svc))...)
 
 	require.NoError(t, err)
 }

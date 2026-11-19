@@ -23,8 +23,8 @@ type SaveCorrectionData struct {
 	Comment   string
 }
 
-// FindSimilarCorrectionsData looks for corrections similar to Query (usually the new draft or the task);
-// empty Agent / TaskKind match any.
+// FindSimilarCorrectionsData looks for the agent's corrections similar to Query (usually the new draft
+// or the task). Agent is required; an empty TaskKind matches any.
 type FindSimilarCorrectionsData struct {
 	Query    string
 	Agent    string

@@ -7,31 +7,22 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 	"unicode"
 
-	"github.com/caarlos0/env/v11"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/fx/fxtest"
 
-	"github.com/Prokud1n/ai-agents/internal/config"
-	"github.com/Prokud1n/ai-agents/internal/migrator"
+	"github.com/Prokud1n/ai-agents/internal/pgtest"
 	"github.com/Prokud1n/ai-agents/internal/providers/embeddings"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
 )
 
-// Integration tests need PostgreSQL with pgvector; they run when INTEGRATION=1 (`make test-integration`),
-// with connection settings from POSTGRES_*. Each test creates its own database, applies all migrations
-// to it and drops it at the end, so the data of the configured database is never touched.
-// CI runs them in the compose-smoke job against the compose stack.
+// Integration tests run with INTEGRATION=1 (`make test-integration`); pgtest gives each test its own
+// migrated database, so they run in parallel and never touch the data in POSTGRES_DB.
 const (
-	integrationEnv  = "INTEGRATION"
 	nutritionQuery  = "как мы говорим о питании"
 	reelsScriptTask = "reels-script"
 	testModelA      = "test-hash-a"
@@ -95,52 +86,6 @@ func (failingEmbedder) Embed(context.Context, []string) ([][]float32, error) {
 	return nil, errEmbeddingsDown
 }
 
-// newIntegrationDB creates a fresh database with all migrations applied and returns a client for it.
-func newIntegrationDB(t *testing.T) *postgres.Client {
-	t.Helper()
-
-	if os.Getenv(integrationEnv) != "1" {
-		t.Skipf("set %s=1 to run against PostgreSQL with pgvector", integrationEnv)
-	}
-
-	var cfg config.Postgres
-	require.NoError(t, env.Parse(&cfg))
-
-	ctx := context.Background()
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-
-	admin, err := pgx.Connect(ctx, cfg.DSN())
-	require.NoError(t, err)
-
-	name := "kb_it_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	ident := pgx.Identifier{name}.Sanitize()
-
-	_, err = admin.Exec(ctx, "CREATE DATABASE "+ident)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		if _, err := admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+ident+" WITH (FORCE)"); err != nil {
-			t.Errorf("failed to drop test database %s: %v", name, err)
-		}
-
-		if err := admin.Close(context.Background()); err != nil {
-			t.Errorf("failed to close admin connection: %v", err)
-		}
-	})
-
-	testCfg := cfg
-	testCfg.Database = name
-	require.NoError(t, migrator.NewMigrator(&testCfg, log).Up(ctx))
-
-	lc := fxtest.NewLifecycle(t)
-	db, err := postgres.NewClient(lc, &testCfg, log)
-	require.NoError(t, err)
-	lc.RequireStart()
-	t.Cleanup(lc.RequireStop)
-
-	return db
-}
-
 func newIntegrationService(db *postgres.Client, e embedder) *Service {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
@@ -159,7 +104,7 @@ func nutritionDoc() IngestDocumentData {
 func TestIntegrationIngestAndSearch(t *testing.T) {
 	t.Parallel()
 
-	svc := newIntegrationService(newIntegrationDB(t), hashEmbedder{model: testModelA})
+	svc := newIntegrationService(pgtest.Connect(t), hashEmbedder{model: testModelA})
 	ctx := context.Background()
 
 	nutrition := nutritionDoc()
@@ -224,7 +169,7 @@ func TestIntegrationIngestAndSearch(t *testing.T) {
 func TestIntegrationConcurrentIngest(t *testing.T) {
 	t.Parallel()
 
-	svc := newIntegrationService(newIntegrationDB(t), hashEmbedder{model: testModelA})
+	svc := newIntegrationService(pgtest.Connect(t), hashEmbedder{model: testModelA})
 
 	const workers = 5
 
@@ -267,7 +212,7 @@ func TestIntegrationConcurrentIngest(t *testing.T) {
 func TestIntegrationModelChange(t *testing.T) {
 	t.Parallel()
 
-	db := newIntegrationDB(t)
+	db := pgtest.Connect(t)
 	ctx := context.Background()
 	oldModel := newIntegrationService(db, hashEmbedder{model: testModelA})
 	newModel := newIntegrationService(db, hashEmbedder{model: testModelB})
@@ -297,7 +242,7 @@ func TestIntegrationModelChange(t *testing.T) {
 func TestIntegrationCorrections(t *testing.T) {
 	t.Parallel()
 
-	svc := newIntegrationService(newIntegrationDB(t), hashEmbedder{model: testModelA})
+	svc := newIntegrationService(pgtest.Connect(t), hashEmbedder{model: testModelA})
 	ctx := context.Background()
 
 	saved, err := svc.SaveCorrection(ctx, &SaveCorrectionData{
@@ -345,7 +290,7 @@ func TestIntegrationCorrections(t *testing.T) {
 func TestIntegrationEmbeddingsUnavailable(t *testing.T) {
 	t.Parallel()
 
-	db := newIntegrationDB(t)
+	db := pgtest.Connect(t)
 	ctx := context.Background()
 	down := newIntegrationService(db, failingEmbedder{model: testModelA})
 	up := newIntegrationService(db, hashEmbedder{model: testModelA})
