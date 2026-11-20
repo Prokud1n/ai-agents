@@ -17,14 +17,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-run ./cmd/agent-run && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kb ./cmd/kb
 
-# Tools that need ffmpeg (transcribe) are built separately, so the app image below stays unchanged.
+# Tools that need ffmpeg (transcribe, roughcut) are built separately, so the app image below stays unchanged.
 FROM build AS build-media
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/transcribe ./cmd/transcribe
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/transcribe ./cmd/transcribe && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/roughcut ./cmd/roughcut
 
-# Media image: ffmpeg + transcribe. Build with `docker build --target media .`
+# Media image: ffmpeg + transcribe + roughcut. Build with `docker build --target media .`
+# The entrypoint is transcribe; roughcut runs with `--entrypoint /app/roughcut`.
 # alpine:3.24
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS media
 

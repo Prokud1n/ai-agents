@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"bytes"
+	"io"
 	"strings"
 )
 
@@ -46,6 +47,34 @@ func (b *tailBuffer) String() string {
 	}
 
 	return string(b.buf[b.next:]) + string(b.buf[:b.next])
+}
+
+// outputBuffer keeps a bounded part of a command's output.
+type outputBuffer interface {
+	io.Writer
+	String() string
+}
+
+// headBuffer keeps the first len(buf) bytes written to it and drops the rest.
+type headBuffer struct {
+	buf []byte
+	max int
+}
+
+func newHeadBuffer(size int) *headBuffer {
+	return &headBuffer{buf: make([]byte, 0, size), max: size}
+}
+
+func (b *headBuffer) Write(p []byte) (int, error) {
+	if room := b.max - len(b.buf); room > 0 {
+		b.buf = append(b.buf, p[:min(room, len(p))]...)
+	}
+
+	return len(p), nil
+}
+
+func (b *headBuffer) String() string {
+	return string(b.buf)
 }
 
 // lineCollector keeps only the log lines that contain a marker (silencedetect results), up to a limit,

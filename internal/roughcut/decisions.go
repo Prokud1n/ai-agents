@@ -1,0 +1,243 @@
+package roughcut
+
+import (
+	"fmt"
+	"math"
+	"strings"
+
+	"github.com/Prokud1n/ai-agents/internal/transcription"
+)
+
+const (
+	brokenTailWords = 4 // words of a broken-off take quoted in the log
+	secondsPerMin   = 60
+	tenthsPerSecond = 10
+	percent         = 100
+)
+
+// phrases gives the words of a transcript with their segment-text tokens (with punctuation) and the
+// content tokens retakes were found on.
+type phrases struct {
+	words  []transcription.Word
+	texts  []string
+	tokens []token
+}
+
+// span is the phrase of words[from..to], both included, with the punctuation of the segment text when the
+// words could be aligned to it.
+func (ph *phrases) span(from, to int) Span {
+	text := joinTokens(ph.texts[from : to+1])
+	if text == "" {
+		text = joinWords(ph.words[from : to+1])
+	}
+
+	return Span{Start: roundTime(ph.words[from].Start), End: roundTime(ph.words[to].End), Text: text}
+}
+
+// attempt and kept are the word ranges of a retake: the removed attempt and the kept phrase.
+func (ph *phrases) attempt(r *retake) (from, to int) {
+	return ph.tokens[r.from].idx, ph.tokens[r.to-1].idx
+}
+
+func (ph *phrases) kept(r *retake) Span {
+	return ph.span(ph.tokens[r.to].idx, ph.tokens[r.keptTo-1].idx)
+}
+
+// joinTokens joins aligned tokens, or returns "" if any of them is unknown.
+func joinTokens(tokens []string) string {
+	for _, t := range tokens {
+		if t == "" {
+			return ""
+		}
+	}
+
+	return strings.Join(tokens, " ")
+}
+
+// describeTakes turns detected retakes into decisions with an explanation in Russian. Restarts that follow
+// one another form a series: its takes are numbered, and every removed take points to the last one,
+// which is kept.
+func describeTakes(ph *phrases, retakes []retake) []Take {
+	numbers := make([]int, len(retakes))
+	for i, r := range retakes {
+		numbers[i] = 1
+		if i > 0 && retakes[i-1].to == r.from {
+			numbers[i] = numbers[i-1] + 1
+		}
+	}
+
+	takes := make([]Take, 0, len(retakes))
+
+	for i := range retakes {
+		last := i
+		for last+1 < len(retakes) && retakes[last+1].from == retakes[last].to {
+			last++
+		}
+
+		from, to := ph.attempt(&retakes[i])
+		take := Take{
+			Kind:       retakes[i].kind,
+			Number:     numbers[i],
+			KeptNumber: numbers[last] + 1,
+			Removed:    ph.span(from, to),
+			Kept:       ph.kept(&retakes[last]),
+			Similarity: math.Round(retakes[i].similarity*percent) / percent,
+		}
+		take.Explanation = explainTake(&take, ph.words, from, to)
+		takes = append(takes, take)
+	}
+
+	return takes
+}
+
+// describeAccepted records the candidates the editor chose to cut as takes.
+func describeAccepted(ph *phrases, accepted []candidate) []Take {
+	takes := make([]Take, 0, len(accepted))
+
+	for i := range accepted {
+		from, to := ph.attempt(&accepted[i].retake)
+		take := Take{
+			Kind:       AcceptedTakeKind,
+			Number:     1,
+			KeptNumber: 2,
+			Removed:    ph.span(from, to),
+			Kept:       ph.kept(&accepted[i].retake),
+			Similarity: math.Round(accepted[i].similarity*percent) / percent,
+		}
+		take.Explanation = fmt.Sprintf("Фраза (%s–%s) «%s» вырезана по решению монтажёра (спорный повтор %d), "+
+			"оставлена (%s–%s) «%s».", FormatTimecode(take.Removed.Start), FormatTimecode(take.Removed.End),
+			quote(take.Removed.Text), accepted[i].id, FormatTimecode(take.Kept.Start), FormatTimecode(take.Kept.End),
+			quote(take.Kept.Text))
+		takes = append(takes, take)
+	}
+
+	return takes
+}
+
+// describeCandidates explains the repeats left in the cut. Each gets the interval that accepting it
+// removes (cutFor) and the indices of its words, so the editor only chooses.
+func describeCandidates(ph *phrases, candidates []candidate, cutFor func(*candidate) Interval) []Candidate {
+	out := make([]Candidate, 0, len(candidates))
+
+	for i := range candidates {
+		c := &candidates[i]
+		from, to := ph.attempt(&c.retake)
+		cand := Candidate{
+			ID:           c.id,
+			Reason:       c.reason,
+			Earlier:      ph.span(from, to),
+			EarlierWords: WordRange{From: from, To: to},
+			Later:        ph.kept(&c.retake),
+			Cut:          cutFor(c),
+			Similarity:   math.Round(c.similarity*percent) / percent,
+		}
+
+		why := "законченная фраза сказана ещё раз"
+		if c.reason == RhythmCandidateReason {
+			why = "похоже на ритм или перечисление"
+		}
+
+		cand.Explanation = fmt.Sprintf("Повтор %d: фраза (%s–%s) «%s» повторена (%s–%s) «%s», совпало %d%% слов: "+
+			"%s, оставлены обе.", c.id,
+			FormatTimecode(cand.Earlier.Start), FormatTimecode(cand.Earlier.End), quote(cand.Earlier.Text),
+			FormatTimecode(cand.Later.Start), FormatTimecode(cand.Later.End), quote(cand.Later.Text),
+			int(math.Round(cand.Similarity*percent)), why)
+		out = append(out, cand)
+	}
+
+	return out
+}
+
+func explainTake(t *Take, words []transcription.Word, from, to int) string {
+	keptPart := fmt.Sprintf("оставлен дубль %d (%s–%s) «%s»",
+		t.KeptNumber, FormatTimecode(t.Kept.Start), FormatTimecode(t.Kept.End), quote(t.Kept.Text))
+
+	if t.Kind == IncompleteTakeKind {
+		tail := joinWords(words[max(from, to-brokenTailWords+1) : to+1])
+
+		return fmt.Sprintf("Дубль %d (%s–%s) оборван на «%s…», %s.",
+			t.Number, FormatTimecode(t.Removed.Start), FormatTimecode(t.Removed.End), tail, keptPart)
+	}
+
+	return fmt.Sprintf("Дубль %d (%s–%s) «%s» начат заново (повторено %d%% слов), %s.",
+		t.Number, FormatTimecode(t.Removed.Start), FormatTimecode(t.Removed.End), quote(t.Removed.Text),
+		int(math.Round(t.Similarity*percent)), keptPart)
+}
+
+// quote prepares a phrase for «…» inside a sentence of the log: a closing comma or sentence mark is dropped
+// ("приступим." -> "приступим"), an ellipsis stays.
+func quote(text string) string {
+	if strings.HasSuffix(text, ellipsis) || strings.HasSuffix(text, threeDots) {
+		return text
+	}
+
+	return strings.TrimRight(text, ".!?,;:")
+}
+
+// FormatTimecode formats seconds as m:ss.d ("0:12.4", "3:05.0").
+func FormatTimecode(seconds float64) string {
+	tenths := int(math.Round(max(seconds, 0) * tenthsPerSecond))
+	minutes := tenths / (secondsPerMin * tenthsPerSecond)
+	rest := float64(tenths-minutes*secondsPerMin*tenthsPerSecond) / tenthsPerSecond
+
+	return fmt.Sprintf("%d:%04.1f", minutes, rest)
+}
+
+// DecisionsLog is the human-readable log of a plan in Russian: totals, every failed take with the reason
+// it was removed, fillers and pauses.
+func DecisionsLog(p *Plan) string {
+	var b strings.Builder
+
+	source := p.Source
+	if source == "" {
+		source = "исходник"
+	}
+
+	fmt.Fprintf(&b, "Черновая склейка: %s\n", source)
+	fmt.Fprintf(&b, "Исходник %s → результат %s (вырезано %.1f с), фрагментов: %d\n",
+		FormatTimecode(p.SourceDuration), FormatTimecode(p.Duration), p.SourceDuration-p.Duration, len(p.Keep))
+	fmt.Fprintf(&b, "Порог паузы %.2f с, поля вокруг слов %.2f/%.2f с, сходство дублей %.0f%%\n\n",
+		p.Settings.MaxPause, p.Settings.PadBefore, p.Settings.PadAfter, p.Settings.RetakeSimilarity*percent)
+
+	fmt.Fprintf(&b, "Дубли: %d\n", len(p.Takes))
+
+	for _, t := range p.Takes {
+		fmt.Fprintf(&b, "- %s\n", t.Explanation)
+	}
+
+	fmt.Fprintf(&b, "\nСпорные повторы (не вырезаны, решает монтажёр): %d\n", len(p.Candidates))
+
+	for i := range p.Candidates {
+		fmt.Fprintf(&b, "- %s\n", p.Candidates[i].Explanation)
+	}
+
+	writeCuts(&b, p.Cuts, FillerCutReason, "Слова-паразиты")
+	writeCuts(&b, p.Cuts, PauseCutReason, "Паузы")
+
+	return b.String()
+}
+
+func writeCuts(b *strings.Builder, cuts []Cut, reason CutReason, title string) {
+	count, total := 0, 0.0
+
+	for _, c := range cuts {
+		if c.Reason == reason {
+			count++
+			total += c.End - c.Start
+		}
+	}
+
+	fmt.Fprintf(b, "\n%s: %d (%.1f с)\n", title, count, total)
+
+	for _, c := range cuts {
+		if c.Reason != reason {
+			continue
+		}
+
+		if c.Text != "" {
+			fmt.Fprintf(b, "- %s–%s «%s»\n", FormatTimecode(c.Start), FormatTimecode(c.End), c.Text)
+		} else {
+			fmt.Fprintf(b, "- %s–%s (%.2f с)\n", FormatTimecode(c.Start), FormatTimecode(c.End), c.End-c.Start)
+		}
+	}
+}

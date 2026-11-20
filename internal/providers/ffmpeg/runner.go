@@ -124,6 +124,21 @@ func localFiles(src, dst string) (in, out string, err error) {
 
 // run executes a binary with a timeout. stderr goes to a fixed-size tail buffer (and to stderrSink, if set).
 func (r *Runner) run(parent context.Context, binary string, args []string, stderrSink io.Writer) (string, error) {
+	return r.execute(parent, binary, args, stderrSink, newTailBuffer(stdoutLimit))
+}
+
+// runLimited is run whose stdout may be up to limit bytes (a JSON probe); longer output is cut from the start.
+func (r *Runner) runLimited(parent context.Context, binary string, args []string, limit int) (string, error) {
+	return r.execute(parent, binary, args, nil, newTailBuffer(limit))
+}
+
+func (r *Runner) execute(
+	parent context.Context,
+	binary string,
+	args []string,
+	stderrSink io.Writer,
+	stdout outputBuffer,
+) (string, error) {
 	ctx := parent
 
 	if r.timeout > 0 {
@@ -133,7 +148,6 @@ func (r *Runner) run(parent context.Context, binary string, args []string, stder
 		defer cancel()
 	}
 
-	stdout := newTailBuffer(stdoutLimit)
 	stderr := newTailBuffer(stderrTailSize)
 
 	cmd := exec.CommandContext(ctx, binary, args...)

@@ -78,6 +78,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the body was sent, where the request was likely processed (a retried 5xx still may repeat one). Config:
   `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `WHISPER_*`, read by the command only; without a key it fails before
   preparing the audio.
+- Rough cut (T3.2): `roughcut -in video.mp4 [-transcript transcript.json] [-out dir] [-plan-only] [-plan plan.json]`
+  removes pauses longer than `ROUGHCUT_MAX_PAUSE` (400ms, margins kept around words), filler sounds from
+  `ROUGHCUT_FILLERS` and clearly failed takes: a word broken off and restarted after a pause, or an unfinished start
+  said again and continued; the last take is kept. Complete repeats (rhythm, enumerations, a finished sentence said
+  again) are not cut but listed as `candidates` for the editor, each with its words and the ready cut interval;
+  `-accept 0,2` (`CutData.AcceptCandidates`) rebuilds the plan with the chosen ones cut. Writes `plan.json` (edit decision list: kept
+  intervals, cuts with reasons, take decisions, candidates; editable and rendered again with `-plan`, which needs
+  `-transcript`), `decisions.log` (Russian, why every take was removed), `transcript.json` (T3.1 format on the new
+  timeline, segment punctuation kept and moved or capitalized around cut words, for subtitles) and `roughcut.mp4` (H.264 + AAC, source resolution and
+  rotation). The source is decoded once (`split`/`asplit`), converted to its nominal frame rate kept as a rational
+  (30000/1001) and cut by frame numbers on the audio timeline (audio and file `start_time` respected), so picture, sound and subtitles stay in sync on
+  variable frame rate phone videos; the filter graph goes to ffmpeg as a file; at most 500 fragments; 10 ms audio
+  fades at joints. A video without sound is refused before anything is written; an old `roughcut.mp4` is removed
+  before a new run writes its results. Without `-transcript` it transcribes the video first. `make roughcut`; the
+  binary is in the `media` image (`--entrypoint /app/roughcut`); CI renders synthetic clips on the runner and inside
+  the image, and checks rotation, a video without sound and peak memory (1080x1920, 120 s, 60 fragments, cgroup peak < 800 MiB).
 - Docker target `media` (alpine + ffmpeg 8.1, non-root, `WORKDIR /work`) with the `transcribe` binary;
   `make transcribe`, `make media-image`.
 - CI: ffmpeg integration tests in `check`; `media-image` job builds the media target, runs the ffmpeg tests inside it
