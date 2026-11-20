@@ -21,8 +21,9 @@ var (
 )
 
 const (
-	ideaText    = "Идея: рилс про утреннюю зарядку"
-	internalErr = "Не получилось, попробуйте ещё раз."
+	ideaText      = "Идея: рилс про утреннюю зарядку"
+	internalErr   = "Не получилось, попробуйте ещё раз."
+	revisionReply = "Правка"
 )
 
 // handlerCalls is everything the handler did.
@@ -178,10 +179,10 @@ func TestHandlerMessages(t *testing.T) {
 		{
 			name:    "reply to an old draft",
 			service: &fakeService{reviseErr: tasks.ErrStaleDraft},
-			event:   withTarget(replyTo(messageEvent("Правка"), testDraftID), gateway.CopywriterRole),
+			event:   withTarget(replyTo(messageEvent(revisionReply), testDraftID), gateway.CopywriterRole),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
-					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID, Text: "Правка",
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID, Text: revisionReply,
 				}},
 				texts: []sentText{reply(gateway.CopywriterRole, "Ответьте на последний черновик.")},
 			},
@@ -189,11 +190,11 @@ func TestHandlerMessages(t *testing.T) {
 		{
 			name:    "reply while the new version is being made",
 			service: &fakeService{reviseErr: tasks.ErrConflict, draftStatus: tasks.RunningStatus},
-			event:   withTarget(replyTo(messageEvent("Правка"), testDraftID), gateway.CopywriterRole),
+			event:   withTarget(replyTo(messageEvent(revisionReply), testDraftID), gateway.CopywriterRole),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
 					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID,
-					Text: "Правка",
+					Text: revisionReply,
 				}},
 				texts: []sentText{reply(gateway.CopywriterRole, busyRevisionText)},
 			},
@@ -201,11 +202,11 @@ func TestHandlerMessages(t *testing.T) {
 		{
 			name:    "reply to an approved draft",
 			service: &fakeService{reviseErr: tasks.ErrConflict, draftStatus: tasks.ApprovedStatus},
-			event:   replyTo(messageEvent("Правка"), testDraftID),
+			event:   replyTo(messageEvent(revisionReply), testDraftID),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
 					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID,
-					Text: "Правка",
+					Text: revisionReply,
 				}},
 				texts: []sentText{reply(gateway.MarketerRole, revisionRefusedTexts[tasks.ApprovedStatus])},
 			},

@@ -21,6 +21,7 @@ var errTemporary = errors.New("claude api is overloaded")
 const (
 	testAgent    = "copywriter"
 	testVersion1 = "Версия один"
+	testVersion2 = "Версия два"
 	staleRunID   = "old"
 )
 

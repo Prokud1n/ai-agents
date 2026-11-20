@@ -93,7 +93,7 @@ func TestIntegrationFullCycle(t *testing.T) {
 
 	env := newTestEnv(t, pgtest.Connect(t),
 		fakeResult{text: testVersion1},
-		fakeResult{text: "Версия два"},
+		fakeResult{text: testVersion2},
 	)
 	ctx := context.Background()
 
@@ -186,7 +186,7 @@ func checkSecondVersion(t *testing.T, env *testEnv, taskID int64) {
 
 	v2, err := env.service.GetVersion(ctx, taskID, 2)
 	require.NoError(t, err)
-	assert.Equal(t, "Версия два", v2.Content)
+	assert.Equal(t, testVersion2, v2.Content)
 	require.NotNil(t, v2.DraftMessageID)
 	assert.Equal(t, int64(1002), *v2.DraftMessageID)
 
@@ -227,7 +227,7 @@ func checkApproval(t *testing.T, env *testEnv, taskID int64) {
 	assert.Equal(t, testAgent, saved[0].Agent)
 	assert.Equal(t, "reels-script", saved[0].TaskKind)
 	assert.Equal(t, testVersion1, saved[0].Original)
-	assert.Equal(t, "Версия два", saved[0].Corrected)
+	assert.Equal(t, testVersion2, saved[0].Corrected)
 	assert.Equal(t, "Сделай хук короче", saved[0].Comment)
 
 	// A repeated press changes nothing.
@@ -250,7 +250,7 @@ func TestIntegrationFailedRevisionReturnsPreviousVersion(t *testing.T) {
 	env := newTestEnv(t, pgtest.Connect(t),
 		fakeResult{text: testVersion1},
 		fakeResult{err: classifyAgentError(errors.Join(errors.New("stop_reason refusal, request_id req_9"), agents.ErrRefusal))},
-		fakeResult{text: "Версия два"},
+		fakeResult{text: testVersion2},
 	)
 	ctx := context.Background()
 
@@ -712,7 +712,7 @@ func TestIntegrationDuplicateDraftIsClosed(t *testing.T) {
 func TestIntegrationRevisionByReplyToPart(t *testing.T) {
 	t.Parallel()
 
-	env := newTestEnv(t, pgtest.Connect(t), fakeResult{text: testVersion1}, fakeResult{text: "Версия два"})
+	env := newTestEnv(t, pgtest.Connect(t), fakeResult{text: testVersion1}, fakeResult{text: testVersion2})
 	env.notifier.parts = true
 	ctx := context.Background()
 
