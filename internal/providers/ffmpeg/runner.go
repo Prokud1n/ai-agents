@@ -124,16 +124,23 @@ func localFiles(src, dst string) (in, out string, err error) {
 
 // run executes a binary with a timeout. stderr goes to a fixed-size tail buffer (and to stderrSink, if set).
 func (r *Runner) run(parent context.Context, binary string, args []string, stderrSink io.Writer) (string, error) {
-	return r.execute(parent, binary, args, stderrSink, newTailBuffer(stdoutLimit))
+	return r.execute(parent, "", binary, args, stderrSink, newTailBuffer(stdoutLimit))
+}
+
+// runIn is run in the working directory dir (empty: the current one).
+func (r *Runner) runIn(parent context.Context, dir, binary string, args []string, stderrSink io.Writer) (string, error) {
+	return r.execute(parent, dir, binary, args, stderrSink, newTailBuffer(stdoutLimit))
 }
 
 // runLimited is run whose stdout may be up to limit bytes (a JSON probe); longer output is cut from the start.
 func (r *Runner) runLimited(parent context.Context, binary string, args []string, limit int) (string, error) {
-	return r.execute(parent, binary, args, nil, newTailBuffer(limit))
+	return r.execute(parent, "", binary, args, nil, newTailBuffer(limit))
 }
 
+// execute runs a binary in dir (empty: the current directory) with the runner's timeout.
 func (r *Runner) execute(
 	parent context.Context,
+	dir string,
 	binary string,
 	args []string,
 	stderrSink io.Writer,
@@ -151,6 +158,7 @@ func (r *Runner) execute(
 	stderr := newTailBuffer(stderrTailSize)
 
 	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 

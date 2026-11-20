@@ -94,10 +94,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before a new run writes its results. Without `-transcript` it transcribes the video first. `make roughcut`; the
   binary is in the `media` image (`--entrypoint /app/roughcut`); CI renders synthetic clips on the runner and inside
   the image, and checks rotation, a video without sound and peak memory (1080x1920, 120 s, 60 fragments, cgroup peak < 800 MiB).
+- Subtitles in the brand style (T3.3): `subtitles -in video.mp4 -transcript result.json -out reel.mp4` burns Reels
+  subtitles (ASS via libass, 1080×1920, H.264 + AAC; other sizes padded or cropped with `-fit`), `-ass-only` writes
+  only the `.ass`. The video is rendered to a temporary file next to the output and renamed on success. Short 1–2 line
+  subtitles broken at sentence ends, segment ends, pauses and commas (not before a short tail, which is glued back),
+  prepositions kept with the next word, numbers with their unit, counting never glued; punctuation aligned from Whisper
+  segments per segment by time; timing within 0.1 s of the speech, no overlaps. Key words (numbers with units, the
+  trainer's dictionary, otherwise the longest word of 7+ letters, not in two subtitles in a row) in an accent font and
+  color, on a line of their own in a long phrase, or an explicit list (`-accents`); optional karaoke highlight.
+  Default look: small ivory Manrope Medium, warm yellow Fira Sans Extra Condensed ExtraBold capitals, no outline,
+  a top vignette (even 60 % under the subtitles, then a fade) and a light shadow, at the top below the Instagram bar. Style from YAML (`-style`,
+  `SUBTITLES_STYLE_FILE`; default in `assets/subtitles/style.yaml`), validated against the Instagram interface zones.
+  Fonts (SIL OFL) in `assets/fonts`, in the media image at `/app/fonts`; a font fallback by libass is reported
+  (exit code 2). `make subtitles`; `subtitles.Service` for the Montage agent.
 - Docker target `media` (alpine + ffmpeg 8.1, non-root, `WORKDIR /work`) with the `transcribe` binary;
   `make transcribe`, `make media-image`.
 - CI: ffmpeg integration tests in `check`; `media-image` job builds the media target, runs the ffmpeg tests inside it
-  and extracts audio from a generated clip.
+  and extracts audio from a generated clip; it also renders subtitles inside the image (tests and the CLI) and checks
+  the output size, codecs, text position and that the brand fonts were used.
 - CI: `tidy` job that commits `go mod tidy` results to `feature/**` branches and re-runs checks on the new commit;
   `compose-smoke` job; actions pinned by SHA with least-privilege permissions.
 - LLM layer: thin Claude Messages API client (`ANTHROPIC_*` config, retries on 429/5xx with exponential backoff);

@@ -1,0 +1,27 @@
+Subtitle fonts (SUBTITLES_FONTS_DIR). Both are licensed under the SIL Open Font License 1.1:
+the license texts are next to the fonts and must stay with them.
+libass matches a static font by its legacy family name, which includes the weight for weights other than
+Regular/Bold: the style names them "Manrope Medium" and "Fira Sans Extra Condensed ExtraBold".
+
+Manrope Medium — Manrope-Medium.ttf, license OFL-Manrope.txt
+  Source: https://github.com/googlefonts/manrope (the upstream that Google Fonts builds from)
+  Commit: 6f81ebecdf65e4463b798cc07b16a4f8d5216917
+  File:   fonts/variable/Manrope[wght].ttf
+          sha256 d0639be45d0af36e798172419d7bd173c4bd4f29e2b76cbb69db1d11bf8b0a40
+  The repository ships only the variable font, and libass 0.17 does not select named instances of a
+  variable font loaded from fontsdir (it silently falls back to a system font). So the static Medium
+  instance is cut from it with fontTools 4.60.1:
+    fonttools varLib.instancer --static --update-name-table -o Manrope-Medium.ttf "Manrope[wght].ttf" wght=500
+  The OFL text of Manrope names no Reserved Font Name, so the instance keeps the name "Manrope".
+  Result: sha256 f7c3def2dcebca8d8a210e654fd32dd41f8237a5da4d6d96394eb9cfad055923
+  (the instancer writes a timestamp, so a rebuild differs in bytes but not in glyphs).
+  License: OFL.txt of the same commit, sha256 e01b637272e0cbdfb240184dd98ea5cc671556d9894dae2668d92ab2c906787c
+
+Fira Sans Extra Condensed ExtraBold — FiraSansExtraCondensed-ExtraBold.ttf, license OFL-FiraSansExtraCondensed.txt
+  Source: https://github.com/googlefonts/FiraGFVersion (the Google Fonts build of Mozilla/Carrois Fira)
+  Commit: 7b7927fac6d4651685e201081b31193852a7a94f
+  File:   fonts/FiraSansExtraCondensed-ExtraBold.ttf, unchanged
+          sha256 056cad28b3697bf0a093eb49e55d02e873b1de1eb4ed64467c8c80b10c6750e9
+  License: that repository has no license file; the text is ofl/firasansextracondensed/OFL.txt from
+  https://github.com/google/fonts (the same binaries as distributed by Google Fonts),
+  sha256 8f24842e9174beda18a556c2ae7d54f5dc444340c19a3a9ef77e23bca366adbd

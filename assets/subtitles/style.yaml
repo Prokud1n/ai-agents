@@ -1,0 +1,67 @@
+# Subtitle style: the built-in default, written out. Copy this file, change it to the trainer's brand book and pass
+# it as `-style file.yaml` or SUBTITLES_STYLE_FILE. Fields left out keep these values; unknown fields are errors.
+# Colors: "#RRGGBB" or "#RRGGBBAA" (AA is opacity, FF is opaque). Sizes are pixels of the 1080×1920 frame:
+# it is about 390 pt wide on a phone, so 56 px is about 20 pt.
+
+# Main text. font is the family name libass matches: for a static weight other than Regular/Bold it is the legacy
+# family with the weight ("Manrope Medium"), see `fc-scan --format '%{family}\n' file.ttf` (the last name).
+# The font file goes to SUBTITLES_FONTS_DIR (assets/fonts, /app/fonts in the media image).
+text:
+  font: Manrope Medium
+  size: 56
+  bold: false
+  uppercase: false
+  color: "#F5F0E1" # ivory; text and accent colors must be at least half opaque
+
+# Key words, always: a number with its unit ("10 повторений", not counting "раз два три") and the trainer's
+# dictionary. Otherwise the longest meaningful word of at least 7 letters (not a routine command like "держим"),
+# but never in a subtitle right after an accented one: about a third of subtitles get an accent.
+# In a phrase longer than a line the accent stands on a line of its own.
+# An explicit list (-accents, or from the Montage agent) replaces the automatic choice.
+accent:
+  font: Fira Sans Extra Condensed ExtraBold
+  size: 64
+  bold: false
+  uppercase: true
+  color: "#F2B94B" # warm yellow
+  # Words or phrases always accented. An entry of 4+ letters also matches forms with up to 3 more letters
+  # ("ягодиц" -> "ягодицами"); a shorter one matches only exactly ("вес" is not "весь").
+  words: []
+  # Automatic accents per subtitle (0 turns them off).
+  max_per_cue: 1
+  longest_word: true
+
+# No outline: the vignette and a light shadow (40 % black, 2 px) keep the text readable on a light background.
+outline:
+  color: "#000000"
+  size: 0
+shadow:
+  color: "#00000066"
+  size: 2
+
+# The word being spoken, with -karaoke; differs from the accent color.
+karaoke_color: "#FF8C5A"
+
+# Dark vignette from the top edge (bottom edge for the bottom position; none in the middle), burned in under the
+# subtitles: even opacity from the edge to the bottom of the tallest subtitle (margin + (max_lines + 1) lines),
+# then a smooth fade over fade px. 0.6 gives the text about 5:1 and the accent about 3:1 contrast on white.
+vignette:
+  enabled: true
+  opacity: 0.6
+  fade: 320
+
+layout:
+  # top | middle | bottom. Instagram covers the top 250 px, the bottom 420 px (caption, buttons)
+  # and 140 px on the right (buttons): the margins cannot be smaller, and max_lines lines plus an accent line
+  # must fit between the margin and the opposite zone.
+  position: top
+  margin_top: 260
+  margin_bottom: 440
+  margin_side: 140
+  max_lines: 2
+  # Short, laconic lines; at most what fits between the margins (width / size / char_width, 28 here).
+  max_line_chars: 22
+  # Average character width in font sizes, for the estimate above.
+  char_width: 0.5
+  # Drop . , : ; at the end of a subtitle.
+  trim_end_punctuation: true

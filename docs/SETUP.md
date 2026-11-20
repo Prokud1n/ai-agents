@@ -11,11 +11,11 @@
 | Docker | весь стек работает в контейнерах | Docker Desktop (macOS) или Docker Engine (Linux) |
 | Docker Compose v2 | `docker compose …` (через пробел; старый `docker-compose` v1 не подходит) | v2.20+ (`--wait`) |
 | make, git, curl | команды проекта, клонирование, проверка `/readyz` | любые актуальные |
-| Go | только для разработки (`make check`), `make transcribe` / `make roughcut` на хосте и `KB_HOST=1 make kb-*` | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
-| ffmpeg, ffprobe | только `make transcribe` и `make roughcut` на хосте; без них обе команды работают в образе `media` | 8.x |
+| Go | только для разработки (`make check`), `make transcribe` / `make roughcut` / `make subtitles` на хосте и `KB_HOST=1 make kb-*` | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
+| ffmpeg, ffprobe | только `make transcribe`, `make roughcut` и `make subtitles` на хосте (для субтитров — сборка с libass, фильтр `ass`); без них все три работают в образе `media` | 8.x |
 
 Без Go работает всё, что нужно оператору: стек, агенты (`make agent-run`), база знаний (`make kb-*` запускают `kb`
-в образе приложения) и транскрипция в образе `media`.
+в образе приложения), транскрипция и субтитры в образе `media`.
 
 ### macOS
 
@@ -158,10 +158,12 @@ cp .env.dist .env
 | `WHISPER_RETRY_BASE_DELAY` | нет | `2s` | база экспоненциальной задержки | нет |
 | `TRANSCRIPTION_SILENCE_NOISE_DB` | нет | `-30` | порог тишины для нарезки длинного аудио; с фоновой музыкой — `-25` | нет |
 | `TRANSCRIPTION_SILENCE_MIN_DURATION` | нет | `500ms` | минимальная длина паузы | нет |
-| `FFMPEG_TIMEOUT` | нет | `10m` | лимит одного запуска ffmpeg/ffprobe (рендер склейки — один запуск) | нет |
+| `FFMPEG_TIMEOUT` | нет | `10m` | лимит одного запуска ffmpeg/ffprobe (рендер склейки — один запуск; рендер субтитров на 3-минутный ролик — несколько минут) | нет |
 | `ROUGHCUT_MAX_PAUSE` | нет | `400ms` | самая длинная пауза между словами в склейке (`make roughcut`), больше 0; флаг `-max-pause` | нет |
 | `ROUGHCUT_RETAKE_SIMILARITY` | нет | `0.7` | доля слов фразы (больше 0, не больше 1), повторённых заново, чтобы считать её неудачным дублем; флаг `-similarity` | нет |
 | `ROUGHCUT_FILLERS` | нет | `э,эм,м,хм,uh,um,hm,er,erm` | слова-паразиты через запятую, повторы букв не важны; флаг `-fillers` | нет |
+| `SUBTITLES_FONTS_DIR` | нет | закомментирована (`assets/fonts`) | папка со шрифтами субтитров; в образе `media` — `/app/fonts`, поэтому в `.env` её не задаём | нет |
+| `SUBTITLES_STYLE_FILE` | нет | пусто | YAML-стиль субтитров под брендбук; пусто — встроенный (`assets/subtitles/style.yaml`) | нет |
 | `EMBEDDINGS_MODEL` | нет | `text-embedding-3-small` | вектор должен быть 1536-мерным; после смены — `make kb-reembed` | нет |
 | `EMBEDDINGS_BATCH_SIZE` | нет | `100` | фрагментов в одном запросе (не больше 2048) | нет |
 | `EMBEDDINGS_MAX_RETRIES` | нет | `4` | повторы при 429/5xx | нет |
@@ -523,6 +525,8 @@ read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKE
 | `make roughcut`: `source has no audio stream` | ролик без звука не поддерживается: склейка идёт по речи |
 | `make roughcut`: `invalid rough cut settings` | `ROUGHCUT_MAX_PAUSE` должна быть больше 0, `ROUGHCUT_RETAKE_SIMILARITY` — в пределах (0, 1] |
 | Транскрипция режет речь посреди фраз, видео с музыкой | подними `TRANSCRIPTION_SILENCE_NOISE_DB` до `-25` |
+| `make subtitles`: `No such filter: 'ass'` | ffmpeg собран без libass: поставь полную сборку (`brew install ffmpeg`, `apt-get install ffmpeg`) или используй образ `media` |
+| `subtitles`: код выхода 2, «brand fonts were not found» | в `SUBTITLES_FONTS_DIR` нет файла шрифта из стиля или имя в стиле не совпадает с тем, что ищет libass (для Medium/ExtraBold — «Manrope Medium», последнее имя в `fc-scan`); вариативный шрифт замени статическим (README, «Субтитры») |
 | Apple Silicon: сборка медленная | первый `make up` собирает образ (несколько минут); дальше работает кэш |
 | `m0-check`: шаг 4 FAIL «не первый в поиске» | в базе есть очень похожий документ или сменилась модель эмбеддингов без `make kb-reembed`; подробности — `m0-results/kb.log` |
 | `m0-check`: шаг 6 FAIL «getMe не ok» | неверный `M0_BOT_TOKEN` или `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`; смотри `docker compose --profile telegram logs telegram-bot-api` |
