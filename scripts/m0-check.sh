@@ -442,10 +442,13 @@ step_llm() {
 
 # --- 4. База знаний --------------------------------------------------------------------------------
 
-# kb_prepare: KB_ROOT (если его нет — создаётся и потом удаляется, если остался пустым) и своя временная папка в нём.
+# kb_prepare: папка базы знаний (если её нет — создаётся и потом удаляется, если осталась пустой) и своя временная
+# папка в ней. make kb-* по умолчанию работает в образе, куда монтируется ./kb; с KB_HOST=1 (go run) — KB_ROOT из .env.
 kb_prepare() {
-	local kb_root dir
-	kb_root=$(env_get KB_ROOT)
+	local kb_root="" dir
+	if [[ ${KB_HOST-} == 1 ]]; then
+		kb_root=$(env_get KB_ROOT)
+	fi
 	KB_ROOT_DIR=${kb_root:-./kb}
 	KB_ROOT_DIR=${KB_ROOT_DIR%/}
 	if [[ ! -d "$KB_ROOT_DIR" ]]; then
@@ -454,6 +457,8 @@ kb_prepare() {
 	fi
 	# mktemp -d атомарно создаёт новую папку: чужую он не вернёт.
 	dir=$(mktemp -d "$KB_ROOT_DIR/_m0check.XXXXXX") || return 1
+	# mktemp -d создаёт папку с правами 700; от root хоста kb в контейнере работает как nonroot и без 755 её не прочтёт.
+	chmod 755 "$dir" || return 1
 	KB_TMP_DIR=$dir
 }
 
@@ -466,8 +471,8 @@ step_kb() {
 		result kb SKIP "стек не поднят (шаг 2)"
 		return 0
 	fi
-	if ! command -v go >/dev/null 2>&1; then
-		result kb SKIP "нет Go: make kb-* запускает go run на хосте (docs/SETUP.md, «Требования»)"
+	if [[ ${KB_HOST-} == 1 ]] && ! command -v go >/dev/null 2>&1; then
+		result kb SKIP "KB_HOST=1, но нет Go: без KB_HOST make kb-* работает в образе (docs/SETUP.md)"
 		return 0
 	fi
 	if ! kb_prepare; then

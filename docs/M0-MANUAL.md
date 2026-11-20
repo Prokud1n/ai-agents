@@ -43,9 +43,11 @@
 ```bash
 git pull
 docker compose version     # Docker Desktop запущен, compose v2
-go version                 # нужен Go; версия 1.26 скачается сама (GOTOOLCHAIN=auto)
-ffmpeg -version | head -1  # для транскрипции; на macOS: brew install ffmpeg
+go version                 # нужен только для шага 4 (транскрипция); версия 1.26 скачается сама (GOTOOLCHAIN=auto)
+ffmpeg -version | head -1  # тоже для шага 4; на macOS: brew install ffmpeg
 ```
+
+Go не нужен для базы знаний: `make kb-*` (шаг 3) работают в Docker-образе приложения.
 
 **Ожидаемый результат:** все четыре команды отрабатывают без ошибок.
 
@@ -85,7 +87,8 @@ make agent-run AGENT=test PROMPT="Ответь одним словом: рабо
 
 ## Шаг 3. База знаний
 
-Файлы берутся только из папки `KB_ROOT` (по умолчанию `./kb`). Она не попадает ни в git, ни в Docker-образ.
+Файлы берутся только из папки `./kb` проекта. Она не попадает ни в git, ни в Docker-образ: `make kb-*` запускают `kb`
+в контейнере и монтируют `./kb` туда только на чтение. Go на хосте не нужен.
 
 ```bash
 mkdir -p kb/brand
@@ -167,6 +170,9 @@ make down                                         # остановить сте�
 | Anthropic: `credit balance is too low` | На организации Console нет кредитов: пополни баланс или привяжи подписку Max/Ultra/Team |
 | OpenAI: `401` / `insufficient_quota` | Неверный ключ или нет средств на аккаунте OpenAI |
 | `agent not found` | В `agents/test/agent.md` должно быть `name: test`; папки, которые начинаются с `_`, не загружаются |
-| `path escapes from parent` / вне `KB_ROOT` | Файл должен лежать внутри `./kb`; симлинки наружу запрещены специально |
-| `go: downloading go1.26...` долго | Первый запуск скачивает тулчейн, дальше быстрее |
+| `make kb-ingest`: «вне папки базы знаний» | `KB_PATH` должен указывать внутрь `./kb`, например `KB_PATH=./kb/brand` |
+| `path escapes from parent` | Симлинк внутри `./kb` ведёт наружу: такие запрещены специально, положи в `./kb` сам файл |
+| `make kb-*`: «образ … не собран», «стек не поднят» или `exec: "/app/kb": no such file or directory` | Выполни `make up`: он собирает образ (с `/app/kb`) и поднимает стек |
+| `make kb-*`: «образ … старше кода» | Код обновился после сборки образа (`git pull`): выполни `make up` |
+| `make transcribe`: `go: downloading go1.26...` долго | Первый запуск скачивает тулчейн, дальше быстрее |
 | bot-api в логах: ошибка авторизации | Проверь `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`; приложение на my.telegram.org должно быть создано |

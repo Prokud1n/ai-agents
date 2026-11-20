@@ -22,6 +22,8 @@ const (
 	searchCmd   = string(SearchAction)
 	deleteCmd   = string(DeleteAction)
 	kindFlag    = "-kind"
+	limitFlag   = "-limit"
+	dashQuery   = "-5 кг"
 	brandName   = string(knowledge.BrandKind)
 	testQuery   = "питание"
 	voiceSource = "brand/voice.md"
@@ -88,7 +90,7 @@ func TestParseCommand(t *testing.T) {
 		},
 		{
 			name:     "search with limit and kinds",
-			input:    []string{searchCmd, "как мы говорим о питании", "-limit", "3", kindFlag, "brand, post"},
+			input:    []string{searchCmd, "как мы говорим о питании", limitFlag, "3", kindFlag, "brand, post"},
 			expected: Command{Action: SearchAction, Arg: "как мы говорим о питании", Limit: 3, Kinds: []knowledge.Kind{knowledge.BrandKind, knowledge.PostKind}},
 		},
 		{
@@ -109,12 +111,24 @@ func TestParseCommand(t *testing.T) {
 		{name: "unknown kind", input: []string{ingestCmd, testSource, kindFlag, "recipe"}, expectErr: true},
 		{name: "unknown search kind", input: []string{searchCmd, "a", kindFlag, "brand,recipe"}, expectErr: true},
 		{name: "flag of another command", input: []string{deleteCmd, testSource, kindFlag, brandName}, expectErr: true},
-		{name: "bad limit", input: []string{searchCmd, "a", "-limit", "many"}, expectErr: true},
+		{name: "bad limit", input: []string{searchCmd, "a", limitFlag, "many"}, expectErr: true},
 		{
 			name:     "ingest with force",
 			input:    []string{ingestCmd, "-force", "a", kindFlag, brandName},
 			expected: Command{Action: IngestAction, Arg: "a", Kind: knowledge.BrandKind, Force: true},
 		},
+		{
+			name:     "search query starting with a dash after --",
+			input:    []string{searchCmd, limitFlag, "3", flagsEnd, dashQuery},
+			expected: Command{Action: SearchAction, Arg: dashQuery, Limit: 3},
+		},
+		{
+			name:     "flags after -- are part of the arguments",
+			input:    []string{deleteCmd, flagsEnd, limitFlag},
+			expected: Command{Action: DeleteAction, Arg: limitFlag},
+		},
+		{name: "two arguments after --", input: []string{searchCmd, flagsEnd, "-5", limitFlag}, expectErr: true},
+		{name: "query starting with a dash without --", input: []string{searchCmd, dashQuery}, expectErr: true},
 		{name: "reembed", input: []string{string(ReembedAction)}, expected: Command{Action: ReembedAction}},
 		{name: "reembed with argument", input: []string{string(ReembedAction), "x"}, expectErr: true},
 	}

@@ -27,7 +27,7 @@ go test -race -run TestName ./internal/agents/          # один тест
 make up && make test-integration                        # интеграционные тесты против compose-postgres
 FFMPEG_TESTS_REQUIRED=1 go test -run TestRunner ./internal/providers/ffmpeg/  # без ffmpeg тесты иначе скипаются
 make agent-run AGENT=<name> PROMPT="..."                # прогнать одного агента в compose (нужен ANTHROPIC_API_KEY)
-make kb-ingest KB_PATH=./brand KB_KIND=brand            # база знаний: также kb-search / kb-delete / kb-reembed
+make kb-ingest KB_PATH=./kb/brand KB_KIND=brand         # база знаний в образе (KB_HOST=1 — go run): также kb-search / kb-delete / kb-reembed
 make transcribe ARGS="-in video.mp4"                    # нужен ffmpeg и OPENAI_API_KEY
 ```
 

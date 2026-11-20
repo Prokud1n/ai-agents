@@ -14,7 +14,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app . && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-run ./cmd/agent-run
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-run ./cmd/agent-run && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kb ./cmd/kb
 
 # Tools that need ffmpeg (transcribe) are built separately, so the app image below stays unchanged.
 FROM build AS build-media
@@ -45,6 +46,8 @@ ENTRYPOINT ["/app/transcribe"]
 # gcr.io/distroless/static-debian12:nonroot
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
+# /app/kb: the knowledge base CLI (make kb-*, scripts/kb.sh). It parses PDFs in a child process, itself
+# re-run as `/app/kb extract-pdf` (found via /proc/self/exe): no shell needed, works as any non-root uid.
 COPY --from=build /out/ /app/
 # Agent definitions and shared skills (AGENTS_DIR=./agents, SKILLS_DIR=./skills are relative to the
 # working directory).
