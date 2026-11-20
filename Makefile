@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe roughcut media-image agent-run test-integration redis-test-up redis-test-down kb-ingest kb-search kb-delete kb-reembed
+.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe roughcut subtitles media-image agent-run test-integration redis-test-up redis-test-down kb-ingest kb-search kb-delete kb-reembed
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -90,6 +90,11 @@ transcribe:
 # Needs ffmpeg; without -transcript it transcribes the video first (OPENAI_API_KEY in .env). See README.
 roughcut:
 	set -a; [ -f .env ] && . ./.env; [ -f .env.local ] && . ./.env.local; set +a; go run ./cmd/roughcut $(ARGS)
+
+# make subtitles ARGS="-in video.mp4 -transcript result.json -out reel.mp4 [-style style.yaml] [-accents a,b] [-karaoke]"
+# make subtitles ARGS="-transcript result.json -out subtitles.ass -ass-only"; rendering needs ffmpeg with libass
+subtitles:
+	set -a; [ -f .env ] && . ./.env; [ -f .env.local ] && . ./.env.local; set +a; go run ./cmd/subtitles $(ARGS)
 
 media-image:
 	docker build --target media -t ai-agents-media:local .

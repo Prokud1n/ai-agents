@@ -108,7 +108,7 @@ func (r *Runner) RenderSegments(ctx context.Context, src, dst string, segments [
 // majorVersion reads the first line of "ffmpeg -version": the head of the output is kept, because a static
 // build prints kilobytes of configuration after it.
 func (r *Runner) majorVersion(ctx context.Context) (int, error) {
-	stdout, err := r.execute(ctx, r.ffmpegPath, []string{"-version"}, nil, newHeadBuffer(versionHeadSize))
+	stdout, err := r.execute(ctx, "", r.ffmpegPath, []string{"-version"}, nil, newHeadBuffer(versionHeadSize))
 	if err != nil {
 		return 0, fmt.Errorf("failed to read ffmpeg version: %w", err)
 	}
@@ -182,11 +182,11 @@ func renderSegmentsArgs(src, dst, graph string, ffmpegMajor int) []string {
 	}
 
 	args = append(args,
-		"-map", "[v]", "-map", "[a]",
-		"-c:v", videoCodec, "-preset", videoPreset, "-crf", videoCRF, "-pix_fmt", videoPixFmt,
+		mapFlag, "[v]", mapFlag, "[a]",
+		videoCodecFlag, videoCodec, "-preset", videoPreset, "-crf", videoCRF, "-pix_fmt", videoPixFmt,
 		audioCodecFlag, renderACodec, "-b:a", renderABitrate,
 		"-movflags", "+faststart",
-		"-f", renderFormat,
+		formatFlag, renderFormat,
 	)
 
 	return append(args, dst)

@@ -17,16 +17,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-run ./cmd/agent-run && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kb ./cmd/kb
 
-# Tools that need ffmpeg (transcribe, roughcut) are built separately, so the app image below stays unchanged.
+# Tools that need ffmpeg (transcribe, roughcut, subtitles) are built separately, so the app image below stays unchanged.
 FROM build AS build-media
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/transcribe ./cmd/transcribe && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/roughcut ./cmd/roughcut
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/roughcut ./cmd/roughcut && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/subtitles ./cmd/subtitles
 
-# Media image: ffmpeg + transcribe + roughcut. Build with `docker build --target media .`
-# The entrypoint is transcribe; roughcut runs with `--entrypoint /app/roughcut`.
+# Media image: ffmpeg (with libass) + transcribe + roughcut + subtitles. Build with `docker build --target media .`
+# The entrypoint is transcribe; roughcut and subtitles run with `--entrypoint /app/roughcut` / `/app/subtitles`.
 # alpine:3.24
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS media
 
@@ -37,6 +38,10 @@ RUN apk add --no-cache "ffmpeg=~8.1" && \
     install -d -o 65532 -g 65532 /work
 
 COPY --from=build-media /out-media/ /app/
+# Subtitle fonts with their OFL licenses, and the default style for reference (assets/subtitles/style.yaml).
+COPY assets/fonts/ /app/fonts/
+COPY assets/subtitles/style.yaml /app/subtitles-style.yaml
+ENV SUBTITLES_FONTS_DIR=/app/fonts
 
 USER 65532:65532
 # Mount the host directory with videos here; -out is written relative to it.

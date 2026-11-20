@@ -155,6 +155,7 @@ jobs:
         run: |
           go test -count=1 -v -run 'TestRunner' ./internal/providers/ffmpeg/
           go test -count=1 -v -run 'TestRender' ./internal/roughcut/
+          go test -count=1 -v -run 'TestBurnSubtitlesWithFFmpeg' ./internal/subtitles/
 
       # Hostile input for kb: PDFs are parsed in real child processes (the test binary re-run as the
       # parser), symlinks inside KB_ROOT lead outside it. The log shows each attack failing as an ordinary
@@ -396,10 +397,13 @@ jobs:
       - name: Build media image
         run: docker build --target media -t ai-agents-media:ci .
 
-      - name: Check ffmpeg, transcribe and roughcut
+      - name: Check ffmpeg, transcribe, roughcut and subtitles
         # sed reads all the output (unlike head), so ffmpeg does not die with a broken pipe.
         run: |
           docker run --rm --entrypoint ffmpeg ai-agents-media:ci -hide_banner -version | sed -n 1p
+          docker run --rm --entrypoint sh ai-agents-media:ci -c 'ffmpeg -hide_banner -filters | grep -E " ass "'
+          docker run --rm --entrypoint /app/subtitles ai-agents-media:ci -h
+          docker run --rm --entrypoint ls ai-agents-media:ci -l /app/fonts
           docker run --rm --entrypoint ffprobe ai-agents-media:ci -hide_banner -version | sed -n 1p
           docker run --rm ai-agents-media:ci -h
           docker run --rm --entrypoint /app/roughcut ai-agents-media:ci -h
@@ -472,6 +476,44 @@ jobs:
           run_check basic
           run_check prepare
           run_check load --memory=3g --memory-swap=3g
+
+      # Subtitle rendering against the ffmpeg/libass of the image and the fonts in /app/fonts (SUBTITLES_FONTS_DIR):
+      # 1080x1920 output, H.264 + AAC, text outside the Instagram zones, no font fallback.
+      - name: Run subtitle render tests inside the media image
+        run: |
+          CGO_ENABLED=0 go test -c -o subtitles.test ./internal/subtitles
+          docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/subtitles.test:/app/subtitles.test:ro" \
+            --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestBurnSubtitlesWithFFmpeg'
+
+      - name: Burn subtitles into a generated clip with the CLI
+        run: |
+          docker run --rm --entrypoint sh ai-agents-media:ci -c '
+            set -e
+            ffmpeg -hide_banner -nostdin -loglevel error -y \
+              -f lavfi -i "sine=frequency=440:duration=3" \
+              -f lavfi -i "testsrc2=duration=3:size=720x1280:rate=25" \
+              -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest /tmp/clip.mp4
+            cat > /tmp/result.json <<JSON
+          {"language":"ru","duration":3,"text":"Делаем 3 подхода по 10 повторений!",
+           "segments":[{"start":0.2,"end":2.6,"text":"Делаем 3 подхода по 10 повторений!"}],
+           "words":[{"word":"Делаем","start":0.2,"end":0.6},{"word":"3","start":0.7,"end":0.9},
+                    {"word":"подхода","start":0.9,"end":1.4},{"word":"по","start":1.5,"end":1.6},
+                    {"word":"10","start":1.6,"end":1.9},{"word":"повторений","start":1.9,"end":2.6}]}
+          JSON
+            /app/subtitles -transcript /tmp/result.json -out /tmp/subtitles.ass -ass-only
+            grep -q "PlayResY: 1920" /tmp/subtitles.ass
+            grep -q "ПОДХОДА" /tmp/subtitles.ass
+            /app/subtitles -in /tmp/clip.mp4 -transcript /tmp/result.json -out /tmp/reel.mp4 -karaoke
+            ffprobe -v error -show_entries stream=codec_type,codec_name,width,height -of csv=p=0 /tmp/reel.mp4
+          ' > subtitles.txt 2>&1 || { cat subtitles.txt; exit 1; }
+          cat subtitles.txt
+          grep -q '^h264,video,1080,1920$' subtitles.txt
+          grep -q '^aac,audio$' subtitles.txt
+          grep -q '"subtitles: video rendered"' subtitles.txt
+          if grep -q 'brand font not found' subtitles.txt; then
+            echo "::error::libass did not use the brand fonts"
+            exit 1
+          fi
 
       - name: Extract audio from a generated clip
         # Without OPENAI_API_KEY transcribe stops before the audio is prepared: the key error comes first.

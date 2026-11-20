@@ -29,6 +29,8 @@ FFMPEG_TESTS_REQUIRED=1 go test -run TestRunner ./internal/providers/ffmpeg/  # 
 make agent-run AGENT=<name> PROMPT="..."                # прогнать одного агента в compose (нужен ANTHROPIC_API_KEY)
 make kb-ingest KB_PATH=./kb/brand KB_KIND=brand         # база знаний в образе (KB_HOST=1 — go run): также kb-search / kb-delete / kb-reembed
 make transcribe ARGS="-in video.mp4"                    # нужен ffmpeg и OPENAI_API_KEY
+make subtitles ARGS="-in video.mp4 -transcript result.json -out reel.mp4"  # субтитры; нужен ffmpeg с libass
+FFMPEG_TESTS_REQUIRED=1 go test -run TestBurnSubtitlesWithFFmpeg ./internal/subtitles/  # рендер субтитров
 ```
 
 - `make lint`/`make fmt` идут через `scripts/golangci-lint.sh` (запиненная версия), а не через глобальный бинарь.
@@ -48,13 +50,14 @@ make transcribe ARGS="-in video.mp4"                    # нужен ffmpeg и O
 | `cmd/kb` | `internal/kb.go: DeclareKBOptions` / `RunKB` | postgres + embeddings + knowledge + kbcli |
 | `cmd/transcribe` | `internal/transcribe.go` | ffmpeg + whisper + transcription; логи в stderr, JSON в stdout |
 | `cmd/roughcut` | `internal/roughcut.go` | ffmpeg + whisper + transcription + roughcut; логи в stderr, файлы в `-out` |
+| `cmd/subtitles` | `internal/subtitles.go` | ffmpeg + subtitles (ASS через libass, шрифты `assets/fonts`); логи в stderr; код выхода 2 — подмена шрифта |
 | `cmd/migrate` | вне fx (`internal/migrator`) | — |
 
-Долгие CLI-команды (`kb`, `transcribe`, `roughcut`) выполняются **между** `app.Start` и `app.Stop` или вовсе без `Start`, а не в
+Долгие CLI-команды (`kb`, `transcribe`, `roughcut`, `subtitles`) выполняются **между** `app.Start` и `app.Stop` или вовсе без `Start`, а не в
 start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`. Новую команду строй так же. Таймауты старта и остановки
 читаются заранее (`config.ParseLifecycle`), потому что это опции верхнего уровня fx.
 
-Каждая сборка парсит только нужный ей конфиг (`config.Parse`, `ParseTranscribe`, `ParseMigrate`, …). Не добавляй
+Каждая сборка парсит только нужный ей конфиг (`config.Parse`, `ParseTranscribe`, `ParseSubtitlesCommand`, `ParseMigrate`, …). Не добавляй
 обязательные переменные в общий конфиг, если CLI без них должен работать.
 
 ### Агенты — данные, а не код
