@@ -7,6 +7,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
+	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/health"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
 	"github.com/Prokud1n/ai-agents/internal/providers/redis"
@@ -26,7 +27,7 @@ func TestModule(t *testing.T) {
 
 	app := fxtest.New(t,
 		// Clients are never pinged here: the test checks only what is registered in the group.
-		fx.Supply(new(postgres.Client), new(redis.Client), new(s3.Client)),
+		fx.Supply(new(postgres.Client), new(redis.Client), new(s3.Client), gateway.NewStatus()),
 		Module,
 		fx.Invoke(func(c checkers) {
 			for _, checker := range c.All {
@@ -36,5 +37,5 @@ func TestModule(t *testing.T) {
 	)
 	app.RequireStart().RequireStop()
 
-	assert.ElementsMatch(t, []string{"postgres", "redis", "s3"}, names)
+	assert.ElementsMatch(t, []string{"postgres", "redis", "s3", "telegram"}, names)
 }
