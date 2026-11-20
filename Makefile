@@ -101,7 +101,7 @@ media-image:
 
 # Run one agent with a prompt inside compose (needs ANTHROPIC_API_KEY in .env):
 #   make agent-run AGENT=<name> PROMPT="Привет!"
-# Until real agents exist, use a copy of the template: see README ("Агенты и LLM").
+# Agents: marketer, copywriter, editor, designer (see README, "Агенты и LLM").
 # The image is built by the migrate service, which also applies migrations (usage is recorded to llm_usage).
 agent-run:
 	docker compose run --rm --build migrate up

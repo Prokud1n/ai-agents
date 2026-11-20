@@ -278,6 +278,29 @@ func (s *Sender) AnswerCallback(ctx context.Context, role Role, callbackID, text
 	return nil
 }
 
+// React puts an emoji reaction of the role's bot on a group message, e.g. «👀» on a message taken into work.
+// Telegram accepts only emoji from its reaction list, and the group may allow fewer.
+func (s *Sender) React(ctx context.Context, role Role, messageID int64, emoji string) error {
+	if messageID <= 0 || emoji == "" {
+		return fmt.Errorf("reaction needs a message and an emoji: %w", ErrValidation)
+	}
+
+	client, err := s.client(role)
+	if err != nil {
+		return err
+	}
+
+	if err := client.SetMessageReaction(ctx, &telegram.SetMessageReactionParams{
+		ChatID:    s.groupID,
+		MessageID: messageID,
+		Reaction:  []telegram.ReactionType{{Type: telegram.EmojiReaction, Emoji: emoji}},
+	}); err != nil {
+		return fmt.Errorf("failed to set reaction as %s: %w", role, err)
+	}
+
+	return nil
+}
+
 func (s *Sender) client(role Role) (*telegram.Client, error) {
 	if !s.bots.enabled() {
 		return nil, ErrDisabled

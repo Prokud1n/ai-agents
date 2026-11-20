@@ -28,8 +28,8 @@ type replySender interface {
 	AnswerCallback(ctx context.Context, role Role, callbackID, text string) error
 }
 
-// AckHandler is the default handler until the task queue (T1.3) is connected: it logs the event and
-// answers in the same topic from the target bot, so the gateway can be checked by hand.
+// AckHandler is the default handler of the gateway module alone (the application uses teamchat.Handler):
+// it logs the event and answers in the same topic from the target bot, so the gateway can be checked by hand.
 type AckHandler struct {
 	sender replySender
 	log    *slog.Logger

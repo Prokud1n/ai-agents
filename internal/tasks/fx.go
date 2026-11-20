@@ -8,8 +8,8 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 )
 
-// Module provides the task service and starts the workers. It needs a Notifier: LogNotifierModule until
-// the Telegram gateway provides its own.
+// Module provides the task service and starts the workers. It needs a Notifier: in the application
+// teamchat.Module provides it (Telegram, or the log without bot tokens); LogNotifierModule only logs.
 var Module = fx.Module("tasks",
 	fx.Provide(
 		NewService,

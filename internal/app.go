@@ -22,6 +22,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/readiness"
 	"github.com/Prokud1n/ai-agents/internal/server"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
+	"github.com/Prokud1n/ai-agents/internal/teamchat"
 )
 
 func DeclareApplicationOptions() []fx.Option {
@@ -43,9 +44,10 @@ func DeclareApplicationOptions() []fx.Option {
 		agents.Module,
 		// Telegram gateway: off without bot tokens
 		gateway.Module,
-		// Task workers; drafts go to the log until the gateway is wired in as the notifier.
+		// Task workers
 		tasks.Module,
-		tasks.LogNotifierModule,
+		// Gateway ⇄ tasks: group events become tasks, drafts go to the group (to the log without bot tokens)
+		teamchat.Module,
 
 		// HTTP server goes last: it starts accepting requests once dependencies are connected
 		server.Module,

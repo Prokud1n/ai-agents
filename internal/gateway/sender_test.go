@@ -67,6 +67,8 @@ func TestSenderEditsAndCallbacks(t *testing.T) {
 	require.NoError(t, sender.EditText(t.Context(), MarketerRole, 10, "План v2", nil))
 	require.NoError(t, sender.EditButtons(t.Context(), DesignerRole, 11, [][]Button{{{Text: "Ок", Data: "keep"}}}))
 	require.NoError(t, sender.AnswerCallback(t.Context(), EditorRole, "cb-1", "Принято"))
+	require.NoError(t, sender.React(t.Context(), MarketerRole, 12, "👀"))
+	require.ErrorIs(t, sender.React(t.Context(), MarketerRole, 0, "👀"), ErrValidation)
 
 	edit := api.callsOf("editMessageText")
 	require.Len(t, edit, 1)
@@ -84,6 +86,12 @@ func TestSenderEditsAndCallbacks(t *testing.T) {
 	require.Len(t, answer, 1)
 	assert.Equal(t, editorAuth, answer[0].token)
 	assert.JSONEq(t, `{"callback_query_id":"cb-1","text":"Принято"}`, string(answer[0].body))
+
+	reactions := api.callsOf("setMessageReaction")
+	require.Len(t, reactions, 1, "an invalid reaction is not sent")
+	assert.Equal(t, marketerAuth, reactions[0].token)
+	assert.JSONEq(t, `{"chat_id":-1001000,"message_id":12,"reaction":[{"type":"emoji","emoji":"👀"}]}`,
+		string(reactions[0].body))
 }
 
 // outboxFile writes a file into the sender's outbox directory.

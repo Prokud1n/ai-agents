@@ -6,7 +6,7 @@ import (
 )
 
 // Notifier delivers drafts and failures to the trainer. The Telegram gateway implements it (each agent
-// writes from its own bot); LogNotifier stands in for it until the gateway is wired in.
+// writes from its own bot: teamchat.Notifier); LogNotifier stands in for it when the gateway is off.
 type Notifier interface {
 	// SendDraft sends the draft with buttons from the agent's bot and returns the message id
 	// (0 if the notifier has no messages).
@@ -34,10 +34,12 @@ type Draft struct {
 
 // CloseDraftData is a decided draft message.
 type CloseDraftData struct {
-	TaskID    int64
-	Version   int
-	Agent     string
-	ChatID    int64
+	TaskID  int64
+	Version int
+	Agent   string
+	ChatID  int64
+	// TopicID is the topic of the draft (the task's source topic), for a message about the decision.
+	TopicID   int64
 	MessageID int64
 	// Decision is the pressed action: approve, revise or reject; empty for a duplicate.
 	Decision Action

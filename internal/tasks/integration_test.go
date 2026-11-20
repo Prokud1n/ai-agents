@@ -214,7 +214,8 @@ func checkApproval(t *testing.T, env *testEnv, taskID int64) {
 	closed := env.notifier.Closed()
 	require.Len(t, closed, 2)
 	assert.Equal(t, CloseDraftData{
-		TaskID: taskID, Version: 2, Agent: testAgent, ChatID: task.Source.ChatID, MessageID: 1002, Decision: ApproveAction,
+		TaskID: taskID, Version: 2, Agent: testAgent, ChatID: task.Source.ChatID, TopicID: task.Source.TopicID,
+		MessageID: 1002, Decision: ApproveAction,
 	}, closed[1])
 
 	env.waitBackground(t)
@@ -692,7 +693,8 @@ func TestIntegrationDuplicateDraftIsClosed(t *testing.T) {
 	closed := env.notifier.Closed()
 	require.Len(t, closed, 1)
 	assert.Equal(t, CloseDraftData{
-		TaskID: task.ID, Version: 1, Agent: testAgent, ChatID: task.Source.ChatID, MessageID: 1001, Duplicate: true,
+		TaskID: task.ID, Version: 1, Agent: testAgent, ChatID: task.Source.ChatID, TopicID: task.Source.TopicID,
+		MessageID: 1001, Duplicate: true,
 	}, closed[0])
 
 	_, _, err = env.service.FindByDraftMessage(ctx, task.Source.ChatID, 1001)

@@ -316,7 +316,7 @@ func (s *Service) closeDraft(ctx context.Context, task *Task, version int, decis
 
 	err = s.notifier.CloseDraft(ctx, &CloseDraftData{
 		TaskID: task.ID, Version: version, Agent: task.Agent, ChatID: task.Source.ChatID,
-		MessageID: *v.DraftMessageID, Decision: decision,
+		TopicID: task.Source.TopicID, MessageID: *v.DraftMessageID, Decision: decision,
 	})
 	if err != nil {
 		s.log.ErrorContext(ctx, "tasks: failed to close draft", "error", err, "task_id", task.ID, "version", version)
@@ -469,7 +469,7 @@ func (s *Service) closeDuplicate(ctx context.Context, d *delivery, messageID int
 
 	err := s.notifier.CloseDraft(ctx, &CloseDraftData{
 		TaskID: d.Task.ID, Version: d.Version, Agent: d.Task.Agent, ChatID: d.Task.Source.ChatID,
-		MessageID: messageID, Duplicate: true,
+		TopicID: d.Task.Source.TopicID, MessageID: messageID, Duplicate: true,
 	})
 	if err != nil {
 		s.log.ErrorContext(ctx, "tasks: failed to close duplicate draft", "error", err, "task_id", d.Task.ID)

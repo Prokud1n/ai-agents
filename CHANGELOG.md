@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Telegram ⇄ tasks (M1, `internal/teamchat`): the gateway's events become tasks and decisions, drafts come back to
+  the group. A text message creates a task for the target role's agent (key: chat id + message id; the draft goes
+  to the message's topic) and gets a 👀 reaction instead of an extra reply; a forwarded text reaches the agent in
+  a `<forwarded_message>` block marked as data. A reply to the latest draft is a revision, to an old draft —
+  «Ответьте на последний черновик», to any other message — a new task. Buttons «Одобрить / Отклонить» decide,
+  «Правки» asks to reply with the revision. `/status` (tasks by status, LLM usage for 7 days), `/plan` and
+  `/idea <text>` (marketer tasks of kind `plan` / `idea`) are the marketer's; `/pause` answers that it is not
+  supported yet. Voice messages, videos and photos get an honest «not processed yet» answer. Errors reach the
+  trainer as `tasks.UserMessage`. `teamchat.Notifier` sends drafts from the agent's bot with the buttons (long
+  drafts are split, the buttons and the stored ID are the last part's; «Версия N» heads revisions), removes the
+  buttons of a decided draft and answers it with «Одобрено.» / «Отклонено.» / «Принял правку…» (a duplicate only
+  loses its buttons), and tells about failed tasks. Without bot tokens the notifier is the log one, as before.
+- Team agents `marketer`, `copywriter` (working drafts with `search_knowledge_base` and `brand-knowledge`; the brand
+  voice comes in T2.1), `editor` and `designer` (honest stubs: editing and covers are not connected yet).
+- `gateway.Sender.React` and the Bot API client's `setMessageReaction`.
 - Agents can search the brand knowledge base: the `search_knowledge_base` tool (`internal/knowledge/kbtool`) is registered
   in `agents.ToolsGroup` in the app and `agent-run`; an agent gets it only when `tools:` of its `agent.md` lists it.
   Fragments come in `<fragment source="…" title="…" kind="…" score="…">` tags with `<` and `&` escaped in the content
@@ -164,6 +179,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The application uses `teamchat.Module` instead of `tasks.LogNotifierModule`: the gateway no longer answers with
+  the «Принял…» acknowledgement (`gateway.AckHandler` stays the default of the gateway module alone).
+  `tasks.CloseDraftData` has the draft's `TopicID`.
 - The app and `agent-run` now parse `EMBEDDINGS_*` (defaults as before) and include the knowledge base service:
   an invalid value fails their start.
 - The knowledge base CLI `kb` is in the app image (`/app/kb`): `make kb-ingest|kb-search|kb-delete|kb-reembed` run it

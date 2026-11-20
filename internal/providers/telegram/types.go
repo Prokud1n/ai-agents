@@ -20,6 +20,9 @@ const (
 // PrivateChat is Chat.Type of a one-to-one chat with a bot.
 const PrivateChat = "private"
 
+// EmojiReaction is ReactionType.Type of an emoji reaction.
+const EmojiReaction = "emoji"
+
 type Update struct {
 	UpdateID      int64          `json:"update_id"`
 	Message       *Message       `json:"message,omitempty"`
@@ -196,6 +199,19 @@ type EditMessageReplyMarkupParams struct {
 	ChatID      int64                 `json:"chat_id"`
 	MessageID   int64                 `json:"message_id"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+// ReactionType is a reaction on a message; only emoji reactions are used.
+type ReactionType struct {
+	Type  string `json:"type"`
+	Emoji string `json:"emoji"`
+}
+
+// SetMessageReactionParams: an empty Reaction removes the bot's reactions.
+type SetMessageReactionParams struct {
+	ChatID    int64          `json:"chat_id"`
+	MessageID int64          `json:"message_id"`
+	Reaction  []ReactionType `json:"reaction"`
 }
 
 type AnswerCallbackQueryParams struct {
