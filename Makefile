@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe media-image agent-run test-integration kb-ingest kb-search kb-delete kb-reembed
+.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe media-image agent-run test-integration redis-test-up redis-test-down kb-ingest kb-search kb-delete kb-reembed
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -23,11 +23,13 @@ test:
 # The verbose output goes to the log as it runs (tee) and is the proof that the tests ran: with INTEGRATION=1
 # a skipped test, or no integration test passed at all, fails the target. bash + pipefail keeps the exit
 # status of go test through the pipe.
+# Redis integration tests (internal/redistest) use a throwaway Redis started by redis-test-up (the compose
+# Redis is not published to the host); it is removed when the target ends, whatever the result.
 test-integration: SHELL := /bin/bash
 test-integration: .SHELLFLAGS := -o pipefail -c
-test-integration:
-	@log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
-	$(HOST_DB_ENV) INTEGRATION=1 go test -race -count=1 -v -run Integration ./... 2>&1 | tee "$$log"; \
+test-integration: redis-test-up
+	@log=$$(mktemp); trap 'rm -f "$$log"; docker rm -f $(REDIS_TEST_CONTAINER) >/dev/null 2>&1 || true' EXIT; \
+	$(HOST_DB_ENV) REDIS_TEST_ADDRESS=127.0.0.1:$(REDIS_TEST_HOST_PORT) INTEGRATION=1 go test -race -count=1 -v -run Integration ./... 2>&1 | tee "$$log"; \
 	status=$$?; \
 	if grep -q -e '--- SKIP' "$$log"; then \
 		echo "test-integration: tests were skipped with INTEGRATION=1"; status=1; \
@@ -35,6 +37,27 @@ test-integration:
 		echo "test-integration: no integration test passed"; status=1; \
 	fi; \
 	exit $$status
+
+# Throwaway Redis for integration tests: the image of the compose redis service, no volume, no persistence,
+# published on 127.0.0.1 only and outside the compose project (the stack itself publishes only app and postgres).
+REDIS_TEST_CONTAINER := ai-agents-redis-test
+REDIS_TEST_HOST_PORT ?= 6380
+REDIS_TEST_IMAGE = $(shell sed -n 's/^ *image: \(redis:[^ ]*\)$$/\1/p' docker-compose.yml)
+
+redis-test-up:
+	@if [ -z "$(REDIS_TEST_IMAGE)" ]; then \
+		echo "redis-test: no redis image found in docker-compose.yml (service redis, line 'image: redis:...')"; exit 1; \
+	fi
+	@if [ -z "$$(docker ps -q --filter 'name=^$(REDIS_TEST_CONTAINER)$$')" ]; then \
+		docker run -d --rm --name $(REDIS_TEST_CONTAINER) -p 127.0.0.1:$(REDIS_TEST_HOST_PORT):6379 \
+			$(REDIS_TEST_IMAGE) redis-server --save "" --appendonly no >/dev/null; \
+	fi
+	@for i in $$(seq 1 30); do \
+		docker exec $(REDIS_TEST_CONTAINER) redis-cli ping 2>/dev/null | grep -q PONG && exit 0; sleep 1; \
+	done; echo "redis-test: not ready"; exit 1
+
+redis-test-down:
+	@docker rm -f $(REDIS_TEST_CONTAINER) >/dev/null 2>&1 || true
 
 lint:
 	$(GOLANGCI_LINT) run ./...

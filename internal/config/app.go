@@ -18,4 +18,5 @@ type App struct {
 	Anthropic  *Anthropic  `env:",init"`
 	LLM        *LLM        `env:",init"`
 	Agents     *Agents     `env:",init"`
+	Tasks      *Tasks      `env:",init"`
 }
