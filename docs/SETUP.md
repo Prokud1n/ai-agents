@@ -11,11 +11,11 @@
 | Docker | весь стек работает в контейнерах | Docker Desktop (macOS) или Docker Engine (Linux) |
 | Docker Compose v2 | `docker compose …` (через пробел; старый `docker-compose` v1 не подходит) | v2.20+ (`--wait`) |
 | make, git, curl | команды проекта, клонирование, проверка `/readyz` | любые актуальные |
-| Go | **нужен для базы знаний и транскрипции на хосте**: `make kb-*` и `make transcribe` запускают `go run`; также разработка (`make check`) | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
+| Go | только для разработки (`make check`), `make transcribe` на хосте и `KB_HOST=1 make kb-*` | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
 | ffmpeg, ffprobe | только `make transcribe` на хосте; без них транскрипция работает в образе `media` | 8.x |
 
-Без Go работают стек, агенты (`make agent-run`) и транскрипция в образе `media`; не работает CLI базы знаний
-(`make m0-check` пропустит этот шаг с подсказкой). Перенос `kb` в образ запланирован отдельной задачей.
+Без Go работает всё, что нужно оператору: стек, агенты (`make agent-run`), база знаний (`make kb-*` запускают `kb`
+в образе приложения) и транскрипция в образе `media`.
 
 ### macOS
 
@@ -23,7 +23,7 @@
    (иконка кита в строке меню должна перестать «крутиться»). Compose v2 и `docker compose` входят в комплект.
 2. В Docker Desktop → Settings → Resources дай не меньше 4 ГБ памяти: сборка образа и pgvector.
 3. `make`, `git`, `curl` — из Xcode Command Line Tools: `xcode-select --install`.
-4. Go и ffmpeg (по желанию): `brew install go ffmpeg` ([Homebrew](https://brew.sh)) или установщик с
+4. Go и ffmpeg (по желанию, для разработки): `brew install go ffmpeg` ([Homebrew](https://brew.sh)) или установщик с
    [go.dev/dl](https://go.dev/dl/).
 
 ### Linux-VPS (Ubuntu/Debian)
@@ -144,7 +144,7 @@ cp .env.dist .env
 | `EMBEDDINGS_MAX_RETRIES` | нет | `4` | повторы при 429/5xx | нет |
 | `EMBEDDINGS_RETRY_BASE_DELAY` | нет | `1s` | — | нет |
 | `EMBEDDINGS_TIMEOUT` | нет | `60s` | таймаут одного запроса | нет |
-| `KB_ROOT` | нет | `./kb` | папка с материалами базы знаний (раздел 5); в `.gitignore` и `.dockerignore` | нет |
+| `KB_ROOT` | нет | `./kb` | папка с материалами базы знаний только для `KB_HOST=1 make kb-*` (go run на хосте); `make kb-*` в контейнере всегда берут `./kb` (раздел 5) | нет |
 
 ### Claude API (LLM-слой)
 
@@ -167,7 +167,7 @@ cp .env.dist .env
 | Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
 | `APP_HOST_PORT` | нет | `8080` | порт `app` на `127.0.0.1` хоста; поменяй, если 8080 занят | нет |
-| `POSTGRES_HOST_PORT` | нет | `5432` | порт Postgres на `127.0.0.1` хоста (отладка, `make kb-*`, интеграционные тесты); поменяй, если на хосте свой Postgres | нет |
+| `POSTGRES_HOST_PORT` | нет | `5432` | порт Postgres на `127.0.0.1` хоста (отладка, `KB_HOST=1 make kb-*`, интеграционные тесты); поменяй, если на хосте свой Postgres | нет |
 
 ## 4. Где получить ключи
 
@@ -213,8 +213,23 @@ cp .env.dist .env
 
 ## 5. Материалы базы знаний (`KB_ROOT`)
 
-`kb ingest` берёт файлы только из `KB_ROOT` (по умолчанию `./kb`). Папка в `.gitignore` и `.dockerignore`: материалы
-тренера не попадают ни в git, ни в образ. `source` документа — путь относительно `KB_ROOT` (например, `brand/voice.md`).
+`kb ingest` берёт файлы только из папки `./kb` проекта. Папка в `.gitignore` и `.dockerignore`: материалы
+тренера не попадают ни в git, ни в образ. `source` документа — путь относительно неё (например, `brand/voice.md`).
+
+`make kb-*` запускают CLI `kb` из образа приложения (`docker compose run --rm --entrypoint /app/kb app …`,
+`scripts/kb.sh`), Go на хосте не нужен. Нужен поднятый стек (`make up`): база — сервис `postgres`, образ — тот, что
+собрал `make up` (после `git pull` снова `make up`, иначе в образе может не оказаться `/app/kb` или старый код).
+`./kb` монтируется в контейнер только на чтение в `/kb`, там `KB_ROOT=/kb`. `KB_PATH` пишется как на хосте
+(`./kb/brand`, `kb/brand` или абсолютный путь) и переводится в `/kb/brand`; путь вне `./kb` — ошибка
+«вне папки базы знаний». Симлинки, ведущие из `./kb` наружу, в контейнере не читаются.
+
+Права. Контейнер работает не от root: с uid:gid пользователя хоста, поэтому читает всё, что может прочитать сам
+пользователь, в том числе файлы с правами `600`. Если команды запускаются от root хоста, `kb` остаётся непривилегированным
+пользователем образа (uid 65532): тогда файлам нужны права на чтение для всех (`644`, папкам — `755`):
+`chmod -R a+rX kb`. На macOS (Docker Desktop) права обычных файлов отдельно настраивать не нужно.
+
+Для разработчиков: `KB_HOST=1 make kb-…` запускает `go run ./cmd/kb` на хосте, как раньше: `KB_ROOT` из `.env`,
+Postgres — на `127.0.0.1:POSTGRES_HOST_PORT`.
 
 Форматы: `.md`, `.txt`, `.docx`, `.pdf` (только текстовый слой: сканы сначала распознать). Файл до 32 МБ, до
 1 000 000 символов. Скрытые файлы и папки (`.…`) пропускаются. Заголовок `# …` в начале файла становится названием.
@@ -294,7 +309,7 @@ read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKE
 | 1. Окружение | docker, compose v2, daemon, make, curl, `.env`; обязательные переменные заданы; WARN — dev-пароли, переменные из `.env.dist`, которых нет в `.env`, и отсутствие git (в отчёте `Git: unknown`) | никогда |
 | 2. Стек | `make up`, все сервисы healthy, `/readyz` = ok по всем зависимостям, версия миграций = последней в `migrations/`, не dirty | шаг 1 не прошёл |
 | 3. LLM | временная копия `agents/_example` в `agents/m0check-<pid>`, `make agent-run PROMPT="Ответь одним словом: работает"`: ответ не пустой, есть строка расхода | нет `ANTHROPIC_API_KEY` |
-| 4. База знаний | документ `m0-check-<pid>-<время>.md` во временной `KB_ROOT/_m0check.XXXXXX/`; проверка, что такого source в базе нет; `make kb-ingest`, `make kb-search` по фразе из него — документ первый, `make kb-delete` | нет `OPENAI_API_KEY` или Go |
+| 4. База знаний | документ `m0-check-<pid>-<время>.md` во временной `kb/_m0check.XXXXXX/`; проверка, что такого source в базе нет; `make kb-ingest`, `make kb-search` по фразе из него (в образе приложения) — документ первый, `make kb-delete` | нет `OPENAI_API_KEY` (или `KB_HOST=1` без Go) |
 | 5. Транскрипция | `make transcribe` на `M0_VIDEO` (без Go/ffmpeg на хосте — в образе `media`): JSON с непустым `language` и `words` | нет ключа или `M0_VIDEO` |
 | 6. Telegram | поднимает `telegram-bot-api` и ждёт его healthcheck: PASS «порт открыт, ключи не проверены». С `M0_BOT_TOKEN` — ещё `getMe` через локальный сервер, это проверяет `api_id`/`api_hash` и токен. Если сервис был остановлен — останавливает обратно | нет `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` |
 
@@ -309,7 +324,7 @@ read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKE
 - `transcript.json` — результат транскрипции (содержит текст ролика).
 
 Скрипт можно запускать повторно. Он не трогает пользовательские данные и удаляет только то, что создал сам:
-временный агент `agents/m0check-<pid>`, папку `KB_ROOT/_m0check.XXXXXX` и документ в базе знаний с уникальным
+временный агент `agents/m0check-<pid>`, папку `kb/_m0check.XXXXXX` и документ в базе знаний с уникальным
 именем. Если такой путь или документ уже есть — шаг FAIL, чужое не трогается. `.env` читается построчно и не
 исполняется. Ctrl+C прерывает весь прогон (код 130) и убирает временное; `down -v` скрипт не делает. Стоимость прогона с ключами — доли цента (один короткий запрос
 к Claude, эмбеддинги двух коротких текстов) плюс Whisper по длине ролика.
@@ -336,9 +351,11 @@ read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKE
 | Claude: `credit balance is too low` | на балансе организации Console нет денег и кредитов: пополни Billing или привяжи подписку (раздел 4) |
 | OpenAI: `401` / `invalid_api_key` | ключ неверный или отозван |
 | OpenAI: `insufficient_quota` | на балансе OpenAI нет денег (Billing на platform.openai.com) |
-| `make kb-*`: `go: command not found`; в `m0-check` шаг 4 SKIP «нет Go» | CLI базы знаний запускается на хосте: установи Go (раздел 1) |
-| `make kb-*`: `connection refused` к `127.0.0.1:5432` | стек не поднят (`make up`) или `POSTGRES_HOST_PORT` отличается от того, с которым поднят стек |
-| `kb ingest`: файл вне `KB_ROOT` | положи материалы в `./kb` (или задай `KB_ROOT`) |
+| `make kb-*`: `failed to connect` / `connection refused` к `postgres` | стек не поднят: `make up` |
+| `make kb-*`: `exec: "/app/kb": no such file or directory` | образ собран до появления `kb` в нём: `make up` |
+| `make kb-ingest`: «вне папки базы знаний» | `KB_PATH` должен указывать внутрь `./kb`: положи материалы туда |
+| `make kb-ingest`: `permission denied` | команды запущены от root, а файлы в `./kb` недоступны другим: `chmod -R a+rX kb` (раздел 5) |
+| `KB_HOST=1 make kb-*`: `connection refused` к `127.0.0.1:5432` | стек не поднят (`make up`) или `POSTGRES_HOST_PORT` отличается от того, с которым поднят стек |
 | `make transcribe`: `"ffmpeg": executable file not found` | установи ffmpeg или используй образ `media` (README, «Транскрипция видео») |
 | Транскрипция режет речь посреди фраз, видео с музыкой | подними `TRANSCRIPTION_SILENCE_NOISE_DB` до `-25` |
 | Apple Silicon: сборка медленная | первый `make up` собирает образ (несколько минут); дальше работает кэш |

@@ -43,11 +43,12 @@
 ```bash
 git pull
 docker compose version     # Docker Desktop запущен, compose v2
-go version                 # нужен Go; версия 1.26 скачается сама (GOTOOLCHAIN=auto)
-ffmpeg -version | head -1  # для транскрипции; на macOS: brew install ffmpeg
+ffmpeg -version | head -1  # для транскрипции на хосте; на macOS: brew install ffmpeg
 ```
 
-**Ожидаемый результат:** все четыре команды отрабатывают без ошибок.
+Go не нужен: база знаний (`make kb-*`) работает в Docker-образе приложения.
+
+**Ожидаемый результат:** все три команды отрабатывают без ошибок.
 
 ## Шаг 1. Стек, `/readyz`, миграции
 
@@ -85,7 +86,8 @@ make agent-run AGENT=test PROMPT="Ответь одним словом: рабо
 
 ## Шаг 3. База знаний
 
-Файлы берутся только из папки `KB_ROOT` (по умолчанию `./kb`). Она не попадает ни в git, ни в Docker-образ.
+Файлы берутся только из папки `./kb` проекта. Она не попадает ни в git, ни в Docker-образ: `make kb-*` запускают `kb`
+в контейнере и монтируют `./kb` туда только на чтение. Go на хосте не нужен.
 
 ```bash
 mkdir -p kb/brand

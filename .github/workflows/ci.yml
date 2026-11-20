@@ -242,8 +242,103 @@ jobs:
             exit 1
           fi
 
-      - name: Shellcheck m0-check
-        run: shellcheck --version | sed -n 2p && shellcheck -x scripts/m0-check.sh
+      - name: Shellcheck scripts
+        run: shellcheck --version | sed -n 2p && shellcheck -x scripts/m0-check.sh scripts/kb.sh
+
+      # make kb-* turns a host path inside ./kb into a path under /kb in the container; anything outside fails.
+      - name: Knowledge base paths (scripts/kb.sh)
+        shell: bash
+        run: |
+          status=0
+          check() { # check <path> <expected container path, or "-" for an error>
+            local got code=0
+            got=$(scripts/kb.sh container-path "$1" 2>err.txt) || code=$?
+            if [[ $2 == - ]]; then
+              if [[ $code -ne 2 ]] || ! grep -q 'вне папки базы знаний' err.txt; then
+                echo "::error::kb path '$1': expected the outside-of-./kb error, got '$got' (exit $code)"; status=1
+              fi
+            elif [[ $code -ne 0 || $got != "$2" ]]; then
+              echo "::error::kb path '$1': expected '$2', got '$got' (exit $code): $(cat err.txt)"; status=1
+            fi
+          }
+          check ./kb /kb
+          check kb /kb
+          check ./kb/ /kb
+          check ./kb/brand /kb/brand
+          check kb/brand/voice.md /kb/brand/voice.md
+          check ./kb/./brand//voice.md /kb/brand/voice.md
+          check ./kb/x/../brand /kb/brand
+          check "$PWD/kb/brand" /kb/brand
+          check "./kb/with space/a.md" "/kb/with space/a.md"
+          check ./kb/.. -
+          check ./kb/../.env -
+          check ../kb -
+          check ./kbx -
+          check ./internal -
+          check /etc/passwd -
+          exit "$status"
+
+      # kb in the app image without OPENAI_API_KEY. extract-pdf runs directly (as the image's nonroot and as
+      # the runner's uid): it must parse a PDF and set its limits (otherwise it warns on stderr). Then make
+      # kb-ingest runs the whole chain in compose: /app/kb starts its own extract-pdf child for each PDF in
+      # distroless, the crashing PDF fails alone, the owner-only (600) file is read, and every readable file
+      # reaches the embeddings step, which fails without the key (so nothing is written).
+      - name: Knowledge base CLI in the image
+        shell: bash
+        run: |
+          set +e
+          image=ai-agents-app:local
+          fail() { echo "::error::$*"; exit 1; }
+
+          docker run --rm --entrypoint /app/kb "$image" > usage.txt 2>&1
+          code=$?
+          cat usage.txt
+          [[ $code -eq 2 ]] && grep -q '^usage:' usage.txt || fail "kb without arguments: expected usage, exit 2 (got $code)"
+
+          for user in "" "$(id -u):$(id -g)"; do
+            docker run --rm -i ${user:+--user "$user"} --entrypoint /app/kb "$image" extract-pdf \
+              < internal/knowledge/extract/testdata/brand.pdf > worker.json 2> worker.err
+            code=$?
+            echo "extract-pdf as ${user:-image user}: exit $code, $(jq -r '.text | length' worker.json) characters"
+            cat worker.err
+            [[ $code -eq 0 ]] || fail "extract-pdf exited with $code"
+            jq -e '(.text | length > 0) and (.error == null)' worker.json > /dev/null || fail "extract-pdf returned no text"
+            [[ ! -s worker.err ]] || fail "extract-pdf wrote to stderr (limits not applied?)"
+          done
+
+          mkdir -p kb/_ci
+          cp internal/knowledge/extract/testdata/brand.pdf kb/_ci/brand.pdf
+          cp internal/knowledge/extract/testdata/pdf-objstm-self.pdf kb/_ci/crash.pdf
+          printf '# Private\n\nOwner-only file.\n' > kb/_ci/private.md
+          chmod 644 kb/_ci/brand.pdf kb/_ci/crash.pdf
+          chmod 600 kb/_ci/private.md
+          ls -ln kb/_ci
+
+          make kb-ingest KB_PATH=./kb/_ci > ingest.out 2> ingest.err
+          code=$?
+          cat ingest.out
+          echo "--- exit $code; stderr:"
+          cat ingest.err
+          [[ $code -ne 0 ]] || fail "kb-ingest without OPENAI_API_KEY must fail"
+          for file in brand.pdf private.md; do
+            grep -q "^failed *_ci/$file: failed to ingest document: .*embeddings are not configured" ingest.out \
+              || fail "_ci/$file did not reach the embeddings step"
+          done
+          grep -q '^failed *_ci/crash.pdf: failed to extract text: .*parser crashed' ingest.out \
+            || fail "the crashing PDF must fail as a parser crash"
+
+          make kb-ingest KB_PATH=./internal > outside.out 2>&1
+          code=$?
+          cat outside.out
+          [[ $code -ne 0 ]] && grep -q 'вне папки базы знаний' outside.out || fail "a path outside ./kb must be rejected"
+
+          make kb-search Q="проверка" > search.out 2>&1
+          code=$?
+          tail -n 3 search.out
+          [[ $code -ne 0 ]] && grep -q 'embeddings are not configured' search.out \
+            || fail "kb-search without OPENAI_API_KEY must fail on embeddings"
+
+          rm -rf kb/_ci
 
       # Without keys: environment and stack PASS, LLM, knowledge base, transcription and Telegram SKIP.
       # The script itself exits non-zero on any FAIL; the summary is checked too, so a step that is

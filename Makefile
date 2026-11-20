@@ -74,22 +74,27 @@ agent-run:
 	docker compose run --rm --build migrate up
 	docker compose run --rm --entrypoint /app/agent-run app -agent "$(AGENT)" -prompt "$(PROMPT)"
 
-# Knowledge base CLI (needs `make up` and OPENAI_API_KEY in .env):
-#   make kb-ingest KB_PATH=./kb/brand KB_KIND=brand        (files only from KB_ROOT, default ./kb)
+# Knowledge base CLI (needs `make up` and OPENAI_API_KEY in .env). Runs /app/kb inside the app image through
+# docker compose: no Go on the host. ./kb is mounted read-only at /kb (KB_ROOT there); KB_PATH is given as on the
+# host and must be inside ./kb. KB_HOST=1 runs `go run ./cmd/kb` on the host instead (KB_ROOT from .env).
+# See scripts/kb.sh.
+#   make kb-ingest KB_PATH=./kb/brand KB_KIND=brand        (without KB_PATH: all of ./kb)
 #   make kb-search Q="как мы говорим о питании" LIMIT=5
 #   make kb-delete SOURCE=brand/voice.md
 #   make kb-reembed
+KB := ./scripts/kb.sh
+
 kb-ingest:
-	$(HOST_DB_ENV) go run ./cmd/kb ingest "$(or $(KB_PATH),./kb)" $(if $(KB_KIND),-kind "$(KB_KIND)") $(if $(KB_FORCE),-force)
+	$(KB) ingest "$(or $(KB_PATH),./kb)" $(if $(KB_KIND),-kind "$(KB_KIND)") $(if $(KB_FORCE),-force)
 
 kb-search:
-	$(HOST_DB_ENV) go run ./cmd/kb search "$(Q)" -limit "$(or $(LIMIT),5)"
+	$(KB) search "$(Q)" -limit "$(or $(LIMIT),5)"
 
 kb-delete:
-	$(HOST_DB_ENV) go run ./cmd/kb delete "$(SOURCE)"
+	$(KB) delete "$(SOURCE)"
 
 kb-reembed:
-	$(HOST_DB_ENV) go run ./cmd/kb reembed
+	$(KB) reembed
 
 # M0: end-to-end check of the environment and every brick with real keys (docs/SETUP.md, "Проверка M0").
 # Steps without a key are skipped; the summary goes to m0-results/report.md:
