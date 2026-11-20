@@ -85,6 +85,7 @@ func TestModuleRegistersTool(t *testing.T) {
 	var tools []agents.Tool
 
 	app := fxtest.New(t,
+		fx.NopLogger,
 		fx.Supply(
 			knowledge.NewService(nil, nil, log),
 			embeddings.NewClient(&config.OpenAI{}, &config.Embeddings{}, log),

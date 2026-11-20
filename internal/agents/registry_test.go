@@ -88,6 +88,8 @@ func (*offlineTool) Available() error {
 func TestNewRegistryUnavailableTool(t *testing.T) {
 	t.Parallel()
 
+	const unavailableWarning = "tool is unavailable"
+
 	tests := []struct {
 		name        string
 		tool        Tool
@@ -98,18 +100,18 @@ func TestNewRegistryUnavailableTool(t *testing.T) {
 			name: "unavailable tool listed by an agent",
 			tool: &offlineTool{fakeTool: fakeTool{name: failToolName}},
 			// coach lists fail; plain lists no tools.
-			expected:    []string{"tool is unavailable", `"agent":"coach"`, `"tool":"fail"`, `"reason":"boom"`},
+			expected:    []string{unavailableWarning, `"agent":"coach"`, `"tool":"fail"`, `"reason":"boom"`},
 			notExpected: []string{`"agent":"plain"`},
 		},
 		{
 			name:        "unavailable tool no agent lists",
 			tool:        &offlineTool{fakeTool: fakeTool{name: secretToolName}},
-			notExpected: []string{"tool is unavailable"},
+			notExpected: []string{unavailableWarning},
 		},
 		{
 			name:        "available tool",
 			tool:        &fakeTool{name: failToolName},
-			notExpected: []string{"tool is unavailable"},
+			notExpected: []string{unavailableWarning},
 		},
 	}
 

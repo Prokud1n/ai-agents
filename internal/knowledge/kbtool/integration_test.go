@@ -108,6 +108,7 @@ func TestIntegrationAgentSearchesKnowledgeBase(t *testing.T) {
 	)
 
 	app := fxtest.New(t,
+		fx.NopLogger,
 		fx.Supply(
 			db,
 			&config.OpenAI{APIKey: "test", BaseURL: fakeEmbeddingsAPI(t)},
