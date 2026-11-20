@@ -23,6 +23,7 @@ const (
 	deleteCmd   = string(DeleteAction)
 	kindFlag    = "-kind"
 	limitFlag   = "-limit"
+	dashQuery   = "-5 кг"
 	brandName   = string(knowledge.BrandKind)
 	testQuery   = "питание"
 	voiceSource = "brand/voice.md"
@@ -118,8 +119,8 @@ func TestParseCommand(t *testing.T) {
 		},
 		{
 			name:     "search query starting with a dash after --",
-			input:    []string{searchCmd, limitFlag, "3", flagsEnd, "-5 кг"},
-			expected: Command{Action: SearchAction, Arg: "-5 кг", Limit: 3},
+			input:    []string{searchCmd, limitFlag, "3", flagsEnd, dashQuery},
+			expected: Command{Action: SearchAction, Arg: dashQuery, Limit: 3},
 		},
 		{
 			name:     "flags after -- are part of the arguments",
@@ -127,7 +128,7 @@ func TestParseCommand(t *testing.T) {
 			expected: Command{Action: DeleteAction, Arg: limitFlag},
 		},
 		{name: "two arguments after --", input: []string{searchCmd, flagsEnd, "-5", limitFlag}, expectErr: true},
-		{name: "query starting with a dash without --", input: []string{searchCmd, "-5 кг"}, expectErr: true},
+		{name: "query starting with a dash without --", input: []string{searchCmd, dashQuery}, expectErr: true},
 		{name: "reembed", input: []string{string(ReembedAction)}, expected: Command{Action: ReembedAction}},
 		{name: "reembed with argument", input: []string{string(ReembedAction), "x"}, expectErr: true},
 	}
