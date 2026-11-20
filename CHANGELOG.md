@@ -11,8 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Agents can search the brand knowledge base: the `search_knowledge_base` tool (`internal/knowledge/kbtool`) is registered
   in `agents.ToolsGroup` in the app and `agent-run`; an agent gets it only when `tools:` of its `agent.md` lists it.
-  Each fragment comes with its source and document kind; a call is limited to 30 seconds, `limit` 1–20 (default 5) and
-  about 16 000 runes of fragments (long ones are cut). Bad arguments, timeouts and database/embeddings errors reach the
+  Fragments come in `<fragment source="…" title="…" kind="…" score="…">` tags with `<` and `&` escaped in the content
+  and one-line, length-limited attributes, so a fragment cannot break out of its tag; the model is told that fragments
+  are data, not instructions. A call is limited to 30 seconds, `limit` 1–20 (default 5) and about 16 000 runes of
+  fragments with titles and sources: short fragments stay whole, long ones share the rest and are cut at a word boundary. Bad arguments, timeouts and database/embeddings errors reach the
   model as an `is_error` tool result (infrastructure errors are also logged); "nothing found" is a normal result.
   Without `OPENAI_API_KEY` the app starts, the tool answers that the knowledge base is unavailable and the registry
   warns on start about every agent that lists it (tools may implement `Available() error` for this).
@@ -127,6 +129,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: `check` requires the branch to contain the current main; `tidy` also commits to `fix/**` and `refactoring/**`
   and fails with a ready-to-run command if it cannot dispatch CI on the new commit; `compose-smoke` checks that
   migrate up/down/up ends with `dirty: false`.
+
+### Removed
+
+- `knowledge.RunSearchTool`, `knowledge.SearchTool` and the `knowledge.SearchTool*` constants: the agent tool is
+  `kbtool.SearchTool`; `knowledge.FormatSearchResults` stays for `kb search`.
 
 ### Fixed
 

@@ -163,7 +163,7 @@ func TestIntegrationAgentSearchesKnowledgeBase(t *testing.T) {
 	brand := results[0]
 	assert.False(t, brand.IsError)
 	assert.Contains(t, brand.Content, "Найдено фрагментов: 2.")
-	assert.Contains(t, brand.Content, "[1] "+voiceSource+" — «Голос бренда» (brand,")
+	assert.Contains(t, brand.Content, `<fragment index="1" source="`+voiceSource+`" title="Голос бренда" kind="brand"`)
 	assert.Contains(t, brand.Content, "Голос бренда > Питание")
 	assert.NotContains(t, brand.Content, productsSource, "the kinds filter excludes products")
 
@@ -172,6 +172,6 @@ func TestIntegrationAgentSearchesKnowledgeBase(t *testing.T) {
 
 	product := results[2]
 	assert.False(t, product.IsError)
-	assert.Contains(t, product.Content, "[1] "+productsSource)
-	assert.Contains(t, product.Content, "(product,")
+	assert.Contains(t, product.Content, `<fragment index="1" source="`+productsSource+`"`)
+	assert.Contains(t, product.Content, `kind="product"`)
 }

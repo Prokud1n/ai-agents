@@ -11,7 +11,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,8 +28,6 @@ const (
 	nutritionQuery = "как мы говорим о питании"
 	validInput     = `{"query":"как мы говорим о питании"}`
 	testTimeout    = 20 * time.Millisecond
-	manyFragments  = 20
-	longFragment   = 2000
 )
 
 var errDatabaseDown = errors.New("connection refused")
@@ -192,116 +189,6 @@ func TestParseInput(t *testing.T) {
 	}
 }
 
-func fragments(count, runes int) []knowledge.SearchResult {
-	results := make([]knowledge.SearchResult, 0, count)
-	for i := range count {
-		results = append(results, knowledge.SearchResult{
-			Source:  fmt.Sprintf("post/%02d.md", i),
-			Title:   "Пост",
-			Kind:    knowledge.PostKind,
-			Content: strings.Repeat("ж", runes),
-			Score:   0.5,
-		})
-	}
-
-	return results
-}
-
-func TestTruncateResults(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name          string
-		input         []knowledge.SearchResult
-		expectedRunes int // max runes of one fragment after cutting
-		truncated     bool
-	}{
-		{name: "nothing", input: nil},
-		{name: "short fragment kept", input: fragments(1, longFragment), expectedRunes: longFragment},
-		{name: "huge fragment cut", input: fragments(1, maxOutputRunes*2), expectedRunes: maxFragmentRunes, truncated: true},
-		{
-			name:          "many fragments share the budget",
-			input:         fragments(manyFragments, longFragment),
-			expectedRunes: maxOutputRunes / manyFragments,
-			truncated:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			original := make([]string, 0, len(tt.input))
-			for i := range tt.input {
-				original = append(original, tt.input[i].Content)
-			}
-
-			cut, truncated := truncateResults(tt.input)
-			assert.Equal(t, tt.truncated, truncated)
-			require.Len(t, cut, len(tt.input))
-
-			total := 0
-
-			for i := range cut {
-				runes := utf8.RuneCountInString(cut[i].Content)
-				total += runes
-
-				assert.LessOrEqual(t, runes, tt.expectedRunes)
-				assert.Equal(t, tt.input[i].Source, cut[i].Source)
-				assert.Equal(t, original[i], tt.input[i].Content, "the input is not modified")
-
-				if tt.truncated {
-					assert.True(t, strings.HasSuffix(cut[i].Content, truncatedMark))
-				}
-			}
-
-			assert.LessOrEqual(t, total, maxOutputRunes)
-		})
-	}
-}
-
-func TestFormatResults(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		input       []knowledge.SearchResult
-		expected    []string
-		notExpected []string
-	}{
-		{
-			name:  "source and kind of every fragment",
-			input: []knowledge.SearchResult{voiceResult()},
-			expected: []string{
-				"Найдено фрагментов: 1.",
-				"[1] brand/voice.md — «Голос бренда» (brand, score 0.83)\nПитание",
-			},
-			notExpected: []string{truncatedFooter},
-		},
-		{
-			name:     "cut fragments are reported",
-			input:    fragments(manyFragments, longFragment),
-			expected: []string{"Найдено фрагментов: 20.", "[20] post/19.md", "(post, score 0.50)", truncatedMark, truncatedFooter},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := FormatResults(tt.input)
-
-			for _, s := range tt.expected {
-				assert.Contains(t, got, s)
-			}
-
-			for _, s := range tt.notExpected {
-				assert.NotContains(t, got, s)
-			}
-		})
-	}
-}
-
 func TestSearchToolExecute(t *testing.T) {
 	t.Parallel()
 
@@ -315,15 +202,17 @@ func TestSearchToolExecute(t *testing.T) {
 		toolErr    bool
 		plainErr   bool // an error that is not a ToolError
 		searches   int
-		logged     bool
+		logged     bool   // an error is logged
+		logText    string // the log contains it
 	}{
 		{
 			name: "found", searcher: &fakeSearcher{results: []knowledge.SearchResult{voiceResult()}}, configured: true,
-			input: validInput, expected: "[1] brand/voice.md", searches: 1,
+			input: validInput, expected: `<fragment index="1" source="brand/voice.md"`, searches: 1,
 		},
 		{
 			name: "nothing found is not an error", searcher: &fakeSearcher{}, configured: true,
 			input: validInput, expected: "ничего не найдено по запросу «" + nutritionQuery + "»", searches: 1,
+			logText: `"msg":"kbtool: nothing found","kinds":[],"query_runes":24`,
 		},
 		{
 			name: "knowledge base not configured", searcher: &fakeSearcher{}, configured: false,
@@ -395,6 +284,8 @@ func TestSearchToolExecute(t *testing.T) {
 
 			assert.Equal(t, tt.searches, tt.searcher.callCount())
 			assert.Equal(t, tt.logged, strings.Contains(logs.String(), `"level":"ERROR"`))
+			assert.Contains(t, logs.String(), tt.logText)
+			assert.NotContains(t, logs.String(), nutritionQuery, "the query text is not logged")
 		})
 	}
 }
@@ -448,7 +339,7 @@ func TestAgentRunWithSearchTool(t *testing.T) {
 
 			if len(results) > 0 {
 				assert.Contains(t, results[0].Content, voiceSource)
-				assert.Contains(t, results[0].Content, "(brand,")
+				assert.Contains(t, results[0].Content, `kind="brand"`)
 				assert.Contains(t, results[1].Content, "query пустой")
 			}
 		})
