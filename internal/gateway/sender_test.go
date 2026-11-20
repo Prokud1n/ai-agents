@@ -390,6 +390,19 @@ func TestSenderSplitsLongText(t *testing.T) {
 	assert.Equal(t, []int64{api.lastMessageID() - 1, api.lastMessageID()}, ids, "the IDs of all parts in order")
 }
 
+// TestSenderSendTextPartsFailure: when a part fails, the IDs of the parts already sent come with the error.
+func TestSenderSendTextPartsFailure(t *testing.T) {
+	t.Parallel()
+
+	sender, api := newTestSender(t)
+	api.failSendMessage(2)
+
+	ids, err := sender.SendTextParts(t.Context(), MarketerRole, &OutgoingMessage{Text: strings.Repeat("слово ", 1000)})
+
+	require.Error(t, err)
+	assert.Equal(t, []int64{api.lastMessageID()}, ids, "the first part was sent")
+}
+
 func TestSenderMovesLongCaptionToText(t *testing.T) {
 	t.Parallel()
 

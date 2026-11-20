@@ -41,6 +41,20 @@ type fakeService struct {
 	draftStatus  tasks.Status
 	draftVersion int
 	findErr      error
+	// draftUnsaved: GetVersion finds the version without stored draft messages.
+	draftUnsaved bool
+}
+
+func (f *fakeService) GetVersion(_ context.Context, taskID int64, version int) (tasks.Version, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	v := tasks.Version{TaskID: taskID, Version: version}
+	if !f.draftUnsaved {
+		v.DraftMessageID = new(int64(testDraftID + 1))
+	}
+
+	return v, nil
 }
 
 func (f *fakeService) FindByDraftMessage(_ context.Context, _, _ int64) (tasks.Task, tasks.Version, error) {
@@ -150,6 +164,7 @@ type fakeSender struct {
 	sendErr  error
 	reactErr error
 	editErr  error
+	partsErr error
 }
 
 func (f *fakeSender) SendText(_ context.Context, role gateway.Role, msg *gateway.OutgoingMessage) (int64, error) {
@@ -164,8 +179,13 @@ func (f *fakeSender) SendText(_ context.Context, role gateway.Role, msg *gateway
 	return testDraftID, nil
 }
 
-// SendTextParts sends the text as one part, or as two when it is longer than partLimit.
+// SendTextParts sends the text as one part, or as two when it is longer than partLimit; with partsErr the
+// first part is "sent" and the second fails.
 func (f *fakeSender) SendTextParts(ctx context.Context, role gateway.Role, msg *gateway.OutgoingMessage) ([]int64, error) {
+	if f.partsErr != nil {
+		return []int64{testDraftID - 1}, f.partsErr
+	}
+
 	id, err := f.SendText(ctx, role, msg)
 	if err != nil {
 		return nil, err

@@ -98,6 +98,9 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   Без токенов `tasks.Notifier` — `tasks.LogNotifier`. Имя агента = роль бота (`agents/marketer`, `agents/copywriter`);
   за Монтажёра и Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`), агентов для них нет.
   Медиа `teamchat` пока не обрабатывает и через `gateway.MediaFilter` просит шлюз их не скачивать.
+- Порядок остановки fx — обратный порядку регистрации хуков. Хук ожидания фоновой работы регистрируй в конструкторе
+  того, кто её запускает (`tasks.provideService`, `teamchat.newHandler`): потребители (шлюз, воркеры) создаются позже
+  и останавливаются раньше. Проверка — `teamchat.TestIntegrationStopOrder`.
 
 ### База знаний
 

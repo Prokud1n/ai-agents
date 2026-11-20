@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +37,7 @@ type taskService interface {
 	RequestRevisionByReply(ctx context.Context, data *tasks.RequestRevisionByReplyData) (tasks.Task, error)
 	StatusReport(ctx context.Context, since time.Time) (tasks.StatusReport, error)
 	FindByDraftMessage(ctx context.Context, chatID, messageID int64) (tasks.Task, tasks.Version, error)
+	GetVersion(ctx context.Context, taskID int64, version int) (tasks.Version, error)
 }
 
 type chatSender interface {
@@ -114,12 +114,14 @@ func (h *Handler) handleMessage(ctx context.Context, event *gateway.Event) error
 		return h.reply(ctx, event.Target, event, mediaText(event.Media.Type, event.Text))
 	}
 
-	if text, ok := stubTexts[event.Target]; ok {
-		return h.reply(ctx, event.Target, event, text)
+	// A command (a bot_command entity at the start, not just a slash: «/2 подхода убрать» is a revision) that
+	// the gateway did not pass as a team command; before the stubs, so /help in «Исходники» gets the list.
+	if event.IsCommand && !event.Forwarded {
+		return h.reply(ctx, gateway.MarketerRole, event, unknownCommandText)
 	}
 
-	if !event.Forwarded && commandPattern.MatchString(event.Text) {
-		return h.reply(ctx, gateway.MarketerRole, event, unknownCommandText)
+	if text, ok := stubTexts[event.Target]; ok {
+		return h.reply(ctx, event.Target, event, text)
 	}
 
 	if event.ReplyToMessageID != 0 {
@@ -139,6 +141,8 @@ func (h *Handler) revise(ctx context.Context, event *gateway.Event) (bool, error
 		ChatID:           event.ChatID,
 		ReplyToMessageID: event.ReplyToMessageID,
 		MessageID:        event.MessageID,
+		TopicID:          event.TopicID,
+		Agent:            string(event.ReplyToRole),
 		UserID:           event.From.ID,
 		Text:             revisionText(event),
 	})
@@ -267,6 +271,10 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 	if err := h.checkButton(ctx, event, cb); err != nil {
 		h.logFailure(ctx, "check button", event, err)
 
+		if errors.Is(err, errDraftSaving) {
+			return h.answer(ctx, event, draftSavingAnswer)
+		}
+
 		return h.answer(ctx, event, tasks.UserMessage(err))
 	}
 
@@ -281,11 +289,14 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 }
 
 // checkButton: a button counts only on the draft message of its task and version, so callback data put on
-// another message cannot decide a task.
+// another message cannot decide a task. A press that comes before the draft's messages are stored (they are
+// stored right after Telegram answers) is errDraftSaving.
 func (h *Handler) checkButton(ctx context.Context, event *gateway.Event, cb tasks.Callback) error {
 	task, v, err := h.tasks.FindByDraftMessage(ctx, event.ChatID, event.MessageID)
 
 	switch {
+	case errors.Is(err, tasks.ErrNotFound) && h.draftNotStored(ctx, cb):
+		return fmt.Errorf("draft of task %d version %d: %w", cb.TaskID, cb.Version, errDraftSaving)
 	case errors.Is(err, tasks.ErrNotFound) || errors.Is(err, tasks.ErrStaleVersion):
 		return fmt.Errorf("message %d is not the draft of the button: %w", event.MessageID, tasks.ErrInvalidCallback)
 	case err != nil:
@@ -296,6 +307,13 @@ func (h *Handler) checkButton(ctx context.Context, event *gateway.Event, cb task
 	default:
 		return nil
 	}
+}
+
+// draftNotStored reports whether the version of the button exists and its draft messages are not stored yet.
+func (h *Handler) draftNotStored(ctx context.Context, cb tasks.Callback) bool {
+	v, err := h.tasks.GetVersion(ctx, cb.TaskID, cb.Version)
+
+	return err == nil && v.DraftMessageID == nil
 }
 
 // decide applies the pressed action and returns the answer to the press.
@@ -353,10 +371,11 @@ func (h *Handler) logFailure(ctx context.Context, action string, event *gateway.
 	h.log.ErrorContext(ctx, "teamchat: action failed", "action", action, "event", event, "error", err)
 }
 
-// commandPattern is a command the gateway does not pass as a team command: /help, /start@bot …
-var commandPattern = regexp.MustCompile(`^/[A-Za-z0-9_]+(@[A-Za-z0-9_]+)?(\s|$)`)
+// errDraftSaving: a button pressed before the draft's messages are stored.
+var errDraftSaving = errors.New("the draft is still being stored")
 
 func refused(err error) bool {
 	return errors.Is(err, tasks.ErrValidation) || errors.Is(err, tasks.ErrConflict) ||
-		errors.Is(err, tasks.ErrStaleVersion) || errors.Is(err, tasks.ErrNotFound)
+		errors.Is(err, tasks.ErrStaleVersion) || errors.Is(err, tasks.ErrNotFound) ||
+		errors.Is(err, tasks.ErrDraftNotReady) || errors.Is(err, errDraftSaving)
 }

@@ -46,8 +46,9 @@ func NewNotifier(sender draftSender, log *slog.Logger) *Notifier {
 
 // SendDraft sends the draft as an answer to the task message, with the buttons «Одобрить / Правки / Отклонить».
 // A long draft goes in several messages with the buttons on the last one; all their IDs are returned, so a
-// reply to any part is a revision. If a part fails, the whole send fails and the next delivery attempt sends
-// every part again (the parts sent before the failure stay in the chat without buttons).
+// reply to any part is a revision. If a part fails, the whole send fails: the parts sent before it come back in
+// PartIDs with the error (a reply to them gets «reply to the latest draft»), and the next delivery attempt
+// sends every part again.
 func (n *Notifier) SendDraft(ctx context.Context, draft *tasks.Draft) (tasks.SentDraft, error) {
 	ids, err := n.sender.SendTextParts(ctx, roleOf(draft.Agent), &gateway.OutgoingMessage{
 		TopicID: draft.TopicID,
@@ -56,7 +57,8 @@ func (n *Notifier) SendDraft(ctx context.Context, draft *tasks.Draft) (tasks.Sen
 		Buttons: buttonRows(draft.Buttons),
 	})
 	if err != nil {
-		return tasks.SentDraft{}, fmt.Errorf("failed to send draft: %w", err)
+		// The parts sent before the failure: the task service keeps them as old messages of the version.
+		return tasks.SentDraft{PartIDs: ids}, fmt.Errorf("failed to send draft: %w", err)
 	}
 
 	if len(ids) == 0 {

@@ -105,6 +105,8 @@ type fakeNotifier struct {
 	onSend    func() // called on every successful send, e.g. to let another sender win the race
 	// parts: every draft is sent in two parts; the first part's ID is the draft's ID + partIDOffset.
 	parts bool
+	// partialOnErr: the parts "sent" before sendErr.
+	partialOnErr []int64
 }
 
 const partIDOffset = 500
@@ -116,7 +118,7 @@ func (n *fakeNotifier) SendDraft(_ context.Context, draft *Draft) (SentDraft, er
 	n.sendCalls++
 
 	if n.sendErr != nil {
-		return SentDraft{}, n.sendErr
+		return SentDraft{PartIDs: n.partialOnErr}, n.sendErr
 	}
 
 	n.drafts = append(n.drafts, *draft)

@@ -20,13 +20,18 @@ import (
 var Module = fx.Options(
 	fx.Module("teamchat",
 		fx.Provide(newHandler, newNotifier),
-		fx.Invoke(registerHandler),
 	),
 	fx.Decorate(useHandler),
 )
 
-func newHandler(service *tasks.Service, sender *gateway.Sender, log *slog.Logger) *Handler {
-	return NewHandler(service, sender, log)
+// newHandler registers waiting for the reactions set in the background when the handler is constructed: the
+// gateway that calls the handler is constructed after it, so on stop the gateway stops first and no new
+// reaction starts while they are waited for.
+func newHandler(lc fx.Lifecycle, service *tasks.Service, sender *gateway.Sender, log *slog.Logger) *Handler {
+	h := NewHandler(service, sender, log)
+	lc.Append(fx.Hook{OnStop: h.WaitBackground})
+
+	return h
 }
 
 func newNotifier(cfg *config.Telegram, sender *gateway.Sender, log *slog.Logger) tasks.Notifier {
@@ -35,11 +40,6 @@ func newNotifier(cfg *config.Telegram, sender *gateway.Sender, log *slog.Logger)
 	}
 
 	return NewNotifier(sender, log)
-}
-
-// registerHandler waits on stop for the reactions the handler sets in the background.
-func registerHandler(lc fx.Lifecycle, h *Handler) {
-	lc.Append(fx.Hook{OnStop: h.WaitBackground})
 }
 
 // useHandler replaces the gateway's default handler.

@@ -9,8 +9,9 @@ import (
 // writes from its own bot: teamchat.Notifier); LogNotifier stands in for it when the gateway is off.
 type Notifier interface {
 	// SendDraft sends the draft with buttons from the agent's bot and returns its messages (none if the
-	// notifier has no messages). It fails as a whole: when a part of a long draft is not sent, the next
-	// delivery attempt sends all parts again.
+	// notifier has no messages). It fails as a whole: when a part of a long draft is not sent, the error comes
+	// with the parts already sent in PartIDs (they become old messages of the version), and the next delivery
+	// attempt sends all parts again.
 	SendDraft(ctx context.Context, draft *Draft) (SentDraft, error)
 	// CloseDraft marks a decided draft: removes its buttons and shows the decision.
 	CloseDraft(ctx context.Context, data *CloseDraftData) error

@@ -760,3 +760,46 @@ func TestIntegrationRevisionByReplyToPart(t *testing.T) {
 
 	env.waitBackground(t)
 }
+
+// TestIntegrationDraftBeingSent: parts of a draft whose send failed become old messages of the version; while
+// the draft is not sent, a reply to a message of the agent's bot is ErrDraftNotReady, not a new task.
+func TestIntegrationDraftBeingSent(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t, pgtest.Connect(t), fakeResult{text: testVersion1})
+	env.notifier.partialOnErr = []int64{3001}
+	env.notifier.SetSendErr(errTelegramDown)
+	ctx := context.Background()
+
+	task, _, err := env.service.Create(ctx, testTaskData(85))
+	require.NoError(t, err)
+	require.NoError(t, env.service.Run(ctx, task.ID))
+
+	running, err := env.service.Get(ctx, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, AwaitingApprovalStatus, running.Status, "the draft waits for the next delivery attempt")
+
+	_, _, err = env.service.FindByDraftMessage(ctx, task.Source.ChatID, 3001)
+	require.ErrorIs(t, err, ErrStaleDraft, "a part of the failed send is an old message")
+
+	reply := &RequestRevisionByReplyData{
+		ChatID: task.Source.ChatID, ReplyToMessageID: 3002, MessageID: 86, UserID: 555, Text: "Короче",
+		TopicID: task.Source.TopicID, Agent: testAgent,
+	}
+
+	_, err = env.service.RequestRevisionByReply(ctx, reply)
+	require.ErrorIs(t, err, ErrDraftNotReady)
+	assert.Equal(t, "Черновик ещё отправляется — ответьте на него, когда придут кнопки.", UserMessage(err))
+
+	notOurBot := *reply
+	notOurBot.Agent = ""
+
+	_, err = env.service.RequestRevisionByReply(ctx, &notOurBot)
+	require.ErrorIs(t, err, ErrNotFound, "a reply to a person is not about the draft")
+
+	otherAgent := *reply
+	otherAgent.Agent = "marketer"
+
+	_, err = env.service.RequestRevisionByReply(ctx, &otherAgent)
+	require.ErrorIs(t, err, ErrNotFound, "another agent has no draft being sent")
+}

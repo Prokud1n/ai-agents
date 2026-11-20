@@ -16,6 +16,9 @@ var (
 	ErrStaleVersion = errors.New("draft version is outdated")
 	// ErrStaleDraft is a reply to a draft message that is not the latest draft of its task.
 	ErrStaleDraft = fmt.Errorf("the reply is not to the latest draft: %w", ErrStaleVersion)
+	// ErrDraftNotReady is a reply to a part of a draft that is still being sent (its last part, with the
+	// buttons, is not stored yet).
+	ErrDraftNotReady = errors.New("the draft is still being sent")
 
 	// Validation errors by reason: each has its own message for the trainer (UserMessage).
 	ErrEmptyRevision   = fmt.Errorf("revision text is empty: %w", ErrValidation)
@@ -48,6 +51,8 @@ func UserMessage(err error) string {
 	switch {
 	case err == nil:
 		return ""
+	case errors.Is(err, ErrDraftNotReady):
+		return "Черновик ещё отправляется — ответьте на него, когда придут кнопки."
 	case errors.Is(err, ErrStaleDraft):
 		return "Ответьте на последний черновик."
 	case errors.Is(err, ErrStaleVersion):

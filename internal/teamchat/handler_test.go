@@ -2,6 +2,7 @@ package teamchat
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -55,6 +56,18 @@ func forwarded(event *gateway.Event) *gateway.Event {
 
 func replyTo(event *gateway.Event, messageID int64) *gateway.Event {
 	event.ReplyToMessageID = messageID
+
+	return event
+}
+
+func asCommand(event *gateway.Event) *gateway.Event {
+	event.IsCommand = true
+
+	return event
+}
+
+func repliedRole(event *gateway.Event, role gateway.Role) *gateway.Event {
+	event.ReplyToRole = role
 
 	return event
 }
@@ -141,27 +154,46 @@ func TestHandlerMessages(t *testing.T) {
 		},
 		{
 			name:     "unknown command is not a task",
-			event:    messageEvent("/help"),
+			event:    asCommand(messageEvent("/help")),
+			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
+		},
+		{
+			name:     "unknown command in «Исходники»: the command list, not the editor's stub",
+			event:    asCommand(withTarget(messageEvent("/help"), gateway.EditorRole)),
 			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
 		},
 		{
 			name:     "unknown command to a bot is not a task either",
-			event:    withTarget(messageEvent("/start@copy_bot"), gateway.CopywriterRole),
+			event:    asCommand(withTarget(messageEvent("/start@copy_bot"), gateway.CopywriterRole)),
 			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
 		},
 		{
-			name:  "a path is not a command",
-			event: messageEvent("/ — это слеш"),
+			name:  "a slash without a command entity is text: «/2 подхода убрать» is a revision",
+			event: withTarget(replyTo(messageEvent("/2 подхода убрать"), testDraftID), gateway.CopywriterRole),
+			expected: handlerCalls{revisions: []tasks.RequestRevisionByReplyData{{
+				ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, TopicID: testTopicID,
+				UserID: testUserID, Text: "/2 подхода убрать",
+			}}},
+		},
+		{
+			name:    "reply to a part of a draft that is still being sent",
+			service: &fakeService{reviseErr: fmt.Errorf("reply while a draft is sent: %w", tasks.ErrDraftNotReady)},
+			event: repliedRole(withTarget(replyTo(messageEvent(revisionReply), 899), gateway.CopywriterRole),
+				gateway.CopywriterRole),
 			expected: handlerCalls{
-				created:   []tasks.CreateTaskData{taskData(gateway.MarketerRole, "", "/ — это слеш")},
-				reactions: taken(),
+				revisions: []tasks.RequestRevisionByReplyData{{
+					ChatID: testChatID, ReplyToMessageID: 899, MessageID: testMessageID, TopicID: testTopicID,
+					Agent: string(gateway.CopywriterRole), UserID: testUserID, Text: revisionReply,
+				}},
+				texts: []sentText{reply(gateway.CopywriterRole,
+					"Черновик ещё отправляется — ответьте на него, когда придут кнопки.")},
 			},
 		},
 		{
 			name:  "reply to the latest draft is a revision",
 			event: withTarget(replyTo(messageEvent("Короче и без эмодзи"), testDraftID), gateway.CopywriterRole),
 			expected: handlerCalls{revisions: []tasks.RequestRevisionByReplyData{{
-				ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID, Text: "Короче и без эмодзи",
+				ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, TopicID: testTopicID, UserID: testUserID, Text: "Короче и без эмодзи",
 			}}},
 		},
 		{
@@ -170,7 +202,7 @@ func TestHandlerMessages(t *testing.T) {
 			event:   replyTo(messageEvent(ideaText), 55),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
-					ChatID: testChatID, ReplyToMessageID: 55, MessageID: testMessageID, UserID: testUserID, Text: ideaText,
+					ChatID: testChatID, ReplyToMessageID: 55, MessageID: testMessageID, TopicID: testTopicID, UserID: testUserID, Text: ideaText,
 				}},
 				created:   []tasks.CreateTaskData{taskData(gateway.MarketerRole, "", ideaText)},
 				reactions: taken(),
@@ -182,7 +214,7 @@ func TestHandlerMessages(t *testing.T) {
 			event:   withTarget(replyTo(messageEvent(revisionReply), testDraftID), gateway.CopywriterRole),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
-					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID, Text: revisionReply,
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, TopicID: testTopicID, UserID: testUserID, Text: revisionReply,
 				}},
 				texts: []sentText{reply(gateway.CopywriterRole, "Ответьте на последний черновик.")},
 			},
@@ -193,7 +225,7 @@ func TestHandlerMessages(t *testing.T) {
 			event:   withTarget(replyTo(messageEvent(revisionReply), testDraftID), gateway.CopywriterRole),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
-					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID,
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, TopicID: testTopicID, UserID: testUserID,
 					Text: revisionReply,
 				}},
 				texts: []sentText{reply(gateway.CopywriterRole, busyRevisionText)},
@@ -205,7 +237,7 @@ func TestHandlerMessages(t *testing.T) {
 			event:   replyTo(messageEvent(revisionReply), testDraftID),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
-					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID,
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, TopicID: testTopicID, UserID: testUserID,
 					Text: revisionReply,
 				}},
 				texts: []sentText{reply(gateway.MarketerRole, revisionRefusedTexts[tasks.ApprovedStatus])},
@@ -409,6 +441,12 @@ func TestHandlerCallbacks(t *testing.T) {
 			service:  &fakeService{findErr: tasks.ErrStaleDraft},
 			event:    callbackEvent(gateway.MarketerRole, reject),
 			expected: handlerCalls{answers: answer(gateway.MarketerRole, "Кнопка устарела или повреждена.")},
+		},
+		{
+			name:     "button pressed before the draft is stored",
+			service:  &fakeService{findErr: tasks.ErrNotFound, draftUnsaved: true},
+			event:    callbackEvent(gateway.CopywriterRole, approve),
+			expected: handlerCalls{answers: answer(gateway.CopywriterRole, draftSavingAnswer)},
 		},
 		{
 			name:     "not a task button",

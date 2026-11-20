@@ -161,7 +161,13 @@ func (r *router) messageEvent(
 		Date:             time.Unix(msg.Date, 0).UTC(),
 	}
 
+	if role, ok := r.repliedRole(msg); ok {
+		event.ReplyToRole = role
+	}
+
 	cmd, botName, args, isCommand := parseCommand(text, entities)
+	event.IsCommand = isCommand
+
 	if isCommand && botName != "" {
 		role, ours := r.roleByUsername(botName)
 		if !ours {

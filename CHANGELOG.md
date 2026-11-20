@@ -27,8 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with «Одобрено.» / «Отклонено.» / «Принял правку…» (a duplicate only loses its buttons), and tells about failed
   tasks. Without bot tokens the notifier is the log one, as before.
 - Migration `005_draft_parts`: `task_versions.draft_part_message_ids` (earlier parts of a long draft; a failed part
-  makes the next delivery send all parts again) and `task_feedback.source_message_id` (a revision remembers its
-  reply message).
+  makes the next delivery send all parts again, and the parts already sent become old messages of the version) and
+  `task_feedback.source_message_id` (a revision remembers its reply message).
+- `tasks.ErrDraftNotReady`: a reply to a part of a draft that is still being sent; a button pressed before the draft
+  is stored gets «Черновик ещё сохраняется, нажмите ещё раз». `gateway.Event.ReplyToRole` and `Event.IsCommand`
+  (a `bot_command` entity at the start): only such messages are commands, so «/2 подхода убрать» stays a revision.
+- On stop the gateway and the workers stop before the task service and the team chat handler wait for their
+  background work (the wait hooks are registered in the constructors).
 - Team agents `marketer` and `copywriter` (working drafts with `search_knowledge_base` and `brand-knowledge`; the
   brand voice comes in T2.1).
 - `gateway.Sender.SendTextParts` (IDs of all parts) and `gateway.MediaFilter` (a handler that does not process files

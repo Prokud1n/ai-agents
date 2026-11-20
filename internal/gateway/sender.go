@@ -88,7 +88,8 @@ func (s *Sender) SendText(ctx context.Context, role Role, msg *OutgoingMessage) 
 
 // SendTextParts sends a message like SendText and returns the IDs of all its messages in order: a text above
 // 4096 characters is several messages, the last one has the buttons. If a part fails, the error is returned
-// and the parts sent before it stay in the chat: sending again sends every part again.
+// together with the IDs of the parts sent before it: they stay in the chat, and sending again sends every
+// part again.
 func (s *Sender) SendTextParts(ctx context.Context, role Role, msg *OutgoingMessage) ([]int64, error) {
 	if strings.TrimSpace(msg.Text) == "" {
 		return nil, fmt.Errorf("empty text: %w", ErrValidation)
@@ -117,7 +118,7 @@ type textParts struct {
 }
 
 // sendParts sends a text split by the message limit and returns the IDs of the parts: the first part answers
-// replyTo, the last has the buttons.
+// replyTo, the last has the buttons. On an error the IDs of the parts already sent are returned with it.
 func (s *Sender) sendParts(ctx context.Context, client *telegram.Client, role Role, p *textParts) ([]int64, error) {
 	parts := splitText(p.text, maxMessageLength)
 	ids := make([]int64, 0, len(parts))
@@ -134,7 +135,7 @@ func (s *Sender) sendParts(ctx context.Context, client *telegram.Client, role Ro
 
 		sent, err := client.SendMessage(ctx, params)
 		if err != nil {
-			return nil, fmt.Errorf("failed to send message part %d of %d as %s: %w", i+1, len(parts), role, err)
+			return ids, fmt.Errorf("failed to send message part %d of %d as %s: %w", i+1, len(parts), role, err)
 		}
 
 		ids = append(ids, sent.MessageID)

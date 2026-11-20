@@ -27,6 +27,8 @@ const (
 	approvedAnswer = "Одобрено"
 	rejectedAnswer = "Отклонено"
 	reviseHint     = "Ответьте на черновик текстом правки"
+	// draftSavingAnswer: the button was pressed right after the draft came, before its messages were stored.
+	draftSavingAnswer = "Черновик ещё сохраняется, нажмите ещё раз"
 
 	emptyIdeaText      = "Напишите идею после команды: /idea <текст>."
 	pauseText          = "Пауза пока не поддерживается: задачи в очереди выполнятся как обычно. Ненужный черновик можно отклонить."

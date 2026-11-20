@@ -293,6 +293,10 @@ func (s *Service) RequestRevision(ctx context.Context, data *RequestRevisionData
 // the task as it is.
 func (s *Service) RequestRevisionByReply(ctx context.Context, data *RequestRevisionByReplyData) (Task, error) {
 	task, v, err := s.FindByDraftMessage(ctx, data.ChatID, data.ReplyToMessageID)
+	if errors.Is(err, ErrNotFound) {
+		return Task{}, s.notFoundReply(ctx, data, err)
+	}
+
 	if err != nil {
 		return Task{}, err
 	}
@@ -327,6 +331,26 @@ func (s *Service) RequestRevisionByReply(ctx context.Context, data *RequestRevis
 	return revised, err
 }
 
+// notFoundReply: a reply to a message of the agent's bot that is not a draft may be a reply to a part of a draft
+// that is still being sent (the parts are stored once all of them are sent): then it is ErrDraftNotReady.
+func (s *Service) notFoundReply(ctx context.Context, data *RequestRevisionByReplyData, notFound error) error {
+	if strings.TrimSpace(data.Agent) == "" {
+		return notFound
+	}
+
+	sending, err := s.repo.HasUnsentDraft(ctx, data.ChatID, data.TopicID, data.Agent)
+	if err != nil {
+		return err
+	}
+
+	if sending {
+		return fmt.Errorf("reply to message %d while a draft of %s is being sent: %w",
+			data.ReplyToMessageID, data.Agent, ErrDraftNotReady)
+	}
+
+	return notFound
+}
+
 // revisionApplied reports whether a revision from the message is stored for the task.
 func (s *Service) revisionApplied(ctx context.Context, taskID, messageID int64) (bool, error) {
 	if messageID <= 0 {
@@ -337,39 +361,50 @@ func (s *Service) revisionApplied(ctx context.Context, taskID, messageID int64) 
 }
 
 // closeDraftInBackground closes the decided draft without making the button press or the reply wait for
-// Telegram (like the correction of an approval); the work survives the request's context.
+// Telegram (like the correction of an approval): the draft message is read now, only the Telegram calls go
+// to the background, and they survive the request's context.
 func (s *Service) closeDraftInBackground(ctx context.Context, task *Task, version int, decision Action) {
-	decided := *task
+	data, ok := s.closeDraftData(ctx, task, version, decision)
+	if !ok {
+		return
+	}
+
 	bgCtx := context.WithoutCancel(ctx)
 
 	s.background.Go(func() {
 		ctx, cancel := context.WithTimeout(bgCtx, closeDraftTimeout)
 		defer cancel()
 
-		s.closeDraft(ctx, &decided, version, decision)
+		if err := s.notifier.CloseDraft(ctx, data); err != nil {
+			s.log.ErrorContext(ctx, "tasks: failed to close draft", "error", err, "task_id", data.TaskID,
+				"version", data.Version)
+		}
 	})
 }
 
-// closeDraft removes the buttons of the decided draft. Failures are only logged: the decision is stored.
-func (s *Service) closeDraft(ctx context.Context, task *Task, version int, decision Action) {
+// closeDraftData is what closing the decided draft needs; false when there is no message to close. Failures
+// are only logged: the decision is stored.
+func (s *Service) closeDraftData(
+	ctx context.Context,
+	task *Task,
+	version int,
+	decision Action,
+) (*CloseDraftData, bool) {
 	v, err := s.repo.GetVersion(ctx, task.ID, version)
 	if err != nil {
 		s.log.ErrorContext(ctx, "tasks: failed to get decided version", "error", err, "task_id", task.ID)
 
-		return
+		return nil, false
 	}
 
 	if v.DraftMessageID == nil || *v.DraftMessageID <= 0 {
-		return
+		return nil, false
 	}
 
-	err = s.notifier.CloseDraft(ctx, &CloseDraftData{
+	return &CloseDraftData{
 		TaskID: task.ID, Version: version, Agent: task.Agent, ChatID: task.Source.ChatID,
 		TopicID: task.Source.TopicID, MessageID: *v.DraftMessageID, Decision: decision,
-	})
-	if err != nil {
-		s.log.ErrorContext(ctx, "tasks: failed to close draft", "error", err, "task_id", task.ID, "version", version)
-	}
+	}, true
 }
 
 // saveCorrection stores an approved revision in the knowledge base: the version the trainer revised,
@@ -443,6 +478,7 @@ func (s *Service) deliver(ctx context.Context, taskID int64, version int) {
 
 	sent, err := s.sendDraft(ctx, &d)
 	if err != nil {
+		s.rememberUnfinishedParts(claimCtx, &d, sent.PartIDs)
 		s.retryDelivery(claimCtx, &d, err)
 
 		return
@@ -451,8 +487,20 @@ func (s *Service) deliver(ctx context.Context, taskID int64, version int) {
 	s.storeDraftMessage(ctx, &d, &sent)
 }
 
+// rememberUnfinishedParts stores the parts of a draft whose send failed as old messages of the version:
+// they stay in the chat without buttons, and a reply to them is answered «reply to the latest draft».
+func (s *Service) rememberUnfinishedParts(ctx context.Context, d *delivery, partIDs []int64) {
+	if len(partIDs) == 0 {
+		return
+	}
+
+	if err := s.repo.AddOldDraftMessages(ctx, d.Task.ID, d.Version, partIDs); err != nil {
+		s.log.ErrorContext(ctx, "tasks: failed to remember parts of an unsent draft", "error", err, "task_id", d.Task.ID)
+	}
+}
+
 // sendDraft sends all messages of the draft. A failed part fails the send: the retry sends every part
-// again (parts sent before the failure stay in the chat without buttons and are not the draft's messages).
+// again. The parts sent before the failure come back in PartIDs of the result (with the error).
 func (s *Service) sendDraft(ctx context.Context, d *delivery) (SentDraft, error) {
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendDraftTimeout)
 	defer cancel()
@@ -469,7 +517,7 @@ func (s *Service) sendDraft(ctx context.Context, d *delivery) (SentDraft, error)
 		Buttons:          DraftButtons(d.Task.ID, d.Version),
 	})
 	if err != nil {
-		return SentDraft{}, fmt.Errorf("failed to send draft: %w", err)
+		return SentDraft{PartIDs: sent.PartIDs}, fmt.Errorf("failed to send draft: %w", err)
 	}
 
 	return sent, nil

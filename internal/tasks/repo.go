@@ -322,6 +322,25 @@ func (r *repo) AddOldDraftMessages(ctx context.Context, taskID int64, version in
 	return nil
 }
 
+// HasUnsentDraft reports whether the agent has a task of the chat topic awaiting approval whose latest draft
+// is not stored as sent yet.
+func (r *repo) HasUnsentDraft(ctx context.Context, chatID, topicID int64, agent string) (bool, error) {
+	var found bool
+
+	err := r.db.GetReadConnection().QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tasks t
+			JOIN task_versions v ON v.task_id = t.id AND v.version = t.version
+			WHERE t.source_chat_id = $1 AND t.source_topic_id = $2 AND t.agent = $3
+			  AND t.status = 'awaiting_approval' AND v.draft_message_id IS NULL
+		)`, chatID, topicID, agent).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("failed to find unsent drafts: %w", err)
+	}
+
+	return found, nil
+}
+
 // HasFeedbackFromMessage reports whether the task has feedback that came from the message.
 func (r *repo) HasFeedbackFromMessage(ctx context.Context, taskID, messageID int64) (bool, error) {
 	var found bool

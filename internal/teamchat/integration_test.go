@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
 	"go.uber.org/fx/fxtest"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
@@ -152,6 +153,30 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 	}, integrationWait, integrationTick, "the decisions are told in the topic")
 }
 
+// TestIntegrationStopOrder: on stop the gateway (no new events) and the workers stop before the handler and
+// the task service wait for their background work, so nothing adds background work while it is waited for.
+func TestIntegrationStopOrder(t *testing.T) {
+	t.Parallel()
+
+	env := startIntegrationEnv(t)
+	env.stop()
+
+	gatewayStop := env.stops.index("(*gateway).stop")
+	poolStop := env.stops.index("(*Pool).Stop")
+	handlerWait := env.stops.index("(*Handler).WaitBackground")
+	serviceWait := env.stops.index("(*Service).WaitBackground")
+
+	for name, i := range map[string]int{
+		"gateway": gatewayStop, "pool": poolStop, "handler": handlerWait, "service": serviceWait,
+	} {
+		require.NotEqual(t, -1, i, "the %s stop hook did not run: %v", name, env.stops.hooks)
+	}
+
+	assert.Less(t, gatewayStop, handlerWait, "the gateway stops before the handler waits")
+	assert.Less(t, gatewayStop, serviceWait, "the gateway stops before the service waits")
+	assert.Less(t, poolStop, serviceWait, "the workers stop before the service waits")
+}
+
 // integrationEnv is the started gateway, tasks and teamchat modules against the fake Bot API.
 type integrationEnv struct {
 	api         *fakeBotAPI
@@ -161,6 +186,37 @@ type integrationEnv struct {
 	callbackID  string
 	marketer    string // the marketer bot's token
 	marketerBot telegram.User
+	stops       *stopRecorder
+	stop        func()
+}
+
+// stopRecorder is an fx logger that records the OnStop hooks in the order fx runs them.
+type stopRecorder struct {
+	mu    sync.Mutex
+	hooks []string
+}
+
+func (r *stopRecorder) LogEvent(event fxevent.Event) {
+	if e, ok := event.(*fxevent.OnStopExecuting); ok {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		r.hooks = append(r.hooks, e.FunctionName)
+	}
+}
+
+// index is the position of the first hook whose function name contains name; -1 if none ran.
+func (r *stopRecorder) index(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for i, hook := range r.hooks {
+		if strings.Contains(hook, name) {
+			return i
+		}
+	}
+
+	return -1
 }
 
 func startIntegrationEnv(t *testing.T) *integrationEnv {
@@ -177,6 +233,7 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		callbackID: "cb-" + strconv.FormatInt(base, 10),
 		marketer:   botToken(gateway.MarketerRole, base),
 		executor:   &scriptedExecutor{answers: []string{firstVersion, secondVersion}},
+		stops:      &stopRecorder{},
 	}
 	env.marketerBot = botUsers(base)[env.marketer]
 	env.api = newFakeBotAPI(t, env.groupID, botUsers(base))
@@ -198,9 +255,14 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		Module,
 		fx.Decorate(func() tasks.Executor { return env.executor }),
 		fx.Populate(&env.service),
+		fx.WithLogger(func() fxevent.Logger { return env.stops }),
 	)
 	app.RequireStart()
-	t.Cleanup(app.RequireStop)
+
+	var once sync.Once
+
+	env.stop = func() { once.Do(app.RequireStop) }
+	t.Cleanup(env.stop)
 
 	return env
 }

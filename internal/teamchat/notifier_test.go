@@ -104,6 +104,20 @@ func TestNotifierSendDraft(t *testing.T) {
 	}
 }
 
+// TestNotifierSendDraftPartFails: the parts sent before the failure come back with the error.
+func TestNotifierSendDraftPartFails(t *testing.T) {
+	t.Parallel()
+
+	sender := &fakeSender{partsErr: errTelegramDown}
+
+	sent, err := NewNotifier(sender, slog.New(slog.DiscardHandler)).SendDraft(t.Context(), &tasks.Draft{
+		TaskID: testTaskID, Version: 1, Agent: string(gateway.CopywriterRole), Text: draftBody,
+	})
+
+	require.ErrorIs(t, err, errTelegramDown)
+	assert.Equal(t, tasks.SentDraft{PartIDs: []int64{testDraftID - 1}}, sent)
+}
+
 func TestNotifierCloseDraft(t *testing.T) {
 	t.Parallel()
 
