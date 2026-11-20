@@ -42,6 +42,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sendVideo/sendPhoto/sendDocument streamed from a local file, getFile; retries 429 with `retry_after`, 5xx and network
   errors; the token is masked in errors and never logged, requests go only to the configured address (no proxy
   from the environment, no redirects).
+- Tasks and approval (T1.3, `internal/tasks`): tasks idempotent by the source message (chat id, message id),
+  statuses `queued → running → awaiting_approval → approved | rejected`, a revision queues the task again
+  (version + 1), `failed`; a failed revision sends the previous draft again with the reason. Transitions are
+  validated and applied under `SELECT ... FOR UPDATE`; every run has a random `run_id`, so only its worker stores the
+  outcome (migration `004_tasks`: `tasks`, `task_versions`, `task_feedback`). Redis Streams queue with a consumer
+  group, `XAUTOCLAIM` of dead workers' messages, delayed retries with exponential backoff, a sweeper that re-queues
+  what the queue lost without duplicating it, graceful shutdown that keeps finished runs (`TASKS_*` config).
+  Refusals and max_tokens are not retried; a panicking agent does not crash the process. Draft delivery is claimed
+  atomically, at least once (a duplicate loses its buttons), and retried up to `TASKS_DELIVERY_ATTEMPTS`. Approve / revise / reject with
+  `callback_data` `t:<id>:<version>:<a|r|x>`, revision by a reply to the draft; stale versions and repeated presses
+  are refused. The previous version and the revision reach the agent tagged as data. Approved revisions are saved
+  to the knowledge base as the trainer's corrections. The trainer sees error classes, not internal errors.
+  `StatusReport` for `/status` (tasks by status and LLM usage). Telegram is connected through `tasks.Notifier`;
+  until then drafts go to the log.
+- `make test-integration` starts a throwaway Redis for queue tests and removes it at the end.
 - `docs/M0-MANUAL.md`: step-by-step manual check of the stack, LLM layer, knowledge base, transcription and Bot API with real keys.
 - Docker Compose stack: app, one-shot `migrate` service, PostgreSQL with pgvector, Redis (password-protected), RustFS (S3);
   local Telegram Bot API server under the `telegram` profile. Only app and postgres are published, on 127.0.0.1 only.

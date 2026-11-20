@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS task_feedback;
+DROP TABLE IF EXISTS task_versions;
+DROP TABLE IF EXISTS tasks;

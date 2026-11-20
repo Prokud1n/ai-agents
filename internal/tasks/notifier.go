@@ -1,0 +1,87 @@
+package tasks
+
+import (
+	"context"
+	"log/slog"
+)
+
+// Notifier delivers drafts and failures to the trainer. The Telegram gateway implements it (each agent
+// writes from its own bot); LogNotifier stands in for it until the gateway is wired in.
+type Notifier interface {
+	// SendDraft sends the draft with buttons from the agent's bot and returns the message id
+	// (0 if the notifier has no messages).
+	SendDraft(ctx context.Context, draft *Draft) (int64, error)
+	// CloseDraft marks a decided draft: removes its buttons and shows the decision.
+	CloseDraft(ctx context.Context, data *CloseDraftData) error
+	// NotifyFailure tells the trainer that the task failed.
+	NotifyFailure(ctx context.Context, failure *Failure) error
+}
+
+// Draft is a version to send for approval to the topic of the source message.
+type Draft struct {
+	TaskID  int64
+	Version int
+	Agent   string // the agent's bot sends the draft
+	ChatID  int64
+	TopicID int64
+	// ReplyToMessageID is the source message of the task.
+	ReplyToMessageID int64
+	Text             string
+	// Note is shown above the draft when not empty, e.g. why a revision could not be applied.
+	Note    string
+	Buttons []Button
+}
+
+// CloseDraftData is a decided draft message.
+type CloseDraftData struct {
+	TaskID    int64
+	Version   int
+	Agent     string
+	ChatID    int64
+	MessageID int64
+	// Decision is the pressed action: approve, revise or reject; empty for a duplicate.
+	Decision Action
+	// Duplicate: the message repeats a draft already sent by another sender; remove its buttons.
+	Duplicate bool
+}
+
+// Failure is a task that failed; Message is for the trainer and never has internal error details.
+type Failure struct {
+	TaskID           int64
+	Agent            string
+	ChatID           int64
+	TopicID          int64
+	ReplyToMessageID int64
+	Message          string
+}
+
+// LogNotifier only logs: the app runs without Telegram.
+type LogNotifier struct {
+	log *slog.Logger
+}
+
+func NewLogNotifier(log *slog.Logger) *LogNotifier {
+	return &LogNotifier{log: log}
+}
+
+func (n *LogNotifier) SendDraft(ctx context.Context, draft *Draft) (int64, error) {
+	n.log.InfoContext(ctx, "tasks: draft is ready (log notifier)",
+		"task_id", draft.TaskID, "version", draft.Version, "agent", draft.Agent, "chars", len([]rune(draft.Text)),
+		"note", draft.Note)
+
+	return 0, nil
+}
+
+func (n *LogNotifier) CloseDraft(ctx context.Context, data *CloseDraftData) error {
+	n.log.InfoContext(ctx, "tasks: draft decided (log notifier)",
+		"task_id", data.TaskID, "version", data.Version, "decision", data.Decision, "duplicate", data.Duplicate)
+
+	return nil
+}
+
+func (n *LogNotifier) NotifyFailure(ctx context.Context, failure *Failure) error {
+	n.log.WarnContext(ctx, "tasks: task failed (log notifier)",
+		"task_id", failure.TaskID, "agent", failure.Agent, "message", failure.Message)
+
+	return nil
+}
