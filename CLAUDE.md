@@ -47,9 +47,10 @@ make transcribe ARGS="-in video.mp4"                    # нужен ffmpeg и O
 | `cmd/agent-run` | `DeclareAgentRunOptions` | postgres + anthropic + embeddings + llmusage + knowledge + kbtool + agents, без HTTP |
 | `cmd/kb` | `internal/kb.go: DeclareKBOptions` / `RunKB` | postgres + embeddings + knowledge + kbcli |
 | `cmd/transcribe` | `internal/transcribe.go` | ffmpeg + whisper + transcription; логи в stderr, JSON в stdout |
+| `cmd/roughcut` | `internal/roughcut.go` | ffmpeg + whisper + transcription + roughcut; логи в stderr, файлы в `-out` |
 | `cmd/migrate` | вне fx (`internal/migrator`) | — |
 
-Долгие CLI-команды (`kb`, `transcribe`) выполняются **между** `app.Start` и `app.Stop` или вовсе без `Start`, а не в
+Долгие CLI-команды (`kb`, `transcribe`, `roughcut`) выполняются **между** `app.Start` и `app.Stop` или вовсе без `Start`, а не в
 start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`. Новую команду строй так же. Таймауты старта и остановки
 читаются заранее (`config.ParseLifecycle`), потому что это опции верхнего уровня fx.
 

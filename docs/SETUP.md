@@ -11,8 +11,8 @@
 | Docker | весь стек работает в контейнерах | Docker Desktop (macOS) или Docker Engine (Linux) |
 | Docker Compose v2 | `docker compose …` (через пробел; старый `docker-compose` v1 не подходит) | v2.20+ (`--wait`) |
 | make, git, curl | команды проекта, клонирование, проверка `/readyz` | любые актуальные |
-| Go | только для разработки (`make check`), `make transcribe` на хосте и `KB_HOST=1 make kb-*` | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
-| ffmpeg, ffprobe | только `make transcribe` на хосте; без них транскрипция работает в образе `media` | 8.x |
+| Go | только для разработки (`make check`), `make transcribe` / `make roughcut` на хосте и `KB_HOST=1 make kb-*` | 1.21+; нужную версию (1.26 из `go.mod`) Go скачает сам, если не задан `GOTOOLCHAIN=local` |
+| ffmpeg, ffprobe | только `make transcribe` и `make roughcut` на хосте; без них обе команды работают в образе `media` | 8.x |
 
 Без Go работает всё, что нужно оператору: стек, агенты (`make agent-run`), база знаний (`make kb-*` запускают `kb`
 в образе приложения) и транскрипция в образе `media`.
@@ -158,7 +158,10 @@ cp .env.dist .env
 | `WHISPER_RETRY_BASE_DELAY` | нет | `2s` | база экспоненциальной задержки | нет |
 | `TRANSCRIPTION_SILENCE_NOISE_DB` | нет | `-30` | порог тишины для нарезки длинного аудио; с фоновой музыкой — `-25` | нет |
 | `TRANSCRIPTION_SILENCE_MIN_DURATION` | нет | `500ms` | минимальная длина паузы | нет |
-| `FFMPEG_TIMEOUT` | нет | `10m` | лимит одного запуска ffmpeg/ffprobe | нет |
+| `FFMPEG_TIMEOUT` | нет | `10m` | лимит одного запуска ffmpeg/ffprobe (рендер склейки — один запуск) | нет |
+| `ROUGHCUT_MAX_PAUSE` | нет | `400ms` | самая длинная пауза между словами в склейке (`make roughcut`), больше 0; флаг `-max-pause` | нет |
+| `ROUGHCUT_RETAKE_SIMILARITY` | нет | `0.7` | доля слов фразы (больше 0, не больше 1), повторённых заново, чтобы считать её неудачным дублем; флаг `-similarity` | нет |
+| `ROUGHCUT_FILLERS` | нет | `э,эм,м,хм,uh,um,hm,er,erm` | слова-паразиты через запятую, повторы букв не важны; флаг `-fillers` | нет |
 | `EMBEDDINGS_MODEL` | нет | `text-embedding-3-small` | вектор должен быть 1536-мерным; после смены — `make kb-reembed` | нет |
 | `EMBEDDINGS_BATCH_SIZE` | нет | `100` | фрагментов в одном запросе (не больше 2048) | нет |
 | `EMBEDDINGS_MAX_RETRIES` | нет | `4` | повторы при 429/5xx | нет |
@@ -516,6 +519,9 @@ read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKE
 | `make kb-ingest`: `permission denied` | команды запущены от root, а файлы в `./kb` недоступны другим: `chmod -R a+rX kb` (раздел 5) |
 | `KB_HOST=1 make kb-*`: `connection refused` к `127.0.0.1:5432` | стек не поднят (`make up`) или `POSTGRES_HOST_PORT` отличается от того, с которым поднят стек |
 | `make transcribe`: `"ffmpeg": executable file not found` | установи ffmpeg или используй образ `media` (README, «Транскрипция видео») |
+| `make roughcut`: `invalid plan` | в `plan.json`, переданном через `-plan`, интервалы `keep` должны идти по возрастанию, не пересекаться, не выходить за длину видео, быть не короче кадра и не больше 500 штук; `version` — 1. Больше 500 кусков в автоматическом плане — подними `-max-pause` (README, «Черновая склейка») |
+| `make roughcut`: `source has no audio stream` | ролик без звука не поддерживается: склейка идёт по речи |
+| `make roughcut`: `invalid rough cut settings` | `ROUGHCUT_MAX_PAUSE` должна быть больше 0, `ROUGHCUT_RETAKE_SIMILARITY` — в пределах (0, 1] |
 | Транскрипция режет речь посреди фраз, видео с музыкой | подними `TRANSCRIPTION_SILENCE_NOISE_DB` до `-25` |
 | Apple Silicon: сборка медленная | первый `make up` собирает образ (несколько минут); дальше работает кэш |
 | `m0-check`: шаг 4 FAIL «не первый в поиске» | в базе есть очень похожий документ или сменилась модель эмбеддингов без `make kb-reembed`; подробности — `m0-results/kb.log` |

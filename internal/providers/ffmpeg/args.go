@@ -17,7 +17,9 @@ const (
 	audioSampleRate = "16000"
 	audioChannels   = "1"
 
-	inputFlag = "-i"
+	inputFlag      = "-i"
+	audioCodecFlag = "-c:a"
+	plainOutput    = "default=noprint_wrappers=1:nokey=1" // ffprobe prints bare values
 	// Inputs come from users (Telegram files): only local files may be opened, never URLs,
 	// concat: lists or other protocols that a crafted name or playlist could point to.
 	fileProtocol      = "file"
@@ -59,7 +61,7 @@ func encodeArgs() []string {
 		"-vn",
 		"-ac", audioChannels,
 		"-ar", audioSampleRate,
-		"-c:a", audioCodec,
+		audioCodecFlag, audioCodec,
 		"-b:a", audioBitrate,
 	}
 }
@@ -84,11 +86,12 @@ func cutAudioArgs(src, dst string, start, duration float64) []string {
 }
 
 func durationArgs(input string) []string {
-	args := []string{
-		"-v", "error",
-		"-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1:nokey=1",
-	}
+	return probeEntriesArgs(input, "format=duration", plainOutput)
+}
+
+// probeEntriesArgs make ffprobe print only the given entries of a local file in the given format.
+func probeEntriesArgs(input, entries, format string) []string {
+	args := []string{"-v", "error", "-show_entries", entries, "-of", format}
 
 	return append(args, inputArgs(input)...)
 }

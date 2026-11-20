@@ -152,7 +152,9 @@ jobs:
       - name: Show ffmpeg integration tests
         env:
           FFMPEG_TESTS_REQUIRED: "1"
-        run: go test -count=1 -v -run 'TestRunner' ./internal/providers/ffmpeg/
+        run: |
+          go test -count=1 -v -run 'TestRunner' ./internal/providers/ffmpeg/
+          go test -count=1 -v -run 'TestRender' ./internal/roughcut/
 
       # Hostile input for kb: PDFs are parsed in real child processes (the test binary re-run as the
       # parser), symlinks inside KB_ROOT lead outside it. The log shows each attack failing as an ordinary
@@ -394,12 +396,13 @@ jobs:
       - name: Build media image
         run: docker build --target media -t ai-agents-media:ci .
 
-      - name: Check ffmpeg and transcribe
+      - name: Check ffmpeg, transcribe and roughcut
         # sed reads all the output (unlike head), so ffmpeg does not die with a broken pipe.
         run: |
           docker run --rm --entrypoint ffmpeg ai-agents-media:ci -hide_banner -version | sed -n 1p
           docker run --rm --entrypoint ffprobe ai-agents-media:ci -hide_banner -version | sed -n 1p
           docker run --rm ai-agents-media:ci -h
+          docker run --rm --entrypoint /app/roughcut ai-agents-media:ci -h
           docker run --rm --entrypoint id ai-agents-media:ci
           docker run --rm --entrypoint sh ai-agents-media:ci -c 'pwd && touch probe && echo "workdir is writable"'
 
@@ -414,6 +417,61 @@ jobs:
           CGO_ENABLED=0 go test -c -o ffmpeg.test ./internal/providers/ffmpeg
           docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/ffmpeg.test:/app/ffmpeg.test:ro" \
             --entrypoint /app/ffmpeg.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestRunner'
+
+      # The rough cut render against the ffmpeg of the image: a synthetic clip with tone "words", a broken-off
+      # take, a filler and long pauses (duration as planned, no silence longer than 0.4 s), and a variable
+      # frame rate clip with delayed audio (sound and picture of every word within a frame of the transcript).
+      - name: Run rough cut tests inside the media image
+        run: |
+          CGO_ENABLED=0 go test -c -o roughcut.test ./internal/roughcut
+          docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/roughcut.test:/app/roughcut.test:ro" \
+            --entrypoint /app/roughcut.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestRender'
+
+      - name: Rough cut a generated clip with the roughcut binary
+        # Tone "words" at 0.5-1.0, 1.1-1.6 (a filler), 3.0-3.5 and 3.6-4.2 s; the transcript is given, so no API key
+        # is needed. Expected: 3 kept words, ~2.1 s of video, no pause longer than 0.4 s, all output files.
+        run: |
+          docker run --rm --entrypoint sh ai-agents-media:ci -c '
+            set -e
+            cd /tmp
+            ffmpeg -hide_banner -nostdin -loglevel error -y \
+              -f lavfi -i "aevalsrc=if(between(t\,0.5\,1)+between(t\,1.1\,1.6)+between(t\,3\,3.5)+between(t\,3.6\,4.2)\,0.5*sin(2*PI*440*t)\,0):s=48000:d=6" \
+              -f lavfi -i "testsrc=duration=6:size=360x640:rate=30" -c:v mpeg4 -c:a aac -shortest clip.mp4
+            printf "%s" "{\"language\":\"ru\",\"duration\":6,\"text\":\"\",\"segments\":[],\"words\":[
+              {\"word\":\"привет\",\"start\":0.5,\"end\":1},{\"word\":\"эээ\",\"start\":1.1,\"end\":1.6},
+              {\"word\":\"это\",\"start\":3,\"end\":3.5},{\"word\":\"тест\",\"start\":3.6,\"end\":4.2}]}" > t.json
+            /app/roughcut -in clip.mp4 -transcript t.json -out plan -plan-only
+            test ! -e plan/roughcut.mp4
+            /app/roughcut -in clip.mp4 -transcript t.json -out cut
+            ls -l cut
+            cat cut/decisions.log
+            test -s cut/plan.json && test -s cut/transcript.json && test -s cut/decisions.log
+            ffprobe -v error -show_entries stream=codec_name,width,height -of csv=p=0 cut/roughcut.mp4 | tee streams.txt
+            grep -qx "h264,360,640" streams.txt && grep -qx "aac" streams.txt
+            d=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 cut/roughcut.mp4)
+            echo "duration: $d"
+            awk -v d="$d" "BEGIN { exit !(d > 1.9 && d < 2.3) }"
+            ffmpeg -hide_banner -nostdin -i cut/roughcut.mp4 -af silencedetect=noise=-30dB:d=0.4 -f null - 2>&1 \
+              | tee silence.txt | grep silence_ && { echo "pause longer than 0.4 s"; exit 1; }
+            echo "rough cut OK"
+          '
+
+      # Rotation tag (1920x1080 + 90° -> 1080x1920) and a video without sound (refused). Then load: a 1080x1920,
+      # 120 s clip cut into 60 fragments; the container's cgroup memory.peak (roughcut + ffmpeg) must stay under
+      # 800 MiB. The clip is made in a separate run; the cut runs under a 3 GiB container limit, so a regression
+      # shows as a measured number rather than a bare OOM kill.
+      - name: Rough cut rotation, no audio and memory under load
+        run: |
+          data="$RUNNER_TEMP/roughcut-data"
+          mkdir -p "$data" && chmod 777 "$data"
+          run_check() {
+            mode=$1; shift
+            docker run --rm "$@" -v "$PWD/scripts:/scripts:ro" -v "$data:/data" \
+              --entrypoint sh ai-agents-media:ci /scripts/roughcut-image-check.sh "$mode" /data
+          }
+          run_check basic
+          run_check prepare
+          run_check load --memory=3g --memory-swap=3g
 
       - name: Extract audio from a generated clip
         # Without OPENAI_API_KEY transcribe stops before the audio is prepared: the key error comes first.
