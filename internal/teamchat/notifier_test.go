@@ -31,10 +31,13 @@ func draftButtons(version int) [][]gateway.Button {
 func TestNotifierSendDraft(t *testing.T) {
 	t.Parallel()
 
+	longText := strings.Repeat("а", partLimit+1)
+
 	tests := []struct {
-		name     string
-		draft    tasks.Draft
-		expected sentText
+		name         string
+		draft        tasks.Draft
+		expected     sentText
+		expectedSent tasks.SentDraft
 	}{
 		{
 			name: "first version from the agent's bot with buttons",
@@ -46,6 +49,19 @@ func TestNotifierSendDraft(t *testing.T) {
 			expected: sentText{Role: gateway.CopywriterRole, Msg: gateway.OutgoingMessage{
 				TopicID: testTopicID, ReplyTo: testMessageID, Text: draftBody, Buttons: draftButtons(1),
 			}},
+			expectedSent: tasks.SentDraft{MessageID: testDraftID},
+		},
+		{
+			name: "long draft: the earlier parts are returned too",
+			draft: tasks.Draft{
+				TaskID: testTaskID, Version: 1, Agent: string(gateway.CopywriterRole), ChatID: testChatID,
+				TopicID: testTopicID, ReplyToMessageID: testMessageID, Text: longText,
+				Buttons: tasks.DraftButtons(testTaskID, 1),
+			},
+			expected: sentText{Role: gateway.CopywriterRole, Msg: gateway.OutgoingMessage{
+				TopicID: testTopicID, ReplyTo: testMessageID, Text: longText, Buttons: draftButtons(1),
+			}},
+			expectedSent: tasks.SentDraft{MessageID: testDraftID, PartIDs: []int64{testDraftID - 1}},
 		},
 		{
 			name: "revised version with a note",
@@ -58,6 +74,7 @@ func TestNotifierSendDraft(t *testing.T) {
 				TopicID: testTopicID, ReplyTo: testMessageID,
 				Text: "Версия 3\n\nНе получилось применить правку.\n\n" + draftBody, Buttons: draftButtons(3),
 			}},
+			expectedSent: tasks.SentDraft{MessageID: testDraftID},
 		},
 		{
 			name: "agent without a bot writes from the marketer",
@@ -68,6 +85,7 @@ func TestNotifierSendDraft(t *testing.T) {
 			expected: sentText{Role: gateway.MarketerRole, Msg: gateway.OutgoingMessage{
 				ReplyTo: testMessageID, Text: draftBody,
 			}},
+			expectedSent: tasks.SentDraft{MessageID: testDraftID},
 		},
 	}
 
@@ -77,10 +95,10 @@ func TestNotifierSendDraft(t *testing.T) {
 
 			sender := &fakeSender{}
 
-			id, err := NewNotifier(sender, slog.New(slog.DiscardHandler)).SendDraft(t.Context(), &tt.draft)
+			sent, err := NewNotifier(sender, slog.New(slog.DiscardHandler)).SendDraft(t.Context(), &tt.draft)
 
 			require.NoError(t, err)
-			assert.Equal(t, testDraftID, id)
+			assert.Equal(t, tt.expectedSent, sent)
 			assert.Equal(t, []sentText{tt.expected}, sender.texts)
 		})
 	}
@@ -174,7 +192,7 @@ func TestNotifierNotifyFailure(t *testing.T) {
 }
 
 // TestNotifierLongDraft sends a draft above the Telegram limit through the real gateway.Sender: it is split,
-// the buttons go with the last part, and the ID of that part is returned (a reply to it is a revision).
+// the buttons go with the last part, and the IDs of all parts are returned (a reply to any is a revision).
 func TestNotifierLongDraft(t *testing.T) {
 	t.Parallel()
 
@@ -183,7 +201,7 @@ func TestNotifierLongDraft(t *testing.T) {
 
 	text := strings.Repeat("Присед с паузой внизу. ", 300) // about 6900 characters: two messages
 
-	id, err := NewNotifier(sender, slog.New(slog.DiscardHandler)).SendDraft(t.Context(), &tasks.Draft{
+	sent, err := NewNotifier(sender, slog.New(slog.DiscardHandler)).SendDraft(t.Context(), &tasks.Draft{
 		TaskID: testTaskID, Version: 1, Agent: string(gateway.CopywriterRole), ChatID: testChatID,
 		TopicID: testTopicID, ReplyToMessageID: testMessageID, Text: text, Buttons: tasks.DraftButtons(testTaskID, 1),
 	})
@@ -191,7 +209,7 @@ func TestNotifierLongDraft(t *testing.T) {
 
 	calls := api.callsOf("sendMessage")
 	require.Len(t, calls, 2)
-	assert.Equal(t, calls[1].result, id, "the ID of the part with the buttons")
+	assert.Equal(t, tasks.SentDraft{MessageID: calls[1].result, PartIDs: []int64{calls[0].result}}, sent)
 
 	var first, last telegram.SendMessageParams
 

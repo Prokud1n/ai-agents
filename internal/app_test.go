@@ -33,8 +33,10 @@ func TestDeclareOptions(t *testing.T) {
 	}
 }
 
-// TestApplicationWiresGatewayToTasks: the gateway's handler and the tasks' notifier resolve in the application
-// graph (teamchat.Module decorates gateway.Handler at the top level, so the gateway module sees it).
+// TestApplicationWiresGatewayToTasks checks only that the application graph resolves gateway.Handler,
+// tasks.Notifier and teamchat.Handler: ValidateApp runs no constructors. That the gateway really gets
+// teamchat.Handler and drafts go to Telegram is checked by teamchat's TestIntegrationGatewayTaskCycle; the
+// notifier choice by the config — by TestNewNotifierFollowsGateway.
 func TestApplicationWiresGatewayToTasks(t *testing.T) {
 	t.Parallel()
 

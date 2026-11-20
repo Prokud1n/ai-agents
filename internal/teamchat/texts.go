@@ -30,12 +30,15 @@ const (
 
 	emptyIdeaText      = "Напишите идею после команды: /idea <текст>."
 	pauseText          = "Пауза пока не поддерживается: задачи в очереди выполнятся как обычно. Ненужный черновик можно отклонить."
-	unknownCommandText = "Такой команды я не знаю."
+	unknownCommandText = "Такой команды нет. Команды: /plan [пожелания] — контент-план, /idea <текст> — идея в работу, " +
+		"/status — задачи и расход, /pause — пауза (пока не поддерживается). Задачу можно написать и обычным сообщением."
 
 	voiceAndVideoText = "Голосовые и видео пока не обрабатываю: приём появится вместе с транскрипцией идей и монтажом. " +
 		"Напишите идею текстом."
 	photoText   = "Фото и картинки пока не обрабатываю: приём появится вместе с обложками. Опишите задачу текстом."
 	captionNote = " Подпись к файлу я тоже не взял в работу — пришлите её отдельным сообщением."
+
+	busyRevisionText = "Уже готовлю новую версию — дождитесь её и ответьте на неё."
 )
 
 // Task inputs of the commands; the trainer's words follow them.
@@ -46,6 +49,27 @@ const (
 
 // forwardedClose matches a closing tag of the forwarded block in any case and with any spaces.
 var forwardedClose = regexp.MustCompile(`(?i)</\s*` + forwardedTag + `\s*>`)
+
+// stubTexts answer for the roles that are not connected yet: a fixed text, without an agent run, a draft or
+// buttons (so nothing of it reaches the knowledge base as a correction).
+var stubTexts = map[gateway.Role]string{
+	gateway.EditorRole: "Я Монтажёр. Монтаж пока не подключён: он появится вместе с приёмом видео. Сценарии рилс и " +
+		"подписи пишет Копирайтер — упомяните его бота, планы и идеи — к Маркетологу.",
+	gateway.DesignerRole: "Я Дизайнер. Обложки пока не подключены: они появятся позже. Сценарии рилс и подписи пишет " +
+		"Копирайтер — упомяните его бота, планы и идеи — к Маркетологу.",
+}
+
+// revisionRefusedTexts explain a reply to the latest draft that cannot be a revision, by the task status.
+var revisionRefusedTexts = map[tasks.Status]string{
+	tasks.QueuedStatus:  busyRevisionText,
+	tasks.RunningStatus: busyRevisionText,
+	tasks.ApprovedStatus: "Этот черновик уже одобрен, правка к нему не применится. Для новой задачи напишите " +
+		"отдельное сообщение.",
+	tasks.RejectedStatus: "Этот черновик отклонён, правка к нему не применится. Для новой задачи напишите " +
+		"отдельное сообщение.",
+	tasks.FailedStatus: "Эта задача не получилась, правку к ней применить нельзя. Отправьте задачу заново " +
+		"отдельным сообщением.",
+}
 
 var statusNames = map[tasks.Status]string{
 	tasks.QueuedStatus:           "в очереди",

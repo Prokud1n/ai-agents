@@ -29,14 +29,17 @@ import (
 )
 
 const (
-	integrationWait = 20 * time.Second
-	integrationTick = 20 * time.Millisecond
-	firstVersion    = "Хук: три ошибки в планке, которые крадут результат"
-	secondVersion   = "Три ошибки в планке. Коротко."
-	revisionRequest = "Короче, без вступления"
-	ideaMessageID   = int64(10)
-	revisionMsgID   = int64(11)
+	integrationWait  = 20 * time.Second
+	integrationTick  = 20 * time.Millisecond
+	firstVersionLine = "Хук: три ошибки в планке, которые крадут результат. "
+	secondVersion    = "Три ошибки в планке. Коротко."
+	revisionRequest  = "Короче, без вступления"
+	ideaMessageID    = int64(10)
+	revisionMsgID    = int64(11)
 )
+
+// firstVersion is above the Telegram limit: the draft is sent in two parts.
+var firstVersion = strings.Repeat(firstVersionLine, 100)
 
 // scriptedExecutor answers runs in order and remembers the prompts.
 type scriptedExecutor struct {
@@ -80,14 +83,19 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 
 	first := waitDraft(t, api, 1)
 	assert.Equal(t, marketer, first.call.token, "the draft comes from the bot of the agent")
-	assert.Equal(t, firstVersion, first.params.Text)
 	assert.Equal(t, testTopicID, first.params.MessageThreadID)
-	require.NotNil(t, first.params.ReplyParameters)
-	assert.Equal(t, ideaMessageID, first.params.ReplyParameters.MessageID)
+
+	// The long draft: the first part answers the idea, the last one has the buttons.
+	firstPart := sentMessage(t, api, first.call.result-1)
+	require.NotNil(t, firstPart.ReplyParameters)
+	assert.Equal(t, ideaMessageID, firstPart.ReplyParameters.MessageID)
+	assert.Nil(t, firstPart.ReplyMarkup)
+	assert.Equal(t, firstVersion, firstPart.Text+first.params.Text)
 
 	cb, err := tasks.ParseCallback(first.params.ReplyMarkup.InlineKeyboard[0][0].CallbackData)
 	require.NoError(t, err)
 	assert.Equal(t, 1, cb.Version)
+	waitDraftStored(t, env, cb.TaskID, 1)
 
 	require.Eventually(t, func() bool {
 		reactions := api.callsOf("setMessageReaction")
@@ -95,10 +103,11 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 		return len(reactions) == 1 && strings.Contains(string(reactions[0].body), `"message_id":10`)
 	}, integrationWait, integrationTick, "the idea is marked as taken")
 
-	// A reply to the draft is a revision: the old draft loses its buttons, version 2 comes with new ones.
+	// A reply to the first part of the draft is a revision: the old draft loses its buttons, version 2 comes
+	// with new ones.
 	revision := topicMessage(groupID, revisionMsgID, revisionRequest)
 	revision.ReplyToMessage = &telegram.Message{
-		MessageID: first.call.result, From: &marketerBot, Chat: revision.Chat,
+		MessageID: first.call.result - 1, From: &marketerBot, Chat: revision.Chat,
 		IsTopicMessage: true, MessageThreadID: testTopicID,
 	}
 	api.queue(marketer, telegram.Update{UpdateID: 2, Message: revision})
@@ -108,6 +117,7 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 	assert.Equal(t, tasks.DraftButtons(cb.TaskID, 2)[0].CallbackData, second.params.ReplyMarkup.InlineKeyboard[0][0].CallbackData)
 	assert.Contains(t, env.executor.Prompts()[1], revisionRequest)
 	waitButtonsRemoved(t, api, first.call.result)
+	waitDraftStored(t, env, cb.TaskID, 2)
 
 	// «Одобрить» under version 2.
 	api.queue(marketer, telegram.Update{UpdateID: 3, CallbackQuery: &telegram.CallbackQuery{
@@ -220,6 +230,38 @@ func waitDraft(t *testing.T, api *fakeBotAPI, n int) sentDraft {
 	}, integrationWait, integrationTick, "draft %d is not sent", n)
 
 	return drafts[n-1]
+}
+
+// waitDraftStored waits until the messages of the draft version are stored: the worker stores them right
+// after Telegram answers, and only then a reply or a button press finds the draft.
+func waitDraftStored(t *testing.T, env *integrationEnv, taskID int64, version int) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		v, err := env.service.GetVersion(context.Background(), taskID, version)
+
+		return err == nil && v.DraftMessageID != nil
+	}, integrationWait, integrationTick, "draft %d of task %d is not stored", version, taskID)
+}
+
+// sentMessage returns the sendMessage call that got the message ID.
+func sentMessage(t *testing.T, api *fakeBotAPI, messageID int64) telegram.SendMessageParams {
+	t.Helper()
+
+	for _, c := range api.callsOf("sendMessage") {
+		if c.result != messageID {
+			continue
+		}
+
+		var params telegram.SendMessageParams
+		require.NoError(t, json.Unmarshal(c.body, &params))
+
+		return params
+	}
+
+	require.FailNow(t, "message is not sent", "message %d", messageID)
+
+	return telegram.SendMessageParams{}
 }
 
 func waitButtonsRemoved(t *testing.T, api *fakeBotAPI, messageID int64) {

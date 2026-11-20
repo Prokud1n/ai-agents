@@ -95,7 +95,9 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
 - `internal/teamchat` связывает их: `Handler` (события → задачи, кнопки, реплай-правки, команды) подменяет
   `gateway.AckHandler` через `fx.Decorate` **на верхнем уровне** опций (`teamchat.Module` — `fx.Options`, а не
   `fx.Module`: декоратор внутри модуля не дошёл бы до `gateway.Module`); `Notifier` шлёт черновики от бота агента.
-  Без токенов `tasks.Notifier` — `tasks.LogNotifier`. Имя агента = роль бота (`agents/marketer` и т.д.).
+  Без токенов `tasks.Notifier` — `tasks.LogNotifier`. Имя агента = роль бота (`agents/marketer`, `agents/copywriter`);
+  за Монтажёра и Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`), агентов для них нет.
+  Медиа `teamchat` пока не обрабатывает и через `gateway.MediaFilter` просит шлюз их не скачивать.
 
 ### База знаний
 

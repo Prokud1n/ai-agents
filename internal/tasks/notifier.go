@@ -8,9 +8,10 @@ import (
 // Notifier delivers drafts and failures to the trainer. The Telegram gateway implements it (each agent
 // writes from its own bot: teamchat.Notifier); LogNotifier stands in for it when the gateway is off.
 type Notifier interface {
-	// SendDraft sends the draft with buttons from the agent's bot and returns the message id
-	// (0 if the notifier has no messages).
-	SendDraft(ctx context.Context, draft *Draft) (int64, error)
+	// SendDraft sends the draft with buttons from the agent's bot and returns its messages (none if the
+	// notifier has no messages). It fails as a whole: when a part of a long draft is not sent, the next
+	// delivery attempt sends all parts again.
+	SendDraft(ctx context.Context, draft *Draft) (SentDraft, error)
 	// CloseDraft marks a decided draft: removes its buttons and shows the decision.
 	CloseDraft(ctx context.Context, data *CloseDraftData) error
 	// NotifyFailure tells the trainer that the task failed.
@@ -30,6 +31,15 @@ type Draft struct {
 	// Note is shown above the draft when not empty, e.g. why a revision could not be applied.
 	Note    string
 	Buttons []Button
+}
+
+// SentDraft is the messages of a sent draft.
+type SentDraft struct {
+	// MessageID is the message with the buttons (the last part of a long draft); 0 if the notifier has no
+	// messages.
+	MessageID int64
+	// PartIDs are the earlier parts of a long draft: a reply to any of them is a revision too.
+	PartIDs []int64
 }
 
 // CloseDraftData is a decided draft message.
@@ -66,12 +76,12 @@ func NewLogNotifier(log *slog.Logger) *LogNotifier {
 	return &LogNotifier{log: log}
 }
 
-func (n *LogNotifier) SendDraft(ctx context.Context, draft *Draft) (int64, error) {
+func (n *LogNotifier) SendDraft(ctx context.Context, draft *Draft) (SentDraft, error) {
 	n.log.InfoContext(ctx, "tasks: draft is ready (log notifier)",
 		"task_id", draft.TaskID, "version", draft.Version, "agent", draft.Agent, "chars", len([]rune(draft.Text)),
 		"note", draft.Note)
 
-	return 0, nil
+	return SentDraft{}, nil
 }
 
 func (n *LogNotifier) CloseDraft(ctx context.Context, data *CloseDraftData) error {

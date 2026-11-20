@@ -206,6 +206,22 @@ func UpdateToRevisionQueued(version int, authorID int64, text string, now time.T
 	}
 }
 
+// WithFeedbackSource marks the feedback of the change with the message it came from.
+func WithFeedbackSource(fn UpdaterFn, messageID int64) UpdaterFn {
+	return func(t Task) (Change, error) {
+		change, err := fn(t)
+		if err != nil || change.Feedback == nil {
+			return change, err
+		}
+
+		feedback := *change.Feedback
+		feedback.SourceMessageID = messageID
+		change.Feedback = &feedback
+
+		return change, nil
+	}
+}
+
 // UpdateToDeliveryFailed fails a task whose draft could not be delivered.
 func UpdateToDeliveryFailed(version int, deliveryErr string, now time.Time) UpdaterFn {
 	return func(t Task) (Change, error) {

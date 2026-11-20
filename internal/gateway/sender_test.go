@@ -384,6 +384,10 @@ func TestSenderSplitsLongText(t *testing.T) {
 	assert.Nil(t, last.ReplyParameters)
 	assert.NotNil(t, last.ReplyMarkup)
 	assert.Equal(t, api.lastMessageID(), id, "the ID of the message with the buttons")
+
+	ids, err := sender.SendTextParts(t.Context(), MarketerRole, &OutgoingMessage{Text: text})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{api.lastMessageID() - 1, api.lastMessageID()}, ids, "the IDs of all parts in order")
 }
 
 func TestSenderMovesLongCaptionToText(t *testing.T) {

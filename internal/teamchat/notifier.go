@@ -29,6 +29,7 @@ const (
 
 type draftSender interface {
 	SendText(ctx context.Context, role gateway.Role, msg *gateway.OutgoingMessage) (int64, error)
+	SendTextParts(ctx context.Context, role gateway.Role, msg *gateway.OutgoingMessage) ([]int64, error)
 	EditButtons(ctx context.Context, role gateway.Role, messageID int64, buttons [][]gateway.Button) error
 }
 
@@ -44,20 +45,32 @@ func NewNotifier(sender draftSender, log *slog.Logger) *Notifier {
 }
 
 // SendDraft sends the draft as an answer to the task message, with the buttons «Одобрить / Правки / Отклонить».
-// A long draft goes in several messages; the buttons are on the last one, and its ID is returned: a reply to it
-// is a revision.
-func (n *Notifier) SendDraft(ctx context.Context, draft *tasks.Draft) (int64, error) {
-	messageID, err := n.sender.SendText(ctx, roleOf(draft.Agent), &gateway.OutgoingMessage{
+// A long draft goes in several messages with the buttons on the last one; all their IDs are returned, so a
+// reply to any part is a revision. If a part fails, the whole send fails and the next delivery attempt sends
+// every part again (the parts sent before the failure stay in the chat without buttons).
+func (n *Notifier) SendDraft(ctx context.Context, draft *tasks.Draft) (tasks.SentDraft, error) {
+	ids, err := n.sender.SendTextParts(ctx, roleOf(draft.Agent), &gateway.OutgoingMessage{
 		TopicID: draft.TopicID,
 		ReplyTo: draft.ReplyToMessageID,
 		Text:    draftText(draft),
 		Buttons: buttonRows(draft.Buttons),
 	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to send draft: %w", err)
+		return tasks.SentDraft{}, fmt.Errorf("failed to send draft: %w", err)
 	}
 
-	return messageID, nil
+	if len(ids) == 0 {
+		return tasks.SentDraft{}, nil
+	}
+
+	last := len(ids) - 1
+	sent := tasks.SentDraft{MessageID: ids[last]}
+
+	if last > 0 {
+		sent.PartIDs = slices.Clone(ids[:last])
+	}
+
+	return sent, nil
 }
 
 // CloseDraft removes the buttons of the decided draft and answers it with the decision; a duplicate draft only

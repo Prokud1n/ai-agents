@@ -280,6 +280,38 @@ func TestGatewayDownloadFailures(t *testing.T) {
 	}
 }
 
+// noMediaHandler does not process files: the gateway must not download them.
+type noMediaHandler struct {
+	*recordingHandler
+}
+
+func (noMediaHandler) WantsMedia(*Event) bool {
+	return false
+}
+
+func TestGatewaySkipsDownloadForHandlerWithoutMedia(t *testing.T) {
+	t.Parallel()
+
+	api, baseURL := newFakeBotAPI(t)
+	api.addFile(telegram.File{FileID: "f", FileSize: 10, FilePath: "/var/lib/telegram-bot-api/voice/file_0.oga"})
+
+	msg := sourcesMessage(1, 600, "")
+	msg.Message.Voice = &telegram.Voice{FileID: "f", Duration: 3, FileSize: 10}
+	api.queue(marketerAuth, msg)
+
+	handler := noMediaHandler{recordingHandler: newRecordingHandler()}
+	lc, _ := startGateway(t, testConfig(baseURL, t.TempDir()), newMemoryStore(), handler, slog.New(slog.DiscardHandler))
+
+	event := handler.next(t)
+
+	lc.RequireStop()
+
+	require.NotNil(t, event.Media)
+	assert.Equal(t, VoiceMediaType, event.Media.Type)
+	assert.False(t, event.Media.Downloaded())
+	assert.Empty(t, api.callsOf("getFile"))
+}
+
 func TestValidateConfig(t *testing.T) {
 	t.Parallel()
 

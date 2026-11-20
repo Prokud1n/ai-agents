@@ -16,6 +16,7 @@ const (
 	testUserID    = int64(42)
 	testTaskID    = int64(5)
 	testDraftID   = int64(900)
+	partLimit     = 100 // fakeSender splits longer texts in two parts
 )
 
 // fakeService records the calls of the handler; the errors are returned by the matching methods.
@@ -35,6 +36,32 @@ type fakeService struct {
 	reviseErr  error
 	statusErr  error
 	report     tasks.StatusReport
+
+	// The draft FindByDraftMessage finds: by default version 2 of the test task, awaiting approval.
+	draftStatus  tasks.Status
+	draftVersion int
+	findErr      error
+}
+
+func (f *fakeService) FindByDraftMessage(_ context.Context, _, _ int64) (tasks.Task, tasks.Version, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.findErr != nil {
+		return tasks.Task{}, tasks.Version{}, f.findErr
+	}
+
+	status, version := f.draftStatus, f.draftVersion
+	if status == "" {
+		status = tasks.AwaitingApprovalStatus
+	}
+
+	if version == 0 {
+		version = 2
+	}
+
+	return tasks.Task{ID: testTaskID, Status: status, Version: version},
+		tasks.Version{TaskID: testTaskID, Version: version}, nil
 }
 
 func (f *fakeService) Create(_ context.Context, data *tasks.CreateTaskData) (tasks.Task, bool, error) {
@@ -135,6 +162,20 @@ func (f *fakeSender) SendText(_ context.Context, role gateway.Role, msg *gateway
 	}
 
 	return testDraftID, nil
+}
+
+// SendTextParts sends the text as one part, or as two when it is longer than partLimit.
+func (f *fakeSender) SendTextParts(ctx context.Context, role gateway.Role, msg *gateway.OutgoingMessage) ([]int64, error) {
+	id, err := f.SendText(ctx, role, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	if len([]rune(msg.Text)) > partLimit {
+		return []int64{id - 1, id}, nil
+	}
+
+	return []int64{id}, nil
 }
 
 func (f *fakeSender) AnswerCallback(_ context.Context, role gateway.Role, callbackID, text string) error {

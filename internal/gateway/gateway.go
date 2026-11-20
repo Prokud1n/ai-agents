@@ -396,7 +396,7 @@ func (g *gateway) handle(ctx context.Context, b *bot, event *Event, key string) 
 		}
 	}()
 
-	if event.Media != nil && !event.Media.TooLarge {
+	if event.Media != nil && !event.Media.TooLarge && wantsMedia(g.handler, event) {
 		g.download(ctx, b, event.Media)
 	}
 

@@ -8,16 +8,22 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
-// takenReaction marks a message that became a task: the trainer sees it was taken, and the topic gets no
-// extra message before the draft.
-const takenReaction = "👀"
+const (
+	// takenReaction marks a message that became a task: the trainer sees it was taken, and the topic gets no
+	// extra message before the draft.
+	takenReaction = "👀"
+	// reactionTimeout: the reaction is set in the background and is not worth retrying for long.
+	reactionTimeout = 3 * time.Second
+)
 
 // Task kinds of the team commands; a plain message has no kind.
 const (
@@ -31,6 +37,7 @@ type taskService interface {
 	Reject(ctx context.Context, data *tasks.RejectTaskData) (tasks.Task, error)
 	RequestRevisionByReply(ctx context.Context, data *tasks.RequestRevisionByReplyData) (tasks.Task, error)
 	StatusReport(ctx context.Context, since time.Time) (tasks.StatusReport, error)
+	FindByDraftMessage(ctx context.Context, chatID, messageID int64) (tasks.Task, tasks.Version, error)
 }
 
 type chatSender interface {
@@ -44,11 +51,16 @@ type chatSender interface {
 // a repeated decision is refused by the task service.
 //
 //   - a text message creates a task for the target role (the topic of the message gets the draft);
-//     a forwarded text goes to the agent as data, not as an instruction;
-//   - a reply to the latest draft is a revision of it; a reply to any other message is a new task;
+//     a forwarded text goes to the agent as data, not as an instruction; the editor and the designer are not
+//     connected yet and answer with a fixed text, without an agent run;
+//   - a reply to any part of the latest draft is a revision of it (once per reply message); a reply while the
+//     new version is being made, to an old or a decided draft gets an explanation; a reply to any other
+//     message is a new task;
 //   - draft buttons: «Одобрить» and «Отклонить» decide, «Правки» asks to reply to the draft with the revision;
-//   - /status, /plan, /idea, /pause are the marketer's;
-//   - voice messages, videos and photos are not processed yet: the trainer gets an honest answer.
+//     a button counts only on the draft message of its task and version;
+//   - /status, /plan, /idea, /pause are the marketer's; any other command gets the list of commands;
+//   - voice messages, videos and photos are not processed yet: the trainer gets an honest answer, and the
+//     gateway does not download the file (WantsMedia).
 //
 // Errors of the task service reach the trainer as tasks.UserMessage; details go to the log only.
 type Handler struct {
@@ -56,6 +68,8 @@ type Handler struct {
 	sender chatSender
 	log    *slog.Logger
 	now    func() time.Time
+	// background tracks reactions being set; see WaitBackground.
+	background sync.WaitGroup
 }
 
 func NewHandler(service taskService, sender chatSender, log *slog.Logger) *Handler {
@@ -73,9 +87,39 @@ func (h *Handler) HandleEvent(ctx context.Context, event *gateway.Event) error {
 	}
 }
 
+// WantsMedia: files are not processed yet, so the gateway answers at once instead of downloading them.
+func (*Handler) WantsMedia(*gateway.Event) bool {
+	return false
+}
+
+// WaitBackground waits for reactions being set, at most until ctx is done.
+func (h *Handler) WaitBackground(ctx context.Context) error {
+	done := make(chan struct{})
+
+	go func() {
+		h.background.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("failed to wait for team chat background work: %w", ctx.Err())
+	}
+}
+
 func (h *Handler) handleMessage(ctx context.Context, event *gateway.Event) error {
 	if event.Media != nil {
 		return h.reply(ctx, event.Target, event, mediaText(event.Media.Type, event.Text))
+	}
+
+	if text, ok := stubTexts[event.Target]; ok {
+		return h.reply(ctx, event.Target, event, text)
+	}
+
+	if !event.Forwarded && commandPattern.MatchString(event.Text) {
+		return h.reply(ctx, gateway.MarketerRole, event, unknownCommandText)
 	}
 
 	if event.ReplyToMessageID != 0 {
@@ -94,19 +138,39 @@ func (h *Handler) revise(ctx context.Context, event *gateway.Event) (bool, error
 	_, err := h.tasks.RequestRevisionByReply(ctx, &tasks.RequestRevisionByReplyData{
 		ChatID:           event.ChatID,
 		ReplyToMessageID: event.ReplyToMessageID,
+		MessageID:        event.MessageID,
 		UserID:           event.From.ID,
 		Text:             revisionText(event),
 	})
 
 	switch {
 	case err == nil:
-		// The draft loses its buttons and gets «Принял правку» from the notifier: no answer here.
+		// The draft loses its buttons and gets «Принял правку» from the notifier; a redelivered reply changes
+		// nothing. No answer here.
 		return true, nil
 	case errors.Is(err, tasks.ErrNotFound):
 		return false, nil
+	case errors.Is(err, tasks.ErrConflict):
+		return true, h.replyConflict(ctx, event, err)
 	default:
 		return true, h.replyError(ctx, event.Target, event, "request revision", err)
 	}
+}
+
+// replyConflict explains why a reply to the latest draft is not a revision: by the status of its task.
+func (h *Handler) replyConflict(ctx context.Context, event *gateway.Event, conflict error) error {
+	h.logFailure(ctx, "request revision", event, conflict)
+
+	text := tasks.UserMessage(conflict)
+
+	task, _, err := h.tasks.FindByDraftMessage(ctx, event.ChatID, event.ReplyToMessageID)
+	if err != nil {
+		h.log.WarnContext(ctx, "teamchat: failed to find the task of the replied draft", "event", event, "error", err)
+	} else if explained, ok := revisionRefusedTexts[task.Status]; ok {
+		text = explained
+	}
+
+	return h.reply(ctx, event.Target, event, text)
 }
 
 type taskRequest struct {
@@ -133,12 +197,26 @@ func (h *Handler) createTask(ctx context.Context, event *gateway.Event, req *tas
 		return nil
 	}
 
-	// The bot that received the message has surely seen it; a failed reaction does not matter.
-	if err := h.sender.React(ctx, event.ReceivedBy, event.MessageID, takenReaction); err != nil {
-		h.log.WarnContext(ctx, "teamchat: failed to react to the task message", "task_id", task.ID, "error", err)
-	}
+	h.markTaken(ctx, event, task.ID)
 
 	return nil
+}
+
+// markTaken sets the reaction in the background with a short timeout, so it does not hold a handler slot.
+// The bot that received the message has surely seen it; a failed reaction (e.g. the group restricts
+// reactions) is only a warning.
+func (h *Handler) markTaken(ctx context.Context, event *gateway.Event, taskID int64) {
+	bgCtx := context.WithoutCancel(ctx)
+	role, messageID := event.ReceivedBy, event.MessageID
+
+	h.background.Go(func() {
+		ctx, cancel := context.WithTimeout(bgCtx, reactionTimeout)
+		defer cancel()
+
+		if err := h.sender.React(ctx, role, messageID, takenReaction); err != nil {
+			h.log.WarnContext(ctx, "teamchat: failed to react to the task message", "task_id", taskID, "error", err)
+		}
+	})
 }
 
 // handleCommand: team commands are the marketer's, even when addressed to another bot.
@@ -175,12 +253,19 @@ func (h *Handler) status(ctx context.Context, event *gateway.Event) error {
 }
 
 // handleCallback applies a draft button. The answer goes from the bot that received the press (the owner of
-// the button); Telegram takes one answer per press.
+// the button) right after the decision is stored; the task service closes the draft in the background.
+// Telegram takes one answer per press.
 func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) error {
 	cb, err := tasks.ParseCallback(event.Callback.Data)
 	if err != nil {
 		// The error repeats the callback data: only the event (without its content) is logged.
 		h.log.InfoContext(ctx, "teamchat: callback is not a task button", "event", event)
+
+		return h.answer(ctx, event, tasks.UserMessage(err))
+	}
+
+	if err := h.checkButton(ctx, event, cb); err != nil {
+		h.logFailure(ctx, "check button", event, err)
 
 		return h.answer(ctx, event, tasks.UserMessage(err))
 	}
@@ -193,6 +278,24 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 	}
 
 	return h.answer(ctx, event, text)
+}
+
+// checkButton: a button counts only on the draft message of its task and version, so callback data put on
+// another message cannot decide a task.
+func (h *Handler) checkButton(ctx context.Context, event *gateway.Event, cb tasks.Callback) error {
+	task, v, err := h.tasks.FindByDraftMessage(ctx, event.ChatID, event.MessageID)
+
+	switch {
+	case errors.Is(err, tasks.ErrNotFound) || errors.Is(err, tasks.ErrStaleVersion):
+		return fmt.Errorf("message %d is not the draft of the button: %w", event.MessageID, tasks.ErrInvalidCallback)
+	case err != nil:
+		return fmt.Errorf("failed to find the draft of the button: %w", err)
+	case task.ID != cb.TaskID || v.Version != cb.Version:
+		return fmt.Errorf("button of task %d version %d on the draft of task %d version %d: %w",
+			cb.TaskID, cb.Version, task.ID, v.Version, tasks.ErrInvalidCallback)
+	default:
+		return nil
+	}
 }
 
 // decide applies the pressed action and returns the answer to the press.
@@ -249,6 +352,9 @@ func (h *Handler) logFailure(ctx context.Context, action string, event *gateway.
 
 	h.log.ErrorContext(ctx, "teamchat: action failed", "action", action, "event", event, "error", err)
 }
+
+// commandPattern is a command the gateway does not pass as a team command: /help, /start@bot …
+var commandPattern = regexp.MustCompile(`^/[A-Za-z0-9_]+(@[A-Za-z0-9_]+)?(\s|$)`)
 
 func refused(err error) bool {
 	return errors.Is(err, tasks.ErrValidation) || errors.Is(err, tasks.ErrConflict) ||

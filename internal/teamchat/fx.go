@@ -20,6 +20,7 @@ import (
 var Module = fx.Options(
 	fx.Module("teamchat",
 		fx.Provide(newHandler, newNotifier),
+		fx.Invoke(registerHandler),
 	),
 	fx.Decorate(useHandler),
 )
@@ -34,6 +35,11 @@ func newNotifier(cfg *config.Telegram, sender *gateway.Sender, log *slog.Logger)
 	}
 
 	return NewNotifier(sender, log)
+}
+
+// registerHandler waits on stop for the reactions the handler sets in the background.
+func registerHandler(lc fx.Lifecycle, h *Handler) {
+	lc.Append(fx.Hook{OnStop: h.WaitBackground})
 }
 
 // useHandler replaces the gateway's default handler.

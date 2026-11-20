@@ -22,6 +22,19 @@ type Handler interface {
 	HandleEvent(ctx context.Context, event *Event) error
 }
 
+// MediaFilter is optional for a Handler: the gateway downloads the file of an event only when WantsMedia
+// returns true (a handler that does not process files yet answers at once, without waiting for a download).
+// A Handler without it gets every file downloaded.
+type MediaFilter interface {
+	WantsMedia(event *Event) bool
+}
+
+func wantsMedia(h Handler, event *Event) bool {
+	filter, ok := h.(MediaFilter)
+
+	return !ok || filter.WantsMedia(event)
+}
+
 // replySender is the part of Sender the acknowledging handler needs.
 type replySender interface {
 	SendText(ctx context.Context, role Role, msg *OutgoingMessage) (int64, error)

@@ -122,17 +122,45 @@ func TestHandlerMessages(t *testing.T) {
 		{
 			name:    "service error: the trainer gets the class, not the details",
 			service: &fakeService{createErr: errDatabaseDown},
-			event:   withTarget(messageEvent(ideaText), gateway.EditorRole),
+			event:   withTarget(messageEvent(ideaText), gateway.CopywriterRole),
 			expected: handlerCalls{
-				created: []tasks.CreateTaskData{taskData(gateway.EditorRole, "", ideaText)},
-				texts:   []sentText{reply(gateway.EditorRole, internalErr)},
+				created: []tasks.CreateTaskData{taskData(gateway.CopywriterRole, "", ideaText)},
+				texts:   []sentText{reply(gateway.CopywriterRole, internalErr)},
+			},
+		},
+		{
+			name:     "editor is not connected: a fixed answer, no task",
+			event:    withTarget(messageEvent("смонтируй рилс"), gateway.EditorRole),
+			expected: handlerCalls{texts: []sentText{reply(gateway.EditorRole, stubTexts[gateway.EditorRole])}},
+		},
+		{
+			name:     "designer is not connected: a fixed answer, no task",
+			event:    withTarget(replyTo(messageEvent("обложку"), 55), gateway.DesignerRole),
+			expected: handlerCalls{texts: []sentText{reply(gateway.DesignerRole, stubTexts[gateway.DesignerRole])}},
+		},
+		{
+			name:     "unknown command is not a task",
+			event:    messageEvent("/help"),
+			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
+		},
+		{
+			name:     "unknown command to a bot is not a task either",
+			event:    withTarget(messageEvent("/start@copy_bot"), gateway.CopywriterRole),
+			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
+		},
+		{
+			name:  "a path is not a command",
+			event: messageEvent("/ — это слеш"),
+			expected: handlerCalls{
+				created:   []tasks.CreateTaskData{taskData(gateway.MarketerRole, "", "/ — это слеш")},
+				reactions: taken(),
 			},
 		},
 		{
 			name:  "reply to the latest draft is a revision",
 			event: withTarget(replyTo(messageEvent("Короче и без эмодзи"), testDraftID), gateway.CopywriterRole),
 			expected: handlerCalls{revisions: []tasks.RequestRevisionByReplyData{{
-				ChatID: testChatID, ReplyToMessageID: testDraftID, UserID: testUserID, Text: "Короче и без эмодзи",
+				ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID, Text: "Короче и без эмодзи",
 			}}},
 		},
 		{
@@ -141,7 +169,7 @@ func TestHandlerMessages(t *testing.T) {
 			event:   replyTo(messageEvent(ideaText), 55),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
-					ChatID: testChatID, ReplyToMessageID: 55, UserID: testUserID, Text: ideaText,
+					ChatID: testChatID, ReplyToMessageID: 55, MessageID: testMessageID, UserID: testUserID, Text: ideaText,
 				}},
 				created:   []tasks.CreateTaskData{taskData(gateway.MarketerRole, "", ideaText)},
 				reactions: taken(),
@@ -153,9 +181,33 @@ func TestHandlerMessages(t *testing.T) {
 			event:   withTarget(replyTo(messageEvent("Правка"), testDraftID), gateway.CopywriterRole),
 			expected: handlerCalls{
 				revisions: []tasks.RequestRevisionByReplyData{{
-					ChatID: testChatID, ReplyToMessageID: testDraftID, UserID: testUserID, Text: "Правка",
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID, Text: "Правка",
 				}},
 				texts: []sentText{reply(gateway.CopywriterRole, "Ответьте на последний черновик.")},
+			},
+		},
+		{
+			name:    "reply while the new version is being made",
+			service: &fakeService{reviseErr: tasks.ErrConflict, draftStatus: tasks.RunningStatus},
+			event:   withTarget(replyTo(messageEvent("Правка"), testDraftID), gateway.CopywriterRole),
+			expected: handlerCalls{
+				revisions: []tasks.RequestRevisionByReplyData{{
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID,
+					Text: "Правка",
+				}},
+				texts: []sentText{reply(gateway.CopywriterRole, busyRevisionText)},
+			},
+		},
+		{
+			name:    "reply to an approved draft",
+			service: &fakeService{reviseErr: tasks.ErrConflict, draftStatus: tasks.ApprovedStatus},
+			event:   replyTo(messageEvent("Правка"), testDraftID),
+			expected: handlerCalls{
+				revisions: []tasks.RequestRevisionByReplyData{{
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, UserID: testUserID,
+					Text: "Правка",
+				}},
+				texts: []sentText{reply(gateway.MarketerRole, revisionRefusedTexts[tasks.ApprovedStatus])},
 			},
 		},
 		{
@@ -340,6 +392,24 @@ func TestHandlerCallbacks(t *testing.T) {
 			},
 		},
 		{
+			name:     "button on another message",
+			service:  &fakeService{findErr: tasks.ErrNotFound},
+			event:    callbackEvent(gateway.CopywriterRole, approve),
+			expected: handlerCalls{answers: answer(gateway.CopywriterRole, "Кнопка устарела или повреждена.")},
+		},
+		{
+			name:     "button of another version than the draft",
+			service:  &fakeService{draftVersion: 3},
+			event:    callbackEvent(gateway.CopywriterRole, approve),
+			expected: handlerCalls{answers: answer(gateway.CopywriterRole, "Кнопка устарела или повреждена.")},
+		},
+		{
+			name:     "button on an old message of the draft",
+			service:  &fakeService{findErr: tasks.ErrStaleDraft},
+			event:    callbackEvent(gateway.MarketerRole, reject),
+			expected: handlerCalls{answers: answer(gateway.MarketerRole, "Кнопка устарела или повреждена.")},
+		},
+		{
 			name:     "not a task button",
 			event:    callbackEvent(gateway.MarketerRole, "approve:7"),
 			expected: handlerCalls{answers: answer(gateway.MarketerRole, "Кнопка устарела или повреждена.")},
@@ -360,6 +430,15 @@ func TestHandlerCallbacks(t *testing.T) {
 
 // TestHandlerSendFailure: when the trainer cannot be answered, the gateway gets the error (and answers
 // a button press without text itself).
+// TestHandlerDoesNotWantMedia: files are not processed yet, the gateway does not download them.
+func TestHandlerDoesNotWantMedia(t *testing.T) {
+	t.Parallel()
+
+	h := NewHandler(&fakeService{}, &fakeSender{}, slog.New(slog.DiscardHandler))
+
+	assert.False(t, h.WantsMedia(withMedia(messageEvent(""), gateway.VideoMediaType)))
+}
+
 func TestHandlerSendFailure(t *testing.T) {
 	t.Parallel()
 
@@ -394,7 +473,9 @@ func handle(t *testing.T, service *fakeService, sender *fakeSender, event *gatew
 		sender = &fakeSender{}
 	}
 
-	err := NewHandler(service, sender, slog.New(slog.DiscardHandler)).HandleEvent(t.Context(), event)
+	h := NewHandler(service, sender, slog.New(slog.DiscardHandler))
+	err := h.HandleEvent(t.Context(), event)
+	require.NoError(t, h.WaitBackground(t.Context()))
 
 	return handlerCalls{
 		created:   service.created,

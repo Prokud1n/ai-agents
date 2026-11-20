@@ -14,7 +14,7 @@ import (
 )
 
 // TestEveryRoleHasAgent: a task of a message goes to the agent named after the target role, so the real
-// agents/ must have an agent for every bot.
+// agents/ must have an agent for every bot that is not answered with a fixed text (stubTexts).
 func TestEveryRoleHasAgent(t *testing.T) {
 	t.Parallel()
 
@@ -25,6 +25,12 @@ func TestEveryRoleHasAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, role := range gateway.Roles {
+		if _, stub := stubTexts[role]; stub {
+			continue
+		}
+
 		assert.Contains(t, registry.Names(), string(role))
 	}
+
+	assert.Len(t, stubTexts, 2, "editor and designer are not connected yet")
 }
