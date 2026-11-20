@@ -115,6 +115,18 @@ func TestParseCommand(t *testing.T) {
 			input:    []string{ingestCmd, "-force", "a", kindFlag, brandName},
 			expected: Command{Action: IngestAction, Arg: "a", Kind: knowledge.BrandKind, Force: true},
 		},
+		{
+			name:     "search query starting with a dash after --",
+			input:    []string{searchCmd, "-limit", "3", "--", "-5 кг"},
+			expected: Command{Action: SearchAction, Arg: "-5 кг", Limit: 3},
+		},
+		{
+			name:     "flags after -- are part of the arguments",
+			input:    []string{deleteCmd, "--", "-limit"},
+			expected: Command{Action: DeleteAction, Arg: "-limit"},
+		},
+		{name: "two arguments after --", input: []string{searchCmd, "--", "-5", "-limit"}, expectErr: true},
+		{name: "query starting with a dash without --", input: []string{searchCmd, "-5 кг"}, expectErr: true},
 		{name: "reembed", input: []string{string(ReembedAction)}, expected: Command{Action: ReembedAction}},
 		{name: "reembed with argument", input: []string{string(ReembedAction), "x"}, expectErr: true},
 	}

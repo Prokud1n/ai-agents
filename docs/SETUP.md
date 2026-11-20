@@ -218,7 +218,10 @@ cp .env.dist .env
 
 `make kb-*` запускают CLI `kb` из образа приложения (`docker compose run --rm --entrypoint /app/kb app …`,
 `scripts/kb.sh`), Go на хосте не нужен. Нужен поднятый стек (`make up`): база — сервис `postgres`, образ — тот, что
-собрал `make up` (после `git pull` снова `make up`, иначе в образе может не оказаться `/app/kb` или старый код).
+собрал `make up`. Без образа или без запущенного `postgres` команда сразу останавливается с подсказкой `make up`;
+если `cmd/`, `internal/`, `go.mod`, `go.sum` или `Dockerfile` менялись после сборки образа (например, после
+`git pull`), печатается предупреждение «образ старше кода» — тоже `make up`. Запрос, начинающийся с `-`, работает:
+`make kb-search Q="-5 кг"`.
 `./kb` монтируется в контейнер только на чтение в `/kb`, там `KB_ROOT=/kb`. `KB_PATH` пишется как на хосте
 (`./kb/brand`, `kb/brand` или абсолютный путь) и переводится в `/kb/brand`; путь вне `./kb` — ошибка
 «вне папки базы знаний». Симлинки, ведущие из `./kb` наружу, в контейнере не читаются.
@@ -226,7 +229,8 @@ cp .env.dist .env
 Права. Контейнер работает не от root: с uid:gid пользователя хоста, поэтому читает всё, что может прочитать сам
 пользователь, в том числе файлы с правами `600`. Если команды запускаются от root хоста, `kb` остаётся непривилегированным
 пользователем образа (uid 65532): тогда файлам нужны права на чтение для всех (`644`, папкам — `755`):
-`chmod -R a+rX kb`. На macOS (Docker Desktop) права обычных файлов отдельно настраивать не нужно.
+`chmod -R a+rX kb`. На macOS (Docker Desktop) права обычных файлов отдельно настраивать не нужно. С rootless Docker
+и Podman uid хоста внутри контейнера сдвигается (user namespace), поэтому файлам тоже нужны права `644`, папкам — `755`.
 
 Для разработчиков: `KB_HOST=1 make kb-…` запускает `go run ./cmd/kb` на хосте, как раньше: `KB_ROOT` из `.env`,
 Postgres — на `127.0.0.1:POSTGRES_HOST_PORT`.
@@ -352,7 +356,8 @@ read -rs M0_BOT_TOKEN && export M0_BOT_TOKEN && make m0-check; unset M0_BOT_TOKE
 | OpenAI: `401` / `invalid_api_key` | ключ неверный или отозван |
 | OpenAI: `insufficient_quota` | на балансе OpenAI нет денег (Billing на platform.openai.com) |
 | `make kb-*`: `failed to connect` / `connection refused` к `postgres` | стек не поднят: `make up` |
-| `make kb-*`: `exec: "/app/kb": no such file or directory` | образ собран до появления `kb` в нём: `make up` |
+| `make kb-*`: «образ … не собран», «стек не поднят» или `exec: "/app/kb": no such file or directory` | образа нет, он собран до появления `kb` или стек остановлен: `make up` |
+| `make kb-*`: «образ … старше кода» | код обновился после сборки образа: `make up` |
 | `make kb-ingest`: «вне папки базы знаний» | `KB_PATH` должен указывать внутрь `./kb`: положи материалы туда |
 | `make kb-ingest`: `permission denied` | команды запущены от root, а файлы в `./kb` недоступны другим: `chmod -R a+rX kb` (раздел 5) |
 | `KB_HOST=1 make kb-*`: `connection refused` к `127.0.0.1:5432` | стек не поднят (`make up`) или `POSTGRES_HOST_PORT` отличается от того, с которым поднят стек |

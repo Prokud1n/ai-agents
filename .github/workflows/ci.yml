@@ -276,6 +276,12 @@ jobs:
           check ./kbx -
           check ./internal -
           check /etc/passwd -
+          for bad in -kind $'./kb/a\nb'; do
+            if scripts/kb.sh container-path "$bad" 2>err.txt; then
+              echo "::error::kb path '$bad' must be rejected"; status=1
+            fi
+            cat err.txt
+          done
           exit "$status"
 
       # kb in the app image without OPENAI_API_KEY. extract-pdf runs directly (as the image's nonroot and as
@@ -290,13 +296,13 @@ jobs:
           image=ai-agents-app:local
           fail() { echo "::error::$*"; exit 1; }
 
-          docker run --rm --entrypoint /app/kb "$image" > usage.txt 2>&1
+          docker run --rm --network none --entrypoint /app/kb "$image" > usage.txt 2>&1
           code=$?
           cat usage.txt
           [[ $code -eq 2 ]] && grep -q '^usage:' usage.txt || fail "kb without arguments: expected usage, exit 2 (got $code)"
 
           for user in "" "$(id -u):$(id -g)"; do
-            docker run --rm -i ${user:+--user "$user"} --entrypoint /app/kb "$image" extract-pdf \
+            docker run --rm -i --network none ${user:+--user "$user"} --entrypoint /app/kb "$image" extract-pdf \
               < internal/knowledge/extract/testdata/brand.pdf > worker.json 2> worker.err
             code=$?
             echo "extract-pdf as ${user:-image user}: exit $code, $(jq -r '.text | length' worker.json) characters"
@@ -332,11 +338,22 @@ jobs:
           cat outside.out
           [[ $code -ne 0 ]] && grep -q 'вне папки базы знаний' outside.out || fail "a path outside ./kb must be rejected"
 
-          make kb-search Q="проверка" > search.out 2>&1
+          # A query starting with "-" passes through make, scripts/kb.sh and the kb parser (after --).
+          make kb-search Q="-5 кг" > search.out 2>&1
           code=$?
           tail -n 3 search.out
           [[ $code -ne 0 ]] && grep -q 'embeddings are not configured' search.out \
             || fail "kb-search without OPENAI_API_KEY must fail on embeddings"
+          ! grep -q 'kb: образ .* старше кода' search.out || fail "the image built in this job must not be reported as older than the code"
+
+          # Without postgres scripts/kb.sh stops before docker compose run, with a hint.
+          docker compose stop postgres
+          make kb-search Q="проверка" > nostack.out 2>&1
+          code=$?
+          cat nostack.out
+          docker compose start postgres
+          docker compose up -d --wait --wait-timeout 120 postgres
+          [[ $code -ne 0 ]] && grep -q 'стек не поднят' nostack.out || fail "kb without postgres must say the stack is down"
 
           rm -rf kb/_ci
 

@@ -43,12 +43,13 @@
 ```bash
 git pull
 docker compose version     # Docker Desktop запущен, compose v2
-ffmpeg -version | head -1  # для транскрипции на хосте; на macOS: brew install ffmpeg
+go version                 # нужен только для шага 4 (транскрипция); версия 1.26 скачается сама (GOTOOLCHAIN=auto)
+ffmpeg -version | head -1  # тоже для шага 4; на macOS: brew install ffmpeg
 ```
 
-Go не нужен: база знаний (`make kb-*`) работает в Docker-образе приложения.
+Go не нужен для базы знаний: `make kb-*` (шаг 3) работают в Docker-образе приложения.
 
-**Ожидаемый результат:** все три команды отрабатывают без ошибок.
+**Ожидаемый результат:** все четыре команды отрабатывают без ошибок.
 
 ## Шаг 1. Стек, `/readyz`, миграции
 
@@ -169,6 +170,9 @@ make down                                         # остановить сте�
 | Anthropic: `credit balance is too low` | На организации Console нет кредитов: пополни баланс или привяжи подписку Max/Ultra/Team |
 | OpenAI: `401` / `insufficient_quota` | Неверный ключ или нет средств на аккаунте OpenAI |
 | `agent not found` | В `agents/test/agent.md` должно быть `name: test`; папки, которые начинаются с `_`, не загружаются |
-| `path escapes from parent` / вне `KB_ROOT` | Файл должен лежать внутри `./kb`; симлинки наружу запрещены специально |
-| `go: downloading go1.26...` долго | Первый запуск скачивает тулчейн, дальше быстрее |
+| `make kb-ingest`: «вне папки базы знаний» | `KB_PATH` должен указывать внутрь `./kb`, например `KB_PATH=./kb/brand` |
+| `path escapes from parent` | Симлинк внутри `./kb` ведёт наружу: такие запрещены специально, положи в `./kb` сам файл |
+| `make kb-*`: «образ … не собран», «стек не поднят» или `exec: "/app/kb": no such file or directory` | Выполни `make up`: он собирает образ (с `/app/kb`) и поднимает стек |
+| `make kb-*`: «образ … старше кода» | Код обновился после сборки образа (`git pull`): выполни `make up` |
+| `make transcribe`: `go: downloading go1.26...` долго | Первый запуск скачивает тулчейн, дальше быстрее |
 | bot-api в логах: ошибка авторизации | Проверь `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`; приложение на my.telegram.org должно быть создано |

@@ -15,14 +15,17 @@ import (
 const Usage = `usage:
   kb ingest <file or folder> [-kind brand|product|post|other] [-force]
                                                                  load .md, .txt, .docx, .pdf files from KB_ROOT
-  kb search "<query>" [-limit 5] [-kind brand,post]              find fragments by meaning
-  kb delete <source>                                             remove a document (source as printed by ingest)
+  kb search [-limit 5] [-kind brand,post] [--] "<query>"         find fragments by meaning
+  kb delete [--] <source>                                        remove a document (source as printed by ingest)
   kb reembed                                                     fill in missing embeddings, move to the current model
 
 Files are ingested only from KB_ROOT (default ./kb); a document's source is its path relative to it.
 Without -kind an existing document keeps its kind (a new one is "other"); changing the kind needs -force.`
 
 var ErrUsage = errors.New("invalid arguments")
+
+// flagsEnd ends the flags of a command, as in the flag package.
+const flagsEnd = "--"
 
 type Action string
 
@@ -126,6 +129,7 @@ func withKinds(cmd *Command, kind string) error {
 }
 
 // parseInterspersed lets flags follow positional arguments: `kb ingest ./brand -kind brand`.
+// "--" ends the flags: everything after it is positional, so a query may start with "-" (`kb search -- "-5 кг"`).
 func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 
@@ -136,6 +140,10 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 
 		if fs.NArg() == 0 {
 			return positional, nil
+		}
+
+		if consumed := len(args) - fs.NArg(); consumed > 0 && args[consumed-1] == flagsEnd {
+			return append(positional, fs.Args()...), nil
 		}
 
 		positional = append(positional, fs.Arg(0))

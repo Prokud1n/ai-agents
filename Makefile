@@ -79,7 +79,7 @@ agent-run:
 # host and must be inside ./kb. KB_HOST=1 runs `go run ./cmd/kb` on the host instead (KB_ROOT from .env).
 # See scripts/kb.sh.
 #   make kb-ingest KB_PATH=./kb/brand KB_KIND=brand        (without KB_PATH: all of ./kb)
-#   make kb-search Q="как мы говорим о питании" LIMIT=5
+#   make kb-search Q="как мы говорим о питании" LIMIT=5   (flags first, then --: Q="-5 кг" works)
 #   make kb-delete SOURCE=brand/voice.md
 #   make kb-reembed
 KB := ./scripts/kb.sh
@@ -88,10 +88,10 @@ kb-ingest:
 	$(KB) ingest "$(or $(KB_PATH),./kb)" $(if $(KB_KIND),-kind "$(KB_KIND)") $(if $(KB_FORCE),-force)
 
 kb-search:
-	$(KB) search "$(Q)" -limit "$(or $(LIMIT),5)"
+	$(KB) search -limit "$(or $(LIMIT),5)" -- "$(Q)"
 
 kb-delete:
-	$(KB) delete "$(SOURCE)"
+	$(KB) delete -- "$(SOURCE)"
 
 kb-reembed:
 	$(KB) reembed

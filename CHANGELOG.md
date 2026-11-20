@@ -9,11 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The knowledge base CLI `kb` is in the app image (`/app/kb`): `make kb-ingest|kb-search|kb-delete|kb-reembed` run it
-  through `docker compose run` (`scripts/kb.sh`), so Go is no longer needed on the host. `./kb` is mounted read-only at
-  `/kb` (`KB_ROOT=/kb`), `KB_PATH` is given as on the host and must be inside `./kb`; the container runs as the host
-  user's uid:gid (never root). `KB_HOST=1 make kb-*` keeps the `go run` on the host. CI checks the paths, the
-  `extract-pdf` child process inside the distroless image and a full ingest without the OpenAI key.
 - `docs/M0-MANUAL.md`: step-by-step manual check of the stack, LLM layer, knowledge base, transcription and Bot API with real keys.
 - Docker Compose stack: app, one-shot `migrate` service, PostgreSQL with pgvector, Redis (password-protected), RustFS (S3);
   local Telegram Bot API server under the `telegram` profile. Only app and postgres are published, on 127.0.0.1 only.
@@ -91,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The knowledge base CLI `kb` is in the app image (`/app/kb`): `make kb-ingest|kb-search|kb-delete|kb-reembed` run it
+  through `docker compose run` (`scripts/kb.sh`), so Go is no longer needed on the host. `./kb` is mounted read-only at
+  `/kb` (`KB_ROOT=/kb`), `KB_PATH` is given as on the host and must be inside `./kb`; the container runs as the host
+  user's uid:gid (never root). `KB_HOST=1 make kb-*` keeps the `go run` on the host. Before the run the script stops
+  with a hint if the image is not built or postgres is not running, and warns when the code changed after the image
+  was built. `kb search` and `kb delete` accept `--` before the argument (`make kb-search Q="-5 кг"`). CI checks the
+  paths, the `extract-pdf` child process inside the distroless image and a full ingest without the OpenAI key.
 - `kb ingest` takes files only from `KB_ROOT` (default `./kb`, ignored by git and docker): a document's source is its
   path relative to it, so the same file always gets the same source and same-named files of different folders no
   longer overwrite each other; a file outside `KB_ROOT` is an error. Changing the kind of an existing document needs
