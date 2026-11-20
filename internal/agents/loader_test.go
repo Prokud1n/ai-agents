@@ -11,10 +11,12 @@ import (
 )
 
 const (
-	exampleAgent  = "_example"
-	toneSkill     = "tone"
-	toneBody      = "TONE BODY: friendly, no jargon."
-	coachOverride = "Apply the tone to workout plans too."
+	exampleAgent = "_example"
+	// knowledgeSearchTool is kbtool.Name, the tool the template lists.
+	knowledgeSearchTool = "search_knowledge_base"
+	toneSkill           = "tone"
+	toneBody            = "TONE BODY: friendly, no jargon."
+	coachOverride       = "Apply the tone to workout plans too."
 
 	descriptionRequired = "description is required"
 )
@@ -184,7 +186,8 @@ func TestRegisterToolsValidNames(t *testing.T) {
 }
 
 // TestExampleAgent keeps the template in agents/_example valid with the real shared skills. Templates
-// ("_" prefix) are not loaded as agents, so the template is loaded directly, without registered tools.
+// ("_" prefix) are not loaded as agents, so the template is loaded directly. Its tool is the knowledge base
+// search (kbtool.Name): a fake with the same name stands for it, the agents package cannot import kbtool.
 func TestExampleAgent(t *testing.T) {
 	t.Parallel()
 
@@ -195,8 +198,11 @@ func TestExampleAgent(t *testing.T) {
 	shared, err := loadSharedSkills(os.DirFS(skillsDir), skillsDir)
 	require.NoError(t, err)
 
-	example, err := loadAgent(os.DirFS(agentsDir), exampleAgent, shared, nil)
+	tools := map[string]Tool{knowledgeSearchTool: &fakeTool{name: knowledgeSearchTool}}
+
+	example, err := loadAgent(os.DirFS(agentsDir), exampleAgent, shared, tools)
 	require.NoError(t, err)
+	assert.Equal(t, []string{knowledgeSearchTool}, example.Tools, "the template shows the knowledge base tool")
 	assert.Equal(t, exampleAgent, example.Name)
 	assert.NotEmpty(t, example.Prompt)
 	require.NotEmpty(t, example.Skills)

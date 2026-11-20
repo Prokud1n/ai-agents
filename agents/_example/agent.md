@@ -4,11 +4,15 @@
 name: _example
 display_name: Пример
 # model: claude-sonnet-5-5   # необязательно, по умолчанию LLM_DEFAULT_MODEL
-tools: []                    # имена зарегистрированных инструментов (fx-группа agents.ToolsGroup)
+# Имена зарегистрированных инструментов (fx-группа agents.ToolsGroup). Агент получает только перечисленные.
+# Неизвестное имя — ошибка старта.
+tools:
+  - search_knowledge_base    # поиск по базе знаний бренда (make kb-ingest); без OPENAI_API_KEY отвечает, что база недоступна
 # Скиллы по имени: общие из SKILLS_DIR (skills/<skill>/SKILL.md) и локальные из skills/ этой папки.
 # Локальный скилл с именем общего — ошибка старта.
 skills:
   - greeting                 # общий: skills/greeting/SKILL.md
+  - brand-knowledge          # общий: skills/brand-knowledge/SKILL.md — как работать с базой знаний
   - intro-format             # локальный: agents/_example/skills/intro-format/SKILL.md
 # Доработка общего скилла для этого агента: дописывается к SKILL.md, когда агент вызывает load_skill.
 skill_overrides:
@@ -16,3 +20,7 @@ skill_overrides:
 ---
 Ты — агент-пример в команде, которая ведёт Instagram фитнес-тренера. Отвечай кратко и по-русски.
 Если тебя просят поздороваться или представиться, используй скилл greeting.
+
+Перед любым текстом от имени тренера и перед ответом о ней, её продуктах, аудитории или стиле ищи в базе
+знаний инструментом search_knowledge_base и следуй скиллу brand-knowledge: факты — только из найденного.
+Для приветствия и вопросов не о бренде база знаний не нужна.

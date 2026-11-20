@@ -376,3 +376,26 @@ func TestBackoff(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigured(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		apiKey   string
+		expected bool
+	}{
+		{name: "with key", apiKey: testAPIKey, expected: true},
+		{name: "without key", apiKey: "", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := NewClient(&config.OpenAI{APIKey: tt.apiKey}, &config.Embeddings{Model: testModel}, slog.New(slog.DiscardHandler))
+
+			assert.Equal(t, tt.expected, client.Configured())
+		})
+	}
+}

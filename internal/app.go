@@ -9,9 +9,12 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/health"
+	"github.com/Prokud1n/ai-agents/internal/knowledge"
+	"github.com/Prokud1n/ai-agents/internal/knowledge/kbtool"
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/logger"
 	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
+	"github.com/Prokud1n/ai-agents/internal/providers/embeddings"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
 	"github.com/Prokud1n/ai-agents/internal/providers/redis"
 	"github.com/Prokud1n/ai-agents/internal/providers/s3"
@@ -27,11 +30,14 @@ func DeclareApplicationOptions() []fx.Option {
 		redis.Module,
 		s3.Module,
 		anthropic.Module,
+		embeddings.Module,
 
 		// Initialize application modules
 		health.Module,
 		readiness.Module,
 		llmusage.Module,
+		knowledge.Module,
+		kbtool.Module,
 		agents.Module,
 
 		// HTTP server goes last: it starts accepting requests once dependencies are connected
@@ -39,13 +45,16 @@ func DeclareApplicationOptions() []fx.Option {
 	)
 }
 
-// DeclareAgentRunOptions builds the agent-run CLI: agents, the Claude API client and usage accounting,
-// without the HTTP server and other dependencies.
+// DeclareAgentRunOptions builds the agent-run CLI: agents, the Claude API client, usage accounting and
+// the knowledge base tool, without the HTTP server and other dependencies.
 func DeclareAgentRunOptions() []fx.Option {
 	return append(declareBaseOptions(),
 		postgres.Module,
 		anthropic.Module,
+		embeddings.Module,
 		llmusage.Module,
+		knowledge.Module,
+		kbtool.Module,
 		agents.Module,
 	)
 }

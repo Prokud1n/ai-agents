@@ -51,7 +51,45 @@ func NewRegistry(
 		}
 	}
 
+	registry.warnUnavailableTools(ctx, log)
+
 	return registry, nil
+}
+
+// warnUnavailableTools logs every agent that lists a tool which is unavailable now (see toolAvailability):
+// the agent still starts, and the tool answers it with an error.
+func (r *Registry) warnUnavailableTools(ctx context.Context, log *slog.Logger) {
+	for _, u := range r.unavailableTools() {
+		log.WarnContext(ctx, "agents: tool is unavailable, the agent will get an error from it",
+			logKeyAgent, u.agent, "tool", u.tool, "reason", u.reason.Error())
+	}
+}
+
+type unavailableTool struct {
+	agent  string
+	tool   string
+	reason error
+}
+
+// unavailableTools lists the (agent, tool) pairs where the agent may call a tool that reports itself
+// unavailable, sorted by agent name and in the order of the agent's tools.
+func (r *Registry) unavailableTools() []unavailableTool {
+	var unavailable []unavailableTool
+
+	for _, name := range r.Names() {
+		for _, toolName := range r.agents[name].Tools {
+			checker, ok := r.tools[toolName].(toolAvailability)
+			if !ok {
+				continue
+			}
+
+			if err := checker.Available(); err != nil {
+				unavailable = append(unavailable, unavailableTool{agent: name, tool: toolName, reason: err})
+			}
+		}
+	}
+
+	return unavailable
 }
 
 // LoadRegistry loads shared skills from skillsDir and agents from agentsDir; tools are all tools agents

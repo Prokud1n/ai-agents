@@ -75,3 +75,72 @@ func TestNewRegistryWarnings(t *testing.T) {
 		})
 	}
 }
+
+// offlineTool is a tool that reports itself unavailable, like the knowledge base without its API key.
+type offlineTool struct {
+	fakeTool
+}
+
+func (*offlineTool) Available() error {
+	return errToolFailed
+}
+
+func TestNewRegistryUnavailableTool(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		tool        Tool
+		expected    []string
+		notExpected []string
+	}{
+		{
+			name: "unavailable tool listed by an agent",
+			tool: &offlineTool{fakeTool: fakeTool{name: failToolName}},
+			// coach lists fail; plain lists no tools.
+			expected:    []string{"tool is unavailable", `"agent":"coach"`, `"tool":"fail"`, `"reason":"boom"`},
+			notExpected: []string{`"agent":"plain"`},
+		},
+		{
+			name:        "unavailable tool no agent lists",
+			tool:        &offlineTool{fakeTool: fakeTool{name: secretToolName}},
+			notExpected: []string{"tool is unavailable"},
+		},
+		{
+			name:        "available tool",
+			tool:        &fakeTool{name: failToolName},
+			notExpected: []string{"tool is unavailable"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tools := make([]Tool, 0, len(testTools()))
+			for _, tool := range testTools() {
+				if tool.Name() != tt.tool.Name() {
+					tools = append(tools, tool)
+				}
+			}
+
+			tools = append(tools, tt.tool)
+
+			var logs bytes.Buffer
+
+			log := slog.New(slog.NewJSONHandler(&logs, nil))
+
+			_, err := NewRegistry(&config.Agents{Dir: validAgentsDir, SkillsDir: validSkillsDir},
+				&config.LLM{DefaultModel: testModel}, fakePrices{}, log, tools)
+			require.NoError(t, err)
+
+			for _, s := range tt.expected {
+				assert.Contains(t, logs.String(), s)
+			}
+
+			for _, s := range tt.notExpected {
+				assert.NotContains(t, logs.String(), s)
+			}
+		})
+	}
+}

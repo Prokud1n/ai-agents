@@ -129,7 +129,7 @@ cp .env.dist .env
 
 | Переменная | Обязательна (для чего) | В `.env.dist` | Где взять / как выбрать | Секрет |
 |---|---|---|---|---|
-| `OPENAI_API_KEY` | для транскрипции и базы знаний | пусто | [OpenAI Platform → API keys](https://platform.openai.com/api-keys) (раздел 4) | **да** |
+| `OPENAI_API_KEY` | для транскрипции и базы знаний (`make kb-*` и инструмент агентов `search_knowledge_base`; без ключа он отвечает, что база недоступна) | пусто | [OpenAI Platform → API keys](https://platform.openai.com/api-keys) (раздел 4) | **да** |
 | `OPENAI_BASE_URL` | нет | `https://api.openai.com/v1` | менять только для совместимого прокси | нет |
 | `WHISPER_MODEL` | нет | `whisper-1` | единственная модель OpenAI с таймкодами слов; отключается 26.02.2027 | нет |
 | `WHISPER_LANGUAGE` | нет | `ru` | ISO 639-1; пусто — автоопределение | нет |
@@ -254,6 +254,14 @@ make kb-ingest KB_PATH=./kb/brand KB_KIND=brand
 make kb-ingest KB_PATH=./kb/product KB_KIND=product
 make kb-ingest KB_PATH=./kb/post KB_KIND=post
 make kb-search Q="как мы говорим о питании" LIMIT=5
+```
+
+Агент ищет по загруженным материалам, если в `tools:` его `agent.md` есть `search_knowledge_base` (пример — шаблон
+`agents/_example/`, подробности — README, «Доступ агента к базе знаний»):
+
+```bash
+cp -r agents/_example agents/test && sed -i 's/^name: _example$/name: test/' agents/test/agent.md
+make agent-run AGENT=test PROMPT="Напиши короткий пост о том, как мы говорим о питании"
 ```
 
 Без `KB_KIND` у уже загруженного документа сохраняется его тип (у нового — `other`); сменить тип можно только
