@@ -133,7 +133,7 @@ func TestNewRegistryUnavailableTool(t *testing.T) {
 			log := slog.New(slog.NewJSONHandler(&logs, nil))
 
 			_, err := NewRegistry(&config.Agents{Dir: validAgentsDir, SkillsDir: validSkillsDir},
-				&config.LLM{DefaultModel: testModel}, fakePrices{}, log, tools)
+				&config.LLM{DefaultModel: testModel}, fakePrices{plainModel: true, testModel: true}, log, tools)
 			require.NoError(t, err)
 
 			for _, s := range tt.expected {
