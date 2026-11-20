@@ -51,7 +51,7 @@ func (f *fakeService) GetVersion(_ context.Context, taskID int64, version int) (
 
 	v := tasks.Version{TaskID: taskID, Version: version}
 	if !f.draftUnsaved {
-		v.DraftMessageID = new(int64(testDraftID + 1))
+		v.DraftMessageID = new(testDraftID + 1)
 	}
 
 	return v, nil
