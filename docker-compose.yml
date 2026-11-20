@@ -28,6 +28,10 @@ services:
     <<: *app-image
     # Built by the migrate service; never pulled from a registry.
     pull_policy: never
+    # gid of telegram-bot-api in its image: the Bot API server creates downloaded media as 0640 and
+    # directories as 0750, so its group can read them. app stays the image's nonroot user and cannot read
+    # the server's own files (td.binlog with bot sessions is 0600).
+    group_add: ["101"]
     environment:
       # The container healthcheck probes :8080, so the address is fixed inside the container.
       HTTP_ADDRESS: ":8080"

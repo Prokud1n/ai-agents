@@ -14,11 +14,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fragments come in `<fragment source="…" title="…" kind="…" score="…">` tags with `<` and `&` escaped in the content
   and one-line, length-limited attributes, so a fragment cannot break out of its tag; the model is told that fragments
   are data, not instructions. A call is limited to 30 seconds, `limit` 1–20 (default 5) and about 16 000 runes of
-  fragments with titles and sources: short fragments stay whole, long ones share the rest and are cut at a word boundary. Bad arguments, timeouts and database/embeddings errors reach the
-  model as an `is_error` tool result (infrastructure errors are also logged); "nothing found" is a normal result.
+  fragments with titles and sources: short fragments stay whole, long ones share the rest and are cut at a word
+  boundary. Bad arguments, timeouts and database/embeddings errors reach the model as an `is_error` tool result
+  (infrastructure errors are also logged); "nothing found" is a normal result.
   Without `OPENAI_API_KEY` the app starts, the tool answers that the knowledge base is unavailable and the registry
   warns on start about every agent that lists it (tools may implement `Available() error` for this).
 - Shared skill `brand-knowledge`; the `agents/_example` template lists `search_knowledge_base` and the skill.
+- Telegram gateway (T1.2, `internal/gateway`): four team bots (marketer, copywriter, editor, designer) in one service
+  through the local Bot API server. Only the team supergroup (`TELEGRAM_GROUP_ID`) and users from
+  `TELEGRAM_ALLOWED_USER_IDS` are heard, everything else is silently ignored. Messages are routed to a role by
+  @mention, reply to a bot, then topic («Исходники» → editor, the rest → marketer); `/plan`, `/idea`, `/status`,
+  `/pause` (also `/cmd@bot`) are passed as commands. Text, voice, audio, video, video notes, video documents and
+  photos are accepted; media up to `TELEGRAM_MAX_FILE_SIZE` (2 GiB) are downloaded with `getFile`, and the path is
+  accepted only inside `TELEGRAM_FILES_DIR` (no `..` or symlinks out, via `os.Root`); consumers read it with
+  `Media.Open`, the path with the token is not exported. Messages on behalf of a chat and from bots are ignored,
+  forwarded ones are marked `Forwarded`. Only the marketer receives group messages, the other bots only their
+  button callbacks, handled in their own pool; events are marked in Redis (unmarked if the handler fails) and
+  offsets are kept in Redis, so a restart does not handle an update twice. A handler panic is logged and does not
+  stop the process. A bot whose token is rejected is stopped, the others keep working. Events go to
+  `gateway.Handler` (default: a short acknowledgement in the same topic until the task queue is connected);
+  `gateway.Sender` sends text (split above 4096 characters), buttons, video/photo/document only from
+  `TELEGRAM_OUTBOX_DIR` (created on start, 0700), and edits on behalf of a role. Polling never waits for a busy
+  handler: accepted events queue (up to 256) for their pool, and the marketer starts polling once the other bots
+  are connected. Without bot tokens the gateway is
+  off and the app starts as before.
+- Bot API client (`internal/providers/telegram`): getMe, getUpdates, sendMessage, edit, answerCallbackQuery,
+  sendVideo/sendPhoto/sendDocument streamed from a local file, getFile; retries 429 with `retry_after`, 5xx and network
+  errors; the token is masked in errors and never logged, requests go only to the configured address (no proxy
+  from the environment, no redirects).
 - `docs/M0-MANUAL.md`: step-by-step manual check of the stack, LLM layer, knowledge base, transcription and Bot API with real keys.
 - Docker Compose stack: app, one-shot `migrate` service, PostgreSQL with pgvector, Redis (password-protected), RustFS (S3);
   local Telegram Bot API server under the `telegram` profile. Only app and postgres are published, on 127.0.0.1 only.
@@ -95,9 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
 
 ### Changed
-- The app and `agent-run` read `EMBEDDINGS_*` (defaults as before) and include the knowledge base service.
-  `knowledge.RunSearchTool`, `knowledge.SearchTool` and the `SearchTool*` constants were replaced by `kbtool.SearchTool`.
 
+- The app and `agent-run` now parse `EMBEDDINGS_*` (defaults as before) and include the knowledge base service:
+  an invalid value fails their start.
 - The knowledge base CLI `kb` is in the app image (`/app/kb`): `make kb-ingest|kb-search|kb-delete|kb-reembed` run it
   through `docker compose run` (`scripts/kb.sh`), so Go is no longer needed on the host. `./kb` is mounted read-only at
   `/kb` (`KB_ROOT=/kb`), `KB_PATH` is given as on the host and must be inside `./kb`; the container runs as the host
@@ -105,12 +128,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a hint if the image is not built or postgres is not running, and warns when the code changed after the image
   was built. `kb search` and `kb delete` accept `--` before the argument (`make kb-search Q="-5 кг"`). CI checks the
   paths, the `extract-pdf` child process inside the distroless image and a full ingest without the OpenAI key.
+- `TELEGRAM_BOT_API_URL` defaults to the compose service `http://telegram-bot-api:8081`; `app` in compose gets the
+  supplementary group `101` of the Bot API server, which creates downloaded media with mode 0640.
+- `/readyz` lists `telegram`: it fails only when Telegram rejected a bot token (401).
+- `make m0-check` masks the bot tokens (`TELEGRAM_*_TOKEN`) in its logs.
 - `kb ingest` takes files only from `KB_ROOT` (default `./kb`, ignored by git and docker): a document's source is its
   path relative to it, so the same file always gets the same source and same-named files of different folders no
   longer overwrite each other; a file outside `KB_ROOT` is an error. Changing the kind of an existing document needs
   `-force`; without `-kind` the stored kind is kept. Files are walked and read through `os.Root`: a symlink leading
   outside `KB_ROOT` is never read (skipped in folders, an error when named).
-
 - `pgtest.Connect` gives every integration test its own temporary database with all migrations applied and drops it
   afterwards, instead of truncating tables of `POSTGRES_DB`; `pgtest.Truncate` is removed and integration tests may
   run in parallel.

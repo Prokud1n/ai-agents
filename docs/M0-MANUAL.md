@@ -64,7 +64,7 @@ docker compose exec -T postgres psql -U postgres -d ai_agents -Atc 'select versi
 
 **Ожидаемый результат:**
 - `make up` завершается без ошибок, все контейнеры в состоянии `healthy`;
-- `/readyz` → `{"status":"ok","dependencies":{"postgres":"ok","redis":"ok","s3":"ok"}}`;
+- `/readyz` → `{"status":"ok","dependencies":{"postgres":"ok","redis":"ok","s3":"ok","telegram":"ok"}}`;
 - миграции → `3|f` (версия 3, не dirty).
 
 ## Шаг 2. Агент через Claude

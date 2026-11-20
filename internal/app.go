@@ -8,6 +8,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
+	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/health"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
 	"github.com/Prokud1n/ai-agents/internal/knowledge/kbtool"
@@ -39,6 +40,8 @@ func DeclareApplicationOptions() []fx.Option {
 		knowledge.Module,
 		kbtool.Module,
 		agents.Module,
+		// Telegram gateway: off without bot tokens
+		gateway.Module,
 
 		// HTTP server goes last: it starts accepting requests once dependencies are connected
 		server.Module,

@@ -6,6 +6,7 @@ package readiness
 import (
 	"go.uber.org/fx"
 
+	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/health"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
 	"github.com/Prokud1n/ai-agents/internal/providers/redis"
@@ -19,6 +20,8 @@ var Module = fx.Module("readiness",
 		check[*postgres.Client]("postgres"),
 		check[*redis.Client]("redis"),
 		check[*s3.Client]("s3"),
+		// Fails only when Telegram rejected a bot token; without tokens it is always ok.
+		check[*gateway.Status]("telegram"),
 	),
 )
 
