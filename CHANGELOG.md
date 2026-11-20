@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agents can search the brand knowledge base: the `search_knowledge_base` tool (`internal/knowledge/kbtool`) is registered
+  in `agents.ToolsGroup` in the app and `agent-run`; an agent gets it only when `tools:` of its `agent.md` lists it.
+  Fragments come in `<fragment source="…" title="…" kind="…" score="…">` tags with `<` and `&` escaped in the content
+  and one-line, length-limited attributes, so a fragment cannot break out of its tag; the model is told that fragments
+  are data, not instructions. A call is limited to 30 seconds, `limit` 1–20 (default 5) and about 16 000 runes of
+  fragments with titles and sources: short fragments stay whole, long ones share the rest and are cut at a word boundary. Bad arguments, timeouts and database/embeddings errors reach the
+  model as an `is_error` tool result (infrastructure errors are also logged); "nothing found" is a normal result.
+  Without `OPENAI_API_KEY` the app starts, the tool answers that the knowledge base is unavailable and the registry
+  warns on start about every agent that lists it (tools may implement `Available() error` for this).
+- Shared skill `brand-knowledge`; the `agents/_example` template lists `search_knowledge_base` and the skill.
 - `docs/M0-MANUAL.md`: step-by-step manual check of the stack, LLM layer, knowledge base, transcription and Bot API with real keys.
 - Docker Compose stack: app, one-shot `migrate` service, PostgreSQL with pgvector, Redis (password-protected), RustFS (S3);
   local Telegram Bot API server under the `telegram` profile. Only app and postgres are published, on 127.0.0.1 only.
@@ -85,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
 
 ### Changed
+- The app and `agent-run` read `EMBEDDINGS_*` (defaults as before) and include the knowledge base service.
+  `knowledge.RunSearchTool`, `knowledge.SearchTool` and the `SearchTool*` constants were replaced by `kbtool.SearchTool`.
 
 - The knowledge base CLI `kb` is in the app image (`/app/kb`): `make kb-ingest|kb-search|kb-delete|kb-reembed` run it
   through `docker compose run` (`scripts/kb.sh`), so Go is no longer needed on the host. `./kb` is mounted read-only at
@@ -117,6 +129,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: `check` requires the branch to contain the current main; `tidy` also commits to `fix/**` and `refactoring/**`
   and fails with a ready-to-run command if it cannot dispatch CI on the new commit; `compose-smoke` checks that
   migrate up/down/up ends with `dirty: false`.
+
+### Removed
+
+- `knowledge.RunSearchTool`, `knowledge.SearchTool` and the `knowledge.SearchTool*` constants: the agent tool is
+  `kbtool.SearchTool`; `knowledge.FormatSearchResults` stays for `kb search`.
 
 ### Fixed
 

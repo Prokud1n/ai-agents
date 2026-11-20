@@ -2,7 +2,6 @@ package knowledge
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"strings"
 	"testing"
@@ -328,14 +327,6 @@ func TestServiceValidation(t *testing.T) {
 			_, err := svc.Search(ctx, SearchChunksData{Query: "питание", Kinds: []Kind{unknownKind}})
 			return err
 		}},
-		{name: "tool: unknown kind", call: func() error {
-			_, err := svc.SearchTool(ctx, SearchToolInput{Query: "питание", Kinds: []string{unknownKind}})
-			return err
-		}},
-		{name: "tool: broken arguments", call: func() error {
-			_, err := svc.RunSearchTool(ctx, json.RawMessage(`{"query":`))
-			return err
-		}},
 		{name: "ingest without text", call: func() error {
 			_, err := svc.Ingest(ctx, IngestDocumentData{Source: testSource})
 			return err
@@ -360,12 +351,4 @@ func TestServiceValidation(t *testing.T) {
 			require.ErrorIs(t, tt.call(), ErrValidation)
 		})
 	}
-}
-
-func TestSearchToolParametersIsValidJSON(t *testing.T) {
-	t.Parallel()
-
-	var schema map[string]any
-	require.NoError(t, json.Unmarshal([]byte(SearchToolParameters), &schema))
-	assert.Equal(t, "object", schema["type"])
 }

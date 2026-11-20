@@ -148,10 +148,6 @@ func TestIntegrationIngestAndSearch(t *testing.T) {
 	require.Len(t, onlyProducts, 1)
 	assert.Equal(t, ProductKind, onlyProducts[0].Kind)
 
-	toolText, err := svc.SearchTool(ctx, SearchToolInput{Query: nutritionQuery, Limit: 1})
-	require.NoError(t, err)
-	assert.Contains(t, toolText, "[1] "+nutrition.Source)
-
 	// Changed text: chunks are replaced.
 	nutrition.Text = "# Голос бренда\n\nКороткая версия: говорим о питании спокойно."
 	updated, err := svc.Ingest(ctx, nutrition)

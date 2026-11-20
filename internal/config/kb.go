@@ -8,8 +8,7 @@ import (
 )
 
 // KB is the config of the standalone kb command (cmd/kb): database and embeddings only, so it needs
-// no Redis or S3 settings. The embeddings settings live only here until the knowledge base is wired
-// into the app, so they cannot break the app start.
+// no Redis or S3 settings.
 type KB struct {
 	fx.Out
 

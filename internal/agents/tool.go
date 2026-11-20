@@ -27,6 +27,14 @@ type Tool interface {
 	Execute(ctx context.Context, input json.RawMessage) (string, error)
 }
 
+// toolAvailability is implemented by a tool that may be unavailable in this environment, e.g. without
+// an optional API key. Such a tool stays registered and tells the model it is unavailable when called;
+// the registry warns on start about every agent that lists it, so the tool is never lost silently.
+type toolAvailability interface {
+	// Available returns nil when the tool works, otherwise the reason it does not.
+	Available() error
+}
+
 func toolDefinition(t Tool) anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{Name: t.Name(), Description: t.Description(), InputSchema: t.InputSchema()}
 }

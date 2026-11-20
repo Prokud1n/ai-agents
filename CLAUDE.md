@@ -44,7 +44,7 @@ make transcribe ARGS="-in video.mp4"                    # нужен ffmpeg и O
 | Бинарь | Сборка | Что внутри |
 |---|---|---|
 | `main.go` (сервис) | `internal/app.go: DeclareApplicationOptions` | все провайдеры + health/readiness + agents + HTTP-сервер (последним) |
-| `cmd/agent-run` | `DeclareAgentRunOptions` | postgres + anthropic + llmusage + agents, без HTTP |
+| `cmd/agent-run` | `DeclareAgentRunOptions` | postgres + anthropic + embeddings + llmusage + knowledge + kbtool + agents, без HTTP |
 | `cmd/kb` | `internal/kb.go: DeclareKBOptions` / `RunKB` | postgres + embeddings + knowledge + kbcli |
 | `cmd/transcribe` | `internal/transcribe.go` | ffmpeg + whisper + transcription; логи в stderr, JSON в stdout |
 | `cmd/migrate` | вне fx (`internal/migrator`) | — |
@@ -72,7 +72,9 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   При `max_tokens`/`refusal` возвращается частичный `Result` вместе с ошибкой, его `Messages` можно передать в следующий прогон.
 - Новый инструмент: реализуй `agents.Tool` и зарегистрируй конструктор в своём модуле с
   `fx.As(new(agents.Tool))` и `fx.ResultTags(agents.ToolsGroup)`. Runtime править не нужно.
-  Поиск по базе знаний (`internal/knowledge/tool.go`) пока не подключён к этой группе.
+  Пример — поиск по базе знаний `search_knowledge_base` (`internal/knowledge/kbtool`, отдельный пакет, чтобы
+  `knowledge` и `cmd/kb` не зависели от `agents`). Инструмент, который может быть недоступен (нет ключа), реализует
+  `Available() error`: он остаётся зарегистрированным, а реестр предупреждает в логе об агентах, которые его используют.
 
 ### Учёт расходов LLM
 
@@ -84,7 +86,8 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
 ### База знаний
 
 `internal/knowledge`: извлечение текста (`extract/`: md/txt/docx/pdf с защитой от вредоносных PDF, фикстуры в `testdata/`)
-→ чанкинг (`chunk/`) → эмбеддинги OpenAI (`providers/embeddings`) → pgvector. Управляется только через CLI `cmd/kb`.
+→ чанкинг (`chunk/`) → эмбеддинги OpenAI (`providers/embeddings`) → pgvector. Загрузка и управление — через CLI `cmd/kb`,
+поиск для агентов — инструмент `search_knowledge_base` (`knowledge/kbtool`).
 
 ### CI (`.github/workflows/ci.yml`)
 

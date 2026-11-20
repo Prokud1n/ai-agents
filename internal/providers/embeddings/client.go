@@ -69,6 +69,11 @@ func (c *Client) Model() string {
 	return c.cfg.Model
 }
 
+// Configured reports whether the client has an API key; without it every Embed returns ErrNotConfigured.
+func (c *Client) Configured() bool {
+	return c.apiKey != ""
+}
+
 // Embed returns one vector per text, in the same order. Texts are sent in batches of EMBEDDINGS_BATCH_SIZE;
 // 429 and 5xx responses are retried with exponential backoff (honouring Retry-After).
 func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error) {
