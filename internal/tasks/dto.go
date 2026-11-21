@@ -38,6 +38,8 @@ type RequestRevisionData struct {
 	Version int
 	UserID  int64
 	Text    string
+	// SourceMessageID is the message the revision came from (a reply to the draft); 0 if none.
+	SourceMessageID int64
 }
 
 // RequestRevisionByReplyData is a reply to a draft message: the task and version are found by the
@@ -45,8 +47,14 @@ type RequestRevisionData struct {
 type RequestRevisionByReplyData struct {
 	ChatID           int64
 	ReplyToMessageID int64
-	UserID           int64
-	Text             string
+	// MessageID is the reply itself: the same reply again does not revise twice. 0 disables the check.
+	MessageID int64
+	// TopicID and Agent (the bot whose message is replied to; empty if not a team bot) tell a reply to
+	// a part of a draft that is still being sent (ErrDraftNotReady) from a reply to some other message.
+	TopicID int64
+	Agent   string
+	UserID  int64
+	Text    string
 }
 
 // StatusReport is the data of /status: tasks by status (all statuses, zeros included) and LLM usage.

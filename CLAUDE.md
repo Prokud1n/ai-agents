@@ -45,7 +45,7 @@ FFMPEG_TESTS_REQUIRED=1 go test -run TestBurnSubtitlesWithFFmpeg ./internal/subt
 
 | Бинарь | Сборка | Что внутри |
 |---|---|---|
-| `main.go` (сервис) | `internal/app.go: DeclareApplicationOptions` | все провайдеры + health/readiness + agents + HTTP-сервер (последним) |
+| `main.go` (сервис) | `internal/app.go: DeclareApplicationOptions` | все провайдеры + health/readiness + agents + gateway + tasks + teamchat + HTTP-сервер (последним) |
 | `cmd/agent-run` | `DeclareAgentRunOptions` | postgres + anthropic + embeddings + llmusage + knowledge + kbtool + agents, без HTTP |
 | `cmd/kb` | `internal/kb.go: DeclareKBOptions` / `RunKB` | postgres + embeddings + knowledge + kbcli |
 | `cmd/transcribe` | `internal/transcribe.go` | ffmpeg + whisper + transcription; логи в stderr, JSON в stdout |
@@ -86,6 +86,21 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
 оплачен; ошибка записи только логируется. Цены задаются строкой `LLM_PRICES`
 (`model=input/output/cache_write/cache_read`, USD за 1M токенов) и хранятся целыми нано-долларами, без float.
 У модели без цены токены считаются, а стоимость — `NULL`.
+
+### Telegram-шлюз и задачи
+
+- `internal/gateway` — четыре бота в одном сервисе: события группы → `gateway.Handler` (быстрый, идемпотентный,
+  at-most-once), отправка от имени роли — `gateway.Sender`. Без `TELEGRAM_*_TOKEN` шлюз выключен.
+- `internal/tasks` — задачи с согласованием: очередь Redis Streams, статусы в Postgres, черновик → `tasks.Notifier`.
+- `internal/teamchat` связывает их: `Handler` (события → задачи, кнопки, реплай-правки, команды) подменяет
+  `gateway.AckHandler` через `fx.Decorate` **на верхнем уровне** опций (`teamchat.Module` — `fx.Options`, а не
+  `fx.Module`: декоратор внутри модуля не дошёл бы до `gateway.Module`); `Notifier` шлёт черновики от бота агента.
+  Без токенов `tasks.Notifier` — `tasks.LogNotifier`. Имя агента = роль бота (`agents/marketer`, `agents/copywriter`);
+  за Монтажёра и Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`), агентов для них нет.
+  Медиа `teamchat` пока не обрабатывает и через `gateway.MediaFilter` просит шлюз их не скачивать.
+- Порядок остановки fx — обратный порядку регистрации хуков. Хук ожидания фоновой работы регистрируй в конструкторе
+  того, кто её запускает (`tasks.provideService`, `teamchat.newHandler`): потребители (шлюз, воркеры) создаются позже
+  и останавливаются раньше. Проверка — `teamchat.TestIntegrationStopOrder`.
 
 ### База знаний
 

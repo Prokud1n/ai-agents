@@ -114,13 +114,15 @@ type Version struct {
 
 // Feedback is the trainer's revision request or rejection of a version.
 type Feedback struct {
-	ID        int64
-	TaskID    int64
-	Version   int
-	Kind      FeedbackKind
-	Text      string
-	AuthorID  int64
-	CreatedAt time.Time
+	ID       int64
+	TaskID   int64
+	Version  int
+	Kind     FeedbackKind
+	Text     string
+	AuthorID int64
+	// SourceMessageID is the message the feedback came from (a reply to the draft); 0 if none.
+	SourceMessageID int64
+	CreatedAt       time.Time
 }
 
 // StatusCount is the number of tasks in a status.

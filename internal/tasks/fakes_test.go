@@ -21,6 +21,7 @@ var errTemporary = errors.New("claude api is overloaded")
 const (
 	testAgent    = "copywriter"
 	testVersion1 = "Версия один"
+	testVersion2 = "Версия два"
 	staleRunID   = "old"
 )
 
@@ -102,16 +103,22 @@ type fakeNotifier struct {
 	sendErr   error
 	sendCalls int
 	onSend    func() // called on every successful send, e.g. to let another sender win the race
+	// parts: every draft is sent in two parts; the first part's ID is the draft's ID + partIDOffset.
+	parts bool
+	// partialOnErr: the parts "sent" before sendErr.
+	partialOnErr []int64
 }
 
-func (n *fakeNotifier) SendDraft(_ context.Context, draft *Draft) (int64, error) {
+const partIDOffset = 500
+
+func (n *fakeNotifier) SendDraft(_ context.Context, draft *Draft) (SentDraft, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	n.sendCalls++
 
 	if n.sendErr != nil {
-		return 0, n.sendErr
+		return SentDraft{PartIDs: n.partialOnErr}, n.sendErr
 	}
 
 	n.drafts = append(n.drafts, *draft)
@@ -120,7 +127,14 @@ func (n *fakeNotifier) SendDraft(_ context.Context, draft *Draft) (int64, error)
 		n.onSend()
 	}
 
-	return int64(1000 + len(n.drafts)), nil
+	id := int64(1000 + len(n.drafts))
+
+	sent := SentDraft{MessageID: id}
+	if n.parts {
+		sent.PartIDs = []int64{id + partIDOffset}
+	}
+
+	return sent, nil
 }
 
 func (n *fakeNotifier) CloseDraft(_ context.Context, data *CloseDraftData) error {

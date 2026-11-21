@@ -44,6 +44,9 @@ type fakeBotAPI struct {
 	// fileGate, when set, holds getFile until it is closed: a slow download.
 	fileGate      chan struct{}
 	nextMessageID int64
+	// failSend, when set, makes the sendMessage call with this number (from 1) fail with 400.
+	failSend  int
+	sendCount int
 }
 
 func newFakeBotAPI(t *testing.T) (api *fakeBotAPI, baseURL string) {
@@ -65,6 +68,14 @@ func newFakeBotAPI(t *testing.T) (api *fakeBotAPI, baseURL string) {
 	t.Cleanup(srv.Close)
 
 	return api, srv.URL
+}
+
+// failSendMessage makes the n-th sendMessage call (from 1) fail with 400.
+func (f *fakeBotAPI) failSendMessage(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.failSend = n
 }
 
 func (f *fakeBotAPI) queue(token string, updates ...telegram.Update) {
@@ -158,6 +169,17 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, true)
 	default:
 		f.mu.Lock()
+		if method == "sendMessage" {
+			f.sendCount++
+
+			if f.sendCount == f.failSend {
+				f.mu.Unlock()
+				writeError(w, http.StatusBadRequest, "Bad Request: message is too long")
+
+				return
+			}
+		}
+
 		f.nextMessageID++
 		id := f.nextMessageID
 		f.mu.Unlock()

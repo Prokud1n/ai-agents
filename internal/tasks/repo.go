@@ -146,9 +146,9 @@ func writeChange(ctx context.Context, tx pgx.Tx, change *Change) error {
 
 	if f := change.Feedback; f != nil {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO task_feedback (task_id, version, kind, text, author_id, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
-			f.TaskID, f.Version, string(f.Kind), f.Text, f.AuthorID, f.CreatedAt); err != nil {
+			INSERT INTO task_feedback (task_id, version, kind, text, author_id, source_message_id, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			f.TaskID, f.Version, string(f.Kind), f.Text, f.AuthorID, f.SourceMessageID, f.CreatedAt); err != nil {
 			return fmt.Errorf("failed to insert task feedback: %w", err)
 		}
 	}
@@ -156,9 +156,10 @@ func writeChange(ctx context.Context, tx pgx.Tx, change *Change) error {
 	if d := change.Redeliver; d != nil {
 		if _, err := tx.Exec(ctx, `
 			UPDATE task_versions
-			SET draft_message_id = NULL, delivery_attempts = 0, delivery_after = $3, delivery_note = $4,
-			    old_draft_message_ids = CASE WHEN draft_message_id > 0
-			        THEN array_append(old_draft_message_ids, draft_message_id) ELSE old_draft_message_ids END
+			SET draft_message_id = NULL, draft_part_message_ids = '{}', delivery_attempts = 0, delivery_after = $3,
+			    delivery_note = $4,
+			    old_draft_message_ids = old_draft_message_ids || draft_part_message_ids || CASE WHEN draft_message_id > 0
+			        THEN ARRAY[draft_message_id] ELSE '{}'::bigint[] END
 			WHERE task_id = $1 AND version = $2`,
 			t.ID, d.Version, t.UpdatedAt, d.Note); err != nil {
 			return fmt.Errorf("failed to reset draft delivery: %w", err)
@@ -209,13 +210,16 @@ func (r *repo) LatestFeedback(ctx context.Context, taskID int64, version int, ki
 	return f, nil
 }
 
-// FindByDraftMessage finds the task version whose draft is the message in the chat.
+// FindByDraftMessage finds the task version whose draft is the message in the chat: the message with
+// the buttons or an earlier part of a long draft.
 func (r *repo) FindByDraftMessage(ctx context.Context, chatID, messageID int64) (taskID int64, version int, err error) {
 	err = r.db.GetReadConnection().QueryRow(ctx, `
 		SELECT v.task_id, v.version
 		FROM task_versions v
 		JOIN tasks t ON t.id = v.task_id
-		WHERE v.draft_message_id = $2 AND v.draft_message_id > 0 AND t.source_chat_id = $1`, chatID, messageID,
+		WHERE t.source_chat_id = $1
+		  AND ((v.draft_message_id = $2 AND v.draft_message_id > 0) OR v.draft_part_message_ids @> ARRAY[$2::bigint])
+		LIMIT 1`, chatID, messageID,
 	).Scan(&taskID, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, 0, fmt.Errorf("no draft with message %d in chat %d: %w", messageID, chatID, ErrNotFound)
@@ -288,28 +292,67 @@ func (r *repo) DelayDelivery(ctx context.Context, taskID int64, version int, nex
 	return nil
 }
 
-// SetDraftMessageID stores the message of the sent draft; false when another sender stored one first.
-func (r *repo) SetDraftMessageID(ctx context.Context, taskID int64, version int, messageID int64) (bool, error) {
-	tag, err := r.db.GetWriteConnection().Exec(ctx,
-		`UPDATE task_versions SET draft_message_id = $3 WHERE task_id = $1 AND version = $2 AND draft_message_id IS NULL`,
-		taskID, version, messageID)
+// SetDraftMessages stores the messages of the sent draft; false when another sender stored its own first.
+func (r *repo) SetDraftMessages(ctx context.Context, taskID int64, version int, sent *SentDraft) (bool, error) {
+	parts := sent.PartIDs
+	if parts == nil {
+		parts = []int64{}
+	}
+
+	tag, err := r.db.GetWriteConnection().Exec(ctx, `
+		UPDATE task_versions SET draft_message_id = $3, draft_part_message_ids = $4
+		WHERE task_id = $1 AND version = $2 AND draft_message_id IS NULL`,
+		taskID, version, sent.MessageID, parts)
 	if err != nil {
-		return false, fmt.Errorf("failed to set draft message id: %w", err)
+		return false, fmt.Errorf("failed to set draft messages: %w", err)
 	}
 
 	return tag.RowsAffected() > 0, nil
 }
 
-// AddOldDraftMessage remembers a message of the version that is not its draft any more (a duplicate).
-func (r *repo) AddOldDraftMessage(ctx context.Context, taskID int64, version int, messageID int64) error {
+// AddOldDraftMessages remembers messages of the version that are not its draft any more (a duplicate).
+func (r *repo) AddOldDraftMessages(ctx context.Context, taskID int64, version int, messageIDs []int64) error {
 	_, err := r.db.GetWriteConnection().Exec(ctx, `
-		UPDATE task_versions SET old_draft_message_ids = array_append(old_draft_message_ids, $3::bigint)
-		WHERE task_id = $1 AND version = $2`, taskID, version, messageID)
+		UPDATE task_versions SET old_draft_message_ids = old_draft_message_ids || $3::bigint[]
+		WHERE task_id = $1 AND version = $2`, taskID, version, messageIDs)
 	if err != nil {
-		return fmt.Errorf("failed to remember old draft message: %w", err)
+		return fmt.Errorf("failed to remember old draft messages: %w", err)
 	}
 
 	return nil
+}
+
+// HasUnsentDraft reports whether the agent has a task of the chat topic awaiting approval whose latest draft
+// is not stored as sent yet.
+func (r *repo) HasUnsentDraft(ctx context.Context, chatID, topicID int64, agent string) (bool, error) {
+	var found bool
+
+	err := r.db.GetReadConnection().QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM tasks t
+			JOIN task_versions v ON v.task_id = t.id AND v.version = t.version
+			WHERE t.source_chat_id = $1 AND t.source_topic_id = $2 AND t.agent = $3
+			  AND t.status = 'awaiting_approval' AND v.draft_message_id IS NULL
+		)`, chatID, topicID, agent).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("failed to find unsent drafts: %w", err)
+	}
+
+	return found, nil
+}
+
+// HasFeedbackFromMessage reports whether the task has feedback that came from the message.
+func (r *repo) HasFeedbackFromMessage(ctx context.Context, taskID, messageID int64) (bool, error) {
+	var found bool
+
+	err := r.db.GetReadConnection().QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM task_feedback WHERE task_id = $1 AND source_message_id = $2)`,
+		taskID, messageID).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("failed to find feedback by message: %w", err)
+	}
+
+	return found, nil
 }
 
 // IsOldDraftMessage reports whether the message in the chat was a draft that has been replaced.

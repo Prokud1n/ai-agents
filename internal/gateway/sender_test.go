@@ -67,6 +67,8 @@ func TestSenderEditsAndCallbacks(t *testing.T) {
 	require.NoError(t, sender.EditText(t.Context(), MarketerRole, 10, "План v2", nil))
 	require.NoError(t, sender.EditButtons(t.Context(), DesignerRole, 11, [][]Button{{{Text: "Ок", Data: "keep"}}}))
 	require.NoError(t, sender.AnswerCallback(t.Context(), EditorRole, "cb-1", "Принято"))
+	require.NoError(t, sender.React(t.Context(), MarketerRole, 12, "👀"))
+	require.ErrorIs(t, sender.React(t.Context(), MarketerRole, 0, "👀"), ErrValidation)
 
 	edit := api.callsOf("editMessageText")
 	require.Len(t, edit, 1)
@@ -84,6 +86,12 @@ func TestSenderEditsAndCallbacks(t *testing.T) {
 	require.Len(t, answer, 1)
 	assert.Equal(t, editorAuth, answer[0].token)
 	assert.JSONEq(t, `{"callback_query_id":"cb-1","text":"Принято"}`, string(answer[0].body))
+
+	reactions := api.callsOf("setMessageReaction")
+	require.Len(t, reactions, 1, "an invalid reaction is not sent")
+	assert.Equal(t, marketerAuth, reactions[0].token)
+	assert.JSONEq(t, `{"chat_id":-1001000,"message_id":12,"reaction":[{"type":"emoji","emoji":"👀"}]}`,
+		string(reactions[0].body))
 }
 
 // outboxFile writes a file into the sender's outbox directory.
@@ -376,6 +384,23 @@ func TestSenderSplitsLongText(t *testing.T) {
 	assert.Nil(t, last.ReplyParameters)
 	assert.NotNil(t, last.ReplyMarkup)
 	assert.Equal(t, api.lastMessageID(), id, "the ID of the message with the buttons")
+
+	ids, err := sender.SendTextParts(t.Context(), MarketerRole, &OutgoingMessage{Text: text})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{api.lastMessageID() - 1, api.lastMessageID()}, ids, "the IDs of all parts in order")
+}
+
+// TestSenderSendTextPartsFailure: when a part fails, the IDs of the parts already sent come with the error.
+func TestSenderSendTextPartsFailure(t *testing.T) {
+	t.Parallel()
+
+	sender, api := newTestSender(t)
+	api.failSendMessage(2)
+
+	ids, err := sender.SendTextParts(t.Context(), MarketerRole, &OutgoingMessage{Text: strings.Repeat("слово ", 1000)})
+
+	require.Error(t, err)
+	assert.Equal(t, []int64{api.lastMessageID()}, ids, "the first part was sent")
 }
 
 func TestSenderMovesLongCaptionToText(t *testing.T) {

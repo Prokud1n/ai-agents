@@ -22,14 +22,27 @@ type Handler interface {
 	HandleEvent(ctx context.Context, event *Event) error
 }
 
+// MediaFilter is optional for a Handler: the gateway downloads the file of an event only when WantsMedia
+// returns true (a handler that does not process files yet answers at once, without waiting for a download).
+// A Handler without it gets every file downloaded.
+type MediaFilter interface {
+	WantsMedia(event *Event) bool
+}
+
+func wantsMedia(h Handler, event *Event) bool {
+	filter, ok := h.(MediaFilter)
+
+	return !ok || filter.WantsMedia(event)
+}
+
 // replySender is the part of Sender the acknowledging handler needs.
 type replySender interface {
 	SendText(ctx context.Context, role Role, msg *OutgoingMessage) (int64, error)
 	AnswerCallback(ctx context.Context, role Role, callbackID, text string) error
 }
 
-// AckHandler is the default handler until the task queue (T1.3) is connected: it logs the event and
-// answers in the same topic from the target bot, so the gateway can be checked by hand.
+// AckHandler is the default handler of the gateway module alone (the application uses teamchat.Handler):
+// it logs the event and answers in the same topic from the target bot, so the gateway can be checked by hand.
 type AckHandler struct {
 	sender replySender
 	log    *slog.Logger

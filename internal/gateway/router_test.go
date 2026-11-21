@@ -102,12 +102,14 @@ type routed struct {
 	MediaSize int64
 	TooLarge  bool
 	Callback  string
+	IsCommand bool
+	ReplyRole Role
 }
 
 func project(e *Event) routed {
 	r := routed{
 		Type: e.Type, Target: e.Target, Topic: e.Topic, TopicID: e.TopicID, ReplyTo: e.ReplyToMessageID,
-		Command: e.Command, Text: e.Text,
+		Command: e.Command, Text: e.Text, IsCommand: e.IsCommand, ReplyRole: e.ReplyToRole,
 	}
 
 	if e.Media != nil {
@@ -191,7 +193,7 @@ func TestRouterMessages(t *testing.T) {
 			}),
 			expected: routed{
 				Type: MessageEventType, Target: DesignerRole, Topic: ProductionTopic, TopicID: productionTopic,
-				ReplyTo: 50, Text: "Сделай короче",
+				ReplyTo: 50, Text: "Сделай короче", ReplyRole: DesignerRole,
 			},
 		},
 		{
@@ -207,6 +209,7 @@ func TestRouterMessages(t *testing.T) {
 			input: groupMessage("/plan@Marketer_Bot неделя 3", withEntities(command(18))),
 			expected: routed{
 				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: PlanCommand, Text: "неделя 3",
+				IsCommand: true,
 			},
 		},
 		{
@@ -214,27 +217,37 @@ func TestRouterMessages(t *testing.T) {
 			input: groupMessage("/idea рилс про сон", inTopic(sourcesTopic), withEntities(command(5))),
 			expected: routed{
 				Type: CommandEventType, Target: MarketerRole, Topic: SourcesTopic, TopicID: sourcesTopic,
-				Command: IdeaCommand, Text: "рилс про сон",
+				Command: IdeaCommand, Text: "рилс про сон", IsCommand: true,
 			},
 		},
 		{
 			name:  "command addressed to another team bot",
 			input: groupMessage("/status@editor_bot", withEntities(command(18))),
 			expected: routed{
-				Type: CommandEventType, Target: EditorRole, Topic: OtherTopic, Command: StatusCommand,
+				Type: CommandEventType, Target: EditorRole, Topic: OtherTopic, Command: StatusCommand, IsCommand: true,
 			},
 		},
 		{
 			name:  "pause command",
 			input: groupMessage("/PAUSE", withEntities(command(6))),
 			expected: routed{
-				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: PauseCommand,
+				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: PauseCommand, IsCommand: true,
 			},
 		},
 		{
-			name:     "unknown command is a plain message",
-			input:    groupMessage("/start", withEntities(command(6))),
-			expected: routed{Type: MessageEventType, Target: MarketerRole, Topic: OtherTopic, Text: "/start"},
+			name:  "unknown command is a plain message",
+			input: groupMessage("/start", withEntities(command(6))),
+			expected: routed{
+				Type: MessageEventType, Target: MarketerRole, Topic: OtherTopic, Text: "/start", IsCommand: true,
+			},
+		},
+		{
+			name:  "slash text without a command entity is not a command",
+			input: groupMessage("/2 подхода убрать", replyTo(50, 2)),
+			expected: routed{
+				Type: MessageEventType, Target: CopywriterRole, Topic: OtherTopic, ReplyTo: 50,
+				Text: "/2 подхода убрать", ReplyRole: CopywriterRole,
+			},
 		},
 		{
 			name: "voice",

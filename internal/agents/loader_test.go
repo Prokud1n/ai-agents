@@ -217,7 +217,41 @@ func TestExampleAgent(t *testing.T) {
 
 	assert.Equal(t, 1, overridden, "the template shows a shared skill with an override")
 
-	registry, err := LoadRegistry(agentsDir, skillsDir, nil)
+	registry, err := LoadRegistry(agentsDir, skillsDir, []Tool{&fakeTool{name: knowledgeSearchTool}})
 	require.NoError(t, err)
 	assert.NotContains(t, registry.Names(), exampleAgent, "templates are not loaded as agents")
+}
+
+// TestRepositoryAgents loads the real agents/ with the real shared skills. The team agents are named after
+// the gateway roles that run agents (the editor and the designer are not connected yet: teamchat answers
+// for them with a fixed text).
+func TestRepositoryAgents(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := filepath.Join("..", "..")
+
+	registry, err := LoadRegistry(filepath.Join(repoRoot, agentsSubdir), filepath.Join(repoRoot, skillsDirName),
+		[]Tool{&fakeTool{name: knowledgeSearchTool}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"copywriter", "marketer"}, registry.Names())
+
+	tests := []struct {
+		name          string
+		expectedTools []string
+	}{
+		{name: "marketer", expectedTools: []string{knowledgeSearchTool}},
+		{name: "copywriter", expectedTools: []string{knowledgeSearchTool}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			agent, err := registry.Get(tt.name)
+			require.NoError(t, err)
+			assert.NotEmpty(t, agent.DisplayName)
+			assert.NotEmpty(t, agent.Prompt)
+			assert.Equal(t, tt.expectedTools, agent.Tools)
+		})
+	}
 }

@@ -93,7 +93,7 @@ func TestIntegrationFullCycle(t *testing.T) {
 
 	env := newTestEnv(t, pgtest.Connect(t),
 		fakeResult{text: testVersion1},
-		fakeResult{text: "Версия два"},
+		fakeResult{text: testVersion2},
 	)
 	ctx := context.Background()
 
@@ -152,6 +152,8 @@ func checkRevisionByReply(t *testing.T, env *testEnv, task *Task) {
 	require.NoError(t, err)
 	assert.Equal(t, QueuedStatus, queued.Status, "the revision queues the task at once")
 	assert.Equal(t, []int64{task.ID, task.ID}, env.queue.Enqueued(), "queued on create and after the revision")
+
+	env.waitBackground(t) // the draft is closed in the background
 	require.Len(t, env.notifier.Closed(), 1)
 	assert.Equal(t, ReviseAction, env.notifier.Closed()[0].Decision)
 
@@ -184,7 +186,7 @@ func checkSecondVersion(t *testing.T, env *testEnv, taskID int64) {
 
 	v2, err := env.service.GetVersion(ctx, taskID, 2)
 	require.NoError(t, err)
-	assert.Equal(t, "Версия два", v2.Content)
+	assert.Equal(t, testVersion2, v2.Content)
 	require.NotNil(t, v2.DraftMessageID)
 	assert.Equal(t, int64(1002), *v2.DraftMessageID)
 
@@ -211,20 +213,21 @@ func checkApproval(t *testing.T, env *testEnv, taskID int64) {
 	require.NoError(t, err)
 	assert.Equal(t, ApprovedStatus, task.Status)
 
+	env.waitBackground(t) // the draft is closed and the correction saved in the background
+
 	closed := env.notifier.Closed()
 	require.Len(t, closed, 2)
 	assert.Equal(t, CloseDraftData{
-		TaskID: taskID, Version: 2, Agent: testAgent, ChatID: task.Source.ChatID, MessageID: 1002, Decision: ApproveAction,
+		TaskID: taskID, Version: 2, Agent: testAgent, ChatID: task.Source.ChatID, TopicID: task.Source.TopicID,
+		MessageID: 1002, Decision: ApproveAction,
 	}, closed[1])
-
-	env.waitBackground(t)
 
 	saved := env.corrections.Saved()
 	require.Len(t, saved, 1)
 	assert.Equal(t, testAgent, saved[0].Agent)
 	assert.Equal(t, "reels-script", saved[0].TaskKind)
 	assert.Equal(t, testVersion1, saved[0].Original)
-	assert.Equal(t, "Версия два", saved[0].Corrected)
+	assert.Equal(t, testVersion2, saved[0].Corrected)
 	assert.Equal(t, "Сделай хук короче", saved[0].Comment)
 
 	// A repeated press changes nothing.
@@ -247,7 +250,7 @@ func TestIntegrationFailedRevisionReturnsPreviousVersion(t *testing.T) {
 	env := newTestEnv(t, pgtest.Connect(t),
 		fakeResult{text: testVersion1},
 		fakeResult{err: classifyAgentError(errors.Join(errors.New("stop_reason refusal, request_id req_9"), agents.ErrRefusal))},
-		fakeResult{text: "Версия два"},
+		fakeResult{text: testVersion2},
 	)
 	ctx := context.Background()
 
@@ -678,7 +681,7 @@ func TestIntegrationDuplicateDraftIsClosed(t *testing.T) {
 	require.NoError(t, err)
 
 	env.notifier.OnSend(func() {
-		_, err := env.service.repo.SetDraftMessageID(ctx, task.ID, 1, 777)
+		_, err := env.service.repo.SetDraftMessages(ctx, task.ID, 1, &SentDraft{MessageID: 777})
 		require.NoError(t, err)
 	})
 
@@ -692,7 +695,8 @@ func TestIntegrationDuplicateDraftIsClosed(t *testing.T) {
 	closed := env.notifier.Closed()
 	require.Len(t, closed, 1)
 	assert.Equal(t, CloseDraftData{
-		TaskID: task.ID, Version: 1, Agent: testAgent, ChatID: task.Source.ChatID, MessageID: 1001, Duplicate: true,
+		TaskID: task.ID, Version: 1, Agent: testAgent, ChatID: task.Source.ChatID, TopicID: task.Source.TopicID,
+		MessageID: 1001, Duplicate: true,
 	}, closed[0])
 
 	_, _, err = env.service.FindByDraftMessage(ctx, task.Source.ChatID, 1001)
@@ -701,4 +705,101 @@ func TestIntegrationDuplicateDraftIsClosed(t *testing.T) {
 	found, _, err := env.service.FindByDraftMessage(ctx, task.Source.ChatID, 777)
 	require.NoError(t, err)
 	assert.Equal(t, task.ID, found.ID)
+}
+
+// TestIntegrationRevisionByReplyToPart: a reply to an earlier part of a long draft is a revision, and the
+// same reply delivered again does not revise twice.
+func TestIntegrationRevisionByReplyToPart(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t, pgtest.Connect(t), fakeResult{text: testVersion1}, fakeResult{text: testVersion2})
+	env.notifier.parts = true
+	ctx := context.Background()
+
+	task, _, err := env.service.Create(ctx, testTaskData(80))
+	require.NoError(t, err)
+	require.NoError(t, env.service.Run(ctx, task.ID))
+
+	firstPart := int64(1001 + partIDOffset)
+
+	found, v1, err := env.service.FindByDraftMessage(ctx, task.Source.ChatID, firstPart)
+	require.NoError(t, err)
+	assert.Equal(t, task.ID, found.ID)
+	assert.Equal(t, 1, v1.Version)
+
+	reply := &RequestRevisionByReplyData{
+		ChatID: task.Source.ChatID, ReplyToMessageID: firstPart, MessageID: 81, UserID: 555, Text: "Короче",
+	}
+
+	queued, err := env.service.RequestRevisionByReply(ctx, reply)
+	require.NoError(t, err)
+	assert.Equal(t, QueuedStatus, queued.Status)
+
+	again, err := env.service.RequestRevisionByReply(ctx, reply)
+	require.NoError(t, err, "a redelivered reply is not an error")
+	assert.Equal(t, QueuedStatus, again.Status)
+	assert.Len(t, env.queue.Enqueued(), 2, "queued on create and once for the revision")
+
+	other := *reply
+	other.MessageID = 82
+
+	_, err = env.service.RequestRevisionByReply(ctx, &other)
+	require.ErrorIs(t, err, ErrConflict, "another reply while the new version is being made")
+
+	require.NoError(t, env.service.Run(ctx, task.ID))
+
+	_, err = env.service.RequestRevisionByReply(ctx, &RequestRevisionByReplyData{
+		ChatID: task.Source.ChatID, ReplyToMessageID: firstPart, MessageID: 83, UserID: 555, Text: "ещё",
+	})
+	require.ErrorIs(t, err, ErrStaleDraft, "a part of version 1 is an old draft once version 2 is sent")
+
+	found, v2, err := env.service.FindByDraftMessage(ctx, task.Source.ChatID, 1002+partIDOffset)
+	require.NoError(t, err)
+	assert.Equal(t, task.ID, found.ID)
+	assert.Equal(t, 2, v2.Version)
+
+	env.waitBackground(t)
+}
+
+// TestIntegrationDraftBeingSent: parts of a draft whose send failed become old messages of the version; while
+// the draft is not sent, a reply to a message of the agent's bot is ErrDraftNotReady, not a new task.
+func TestIntegrationDraftBeingSent(t *testing.T) {
+	t.Parallel()
+
+	env := newTestEnv(t, pgtest.Connect(t), fakeResult{text: testVersion1})
+	env.notifier.partialOnErr = []int64{3001}
+	env.notifier.SetSendErr(errTelegramDown)
+	ctx := context.Background()
+
+	task, _, err := env.service.Create(ctx, testTaskData(85))
+	require.NoError(t, err)
+	require.NoError(t, env.service.Run(ctx, task.ID))
+
+	running, err := env.service.Get(ctx, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, AwaitingApprovalStatus, running.Status, "the draft waits for the next delivery attempt")
+
+	_, _, err = env.service.FindByDraftMessage(ctx, task.Source.ChatID, 3001)
+	require.ErrorIs(t, err, ErrStaleDraft, "a part of the failed send is an old message")
+
+	reply := &RequestRevisionByReplyData{
+		ChatID: task.Source.ChatID, ReplyToMessageID: 3002, MessageID: 86, UserID: 555, Text: "Короче",
+		TopicID: task.Source.TopicID, Agent: testAgent,
+	}
+
+	_, err = env.service.RequestRevisionByReply(ctx, reply)
+	require.ErrorIs(t, err, ErrDraftNotReady)
+	assert.Equal(t, "Черновик ещё отправляется — ответьте на него, когда придут кнопки.", UserMessage(err))
+
+	notOurBot := *reply
+	notOurBot.Agent = ""
+
+	_, err = env.service.RequestRevisionByReply(ctx, &notOurBot)
+	require.ErrorIs(t, err, ErrNotFound, "a reply to a person is not about the draft")
+
+	otherAgent := *reply
+	otherAgent.Agent = "marketer"
+
+	_, err = env.service.RequestRevisionByReply(ctx, &otherAgent)
+	require.ErrorIs(t, err, ErrNotFound, "another agent has no draft being sent")
 }

@@ -81,12 +81,17 @@ type Event struct {
 	MessageID int64
 	// ReplyToMessageID is the message this one answers; 0 if it is not a reply.
 	ReplyToMessageID int64
-	From             User
+	// ReplyToRole is the team bot whose message this one answers; empty if it is not a reply to a team bot.
+	ReplyToRole Role
+	From        User
 	// Text is the message text or media caption; for a command, its arguments.
 	Text string
 	// Forwarded: the message is forwarded from someone else. Agents treat its text as data, never as
 	// an instruction.
 	Forwarded bool
+	// IsCommand: the message starts with a bot_command entity (/cmd or /cmd@bot). A team command has the
+	// type CommandEventType; any other command is a MessageEventType with IsCommand and its whole text.
+	IsCommand bool
 	Command   Command
 	Media     *Media
 	Callback  *Callback

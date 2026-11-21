@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Telegram ⇄ tasks (M1, `internal/teamchat`): the gateway's events become tasks and decisions, drafts come back to
+  the group. A text message creates a task for the target role's agent (key: chat id + message id; the draft goes
+  to the message's topic) and gets a 👀 reaction (in the background, 3 s timeout) instead of an extra reply;
+  a forwarded text reaches the agent in a `<forwarded_message>` block marked as data. The editor and the designer
+  are not connected yet: they answer with a fixed text, without an agent run, a draft or buttons. A reply to any
+  part of the latest draft is a revision, idempotent by the reply message; another reply while the new version is
+  being made gets «Уже готовлю новую версию…», a reply to an approved, rejected or failed draft an explanation, to
+  an old draft «Ответьте на последний черновик», to any other message — a new task. «Одобрить / Отклонить» are
+  answered right after the decision is stored (the draft is closed in the background), «Правки» asks to reply with
+  the revision; a button counts only on the draft message of its task and version. `/status` (tasks by status,
+  LLM usage for 7 days), `/plan` and `/idea <text>` (marketer tasks of kind `plan` / `idea`) are the marketer's;
+  `/pause` answers that it is not supported yet, other commands get the list of commands. Voice messages, videos
+  and photos get an honest «not processed yet» answer at once: the gateway does not download them. Errors reach
+  the trainer as `tasks.UserMessage`. `teamchat.Notifier` sends drafts from the agent's bot with the buttons on the
+  last part of a long draft («Версия N» heads revisions), removes the buttons of a decided draft and answers it
+  with «Одобрено.» / «Отклонено.» / «Принял правку…» (a duplicate only loses its buttons), and tells about failed
+  tasks. Without bot tokens the notifier is the log one, as before.
+- Migration `005_draft_parts`: `task_versions.draft_part_message_ids` (earlier parts of a long draft; a failed part
+  makes the next delivery send all parts again, and the parts already sent become old messages of the version) and
+  `task_feedback.source_message_id` (a revision remembers its reply message).
+- `tasks.ErrDraftNotReady`: a reply to a part of a draft that is still being sent; a button pressed before the draft
+  is stored gets «Черновик ещё сохраняется, нажмите ещё раз». `gateway.Event.ReplyToRole` and `Event.IsCommand`
+  (a `bot_command` entity at the start): only such messages are commands, so «/2 подхода убрать» stays a revision.
+- On stop the gateway and the workers stop before the task service and the team chat handler wait for their
+  background work (the wait hooks are registered in the constructors).
+- Team agents `marketer` and `copywriter` (working drafts with `search_knowledge_base` and `brand-knowledge`; the
+  brand voice comes in T2.1).
+- `gateway.Sender.SendTextParts` (IDs of all parts) and `gateway.MediaFilter` (a handler that does not process files
+  yet: the gateway does not download them).
+- `gateway.Sender.React` and the Bot API client's `setMessageReaction`.
 - Agents can search the brand knowledge base: the `search_knowledge_base` tool (`internal/knowledge/kbtool`) is registered
   in `agents.ToolsGroup` in the app and `agent-run`; an agent gets it only when `tools:` of its `agent.md` lists it.
   Fragments come in `<fragment source="…" title="…" kind="…" score="…">` tags with `<` and `&` escaped in the content
@@ -164,6 +194,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The application uses `teamchat.Module` instead of `tasks.LogNotifierModule`: the gateway no longer answers with
+  the «Принял…» acknowledgement (`gateway.AckHandler` stays the default of the gateway module alone).
+  `tasks.CloseDraftData` has the draft's `TopicID`; `tasks.Notifier.SendDraft` returns `tasks.SentDraft` (the
+  message with the buttons and the earlier parts); `Approve`, `Reject` and `RequestRevision` close the draft in the
+  background.
 - The app and `agent-run` now parse `EMBEDDINGS_*` (defaults as before) and include the knowledge base service:
   an invalid value fails their start.
 - The knowledge base CLI `kb` is in the app image (`/app/kb`): `make kb-ingest|kb-search|kb-delete|kb-reembed` run it

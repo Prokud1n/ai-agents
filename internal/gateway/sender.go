@@ -78,18 +78,31 @@ func NewSender(b *bots, cfg *config.Telegram) *Sender {
 // SendText sends a message, with inline buttons if any, and returns the ID of the last message sent (the one
 // with the buttons).
 func (s *Sender) SendText(ctx context.Context, role Role, msg *OutgoingMessage) (int64, error) {
+	ids, err := s.SendTextParts(ctx, role, msg)
+	if err != nil {
+		return 0, err
+	}
+
+	return ids[len(ids)-1], nil
+}
+
+// SendTextParts sends a message like SendText and returns the IDs of all its messages in order: a text above
+// 4096 characters is several messages, the last one has the buttons. If a part fails, the error is returned
+// together with the IDs of the parts sent before it: they stay in the chat, and sending again sends every
+// part again.
+func (s *Sender) SendTextParts(ctx context.Context, role Role, msg *OutgoingMessage) ([]int64, error) {
 	if strings.TrimSpace(msg.Text) == "" {
-		return 0, fmt.Errorf("empty text: %w", ErrValidation)
+		return nil, fmt.Errorf("empty text: %w", ErrValidation)
 	}
 
 	client, err := s.client(role)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	markup, err := keyboard(msg.Buttons)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	return s.sendParts(ctx, client, role, &textParts{
@@ -104,11 +117,11 @@ type textParts struct {
 	markup  *telegram.InlineKeyboardMarkup
 }
 
-// sendParts sends a text split by the message limit: the first part answers replyTo, the last has the buttons.
-func (s *Sender) sendParts(ctx context.Context, client *telegram.Client, role Role, p *textParts) (int64, error) {
+// sendParts sends a text split by the message limit and returns the IDs of the parts: the first part answers
+// replyTo, the last has the buttons. On an error the IDs of the parts already sent are returned with it.
+func (s *Sender) sendParts(ctx context.Context, client *telegram.Client, role Role, p *textParts) ([]int64, error) {
 	parts := splitText(p.text, maxMessageLength)
-
-	var lastID int64
+	ids := make([]int64, 0, len(parts))
 
 	for i, part := range parts {
 		params := &telegram.SendMessageParams{ChatID: s.groupID, MessageThreadID: p.topicID, Text: part}
@@ -122,13 +135,13 @@ func (s *Sender) sendParts(ctx context.Context, client *telegram.Client, role Ro
 
 		sent, err := client.SendMessage(ctx, params)
 		if err != nil {
-			return 0, fmt.Errorf("failed to send message part %d of %d as %s: %w", i+1, len(parts), role, err)
+			return ids, fmt.Errorf("failed to send message part %d of %d as %s: %w", i+1, len(parts), role, err)
 		}
 
-		lastID = sent.MessageID
+		ids = append(ids, sent.MessageID)
 	}
 
-	return lastID, nil
+	return ids, nil
 }
 
 // SendMedia uploads a file (up to 2 GB with the local Bot API server) and returns the ID of the message with
@@ -183,9 +196,14 @@ func (s *Sender) SendMedia(ctx context.Context, role Role, media *OutgoingMedia)
 		return sent.MessageID, nil
 	}
 
-	return s.sendParts(ctx, client, role, &textParts{
+	ids, err := s.sendParts(ctx, client, role, &textParts{
 		topicID: media.TopicID, replyTo: sent.MessageID, text: media.Caption, markup: markup,
 	})
+	if err != nil {
+		return 0, err
+	}
+
+	return ids[len(ids)-1], nil
 }
 
 func sendFile(
@@ -273,6 +291,29 @@ func (s *Sender) AnswerCallback(ctx context.Context, role Role, callbackID, text
 		Text:            text,
 	}); err != nil {
 		return fmt.Errorf("failed to answer callback as %s: %w", role, err)
+	}
+
+	return nil
+}
+
+// React puts an emoji reaction of the role's bot on a group message, e.g. «👀» on a message taken into work.
+// Telegram accepts only emoji from its reaction list, and the group may allow fewer.
+func (s *Sender) React(ctx context.Context, role Role, messageID int64, emoji string) error {
+	if messageID <= 0 || emoji == "" {
+		return fmt.Errorf("reaction needs a message and an emoji: %w", ErrValidation)
+	}
+
+	client, err := s.client(role)
+	if err != nil {
+		return err
+	}
+
+	if err := client.SetMessageReaction(ctx, &telegram.SetMessageReactionParams{
+		ChatID:    s.groupID,
+		MessageID: messageID,
+		Reaction:  []telegram.ReactionType{{Type: telegram.EmojiReaction, Emoji: emoji}},
+	}); err != nil {
+		return fmt.Errorf("failed to set reaction as %s: %w", role, err)
 	}
 
 	return nil

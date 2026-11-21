@@ -170,6 +170,11 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, params *AnswerCallback
 	return c.callJSON(ctx, "answerCallbackQuery", params, c.requestTimeout, true, nil)
 }
 
+// SetMessageReaction replaces the bot's reactions on a message.
+func (c *Client) SetMessageReaction(ctx context.Context, params *SetMessageReactionParams) error {
+	return c.callJSON(ctx, "setMessageReaction", params, c.requestTimeout, true, nil)
+}
+
 func (c *Client) SendVideo(ctx context.Context, params *SendFileParams) (*Message, error) {
 	return c.sendFile(ctx, "sendVideo", "video", params)
 }
