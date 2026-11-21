@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `docs/MVP-BACKLOG.md` and `docs/PLAN.md`: follow-up (technical debt) tasks with priority and deadline — T1.6 `KB_ROOT`
+  from `.env` for `make kb-*`, T1.7 integration tests of the Telegram gateway's Redis store on `internal/redistest`,
+  T3.6 replacing `whisper-1` before OpenAI shuts it down on 2027-02-26 (main candidate ElevenLabs Scribe, compared on
+  Russian speech first).
 - Telegram ⇄ tasks (M1, `internal/teamchat`): the gateway's events become tasks and decisions, drafts come back to
   the group. A text message creates a task for the target role's agent (key: chat id + message id; the draft goes
   to the message's topic) and gets a 👀 reaction (in the background, 3 s timeout) instead of an extra reply;
