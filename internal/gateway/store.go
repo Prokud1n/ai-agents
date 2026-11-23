@@ -35,14 +35,20 @@ type stateStore interface {
 
 type redisStore struct {
 	rdb *goredis.Client
+	// prefix goes before every key; empty in production, a per-test prefix in integration tests (redistest.Prefix).
+	prefix string
 }
 
 func newStateStore(client *redis.Client) stateStore {
-	return &redisStore{rdb: client.Conn()}
+	return newPrefixedStore(client, "")
+}
+
+func newPrefixedStore(client *redis.Client, prefix string) *redisStore {
+	return &redisStore{rdb: client.Conn(), prefix: prefix}
 }
 
 func (s *redisStore) LoadOffset(ctx context.Context, botID int64) (int64, error) {
-	value, err := s.rdb.Get(ctx, offsetKey(botID)).Result()
+	value, err := s.rdb.Get(ctx, s.offsetKey(botID)).Result()
 	if errors.Is(err, goredis.Nil) {
 		return 0, nil
 	}
@@ -60,7 +66,7 @@ func (s *redisStore) LoadOffset(ctx context.Context, botID int64) (int64, error)
 }
 
 func (s *redisStore) SaveOffset(ctx context.Context, botID, offset int64) error {
-	if err := s.rdb.Set(ctx, offsetKey(botID), offset, 0).Err(); err != nil {
+	if err := s.rdb.Set(ctx, s.offsetKey(botID), offset, 0).Err(); err != nil {
 		return fmt.Errorf("failed to save telegram offset: %w", err)
 	}
 
@@ -68,7 +74,7 @@ func (s *redisStore) SaveOffset(ctx context.Context, botID, offset int64) error 
 }
 
 func (s *redisStore) MarkSeen(ctx context.Context, key string) (bool, error) {
-	isNew, err := s.rdb.SetNX(ctx, seenKeyPrefix+key, 1, seenTTL).Result()
+	isNew, err := s.rdb.SetNX(ctx, s.markKey(key), 1, seenTTL).Result()
 	if err != nil {
 		return false, fmt.Errorf("failed to mark telegram event as seen: %w", err)
 	}
@@ -77,15 +83,19 @@ func (s *redisStore) MarkSeen(ctx context.Context, key string) (bool, error) {
 }
 
 func (s *redisStore) Unmark(ctx context.Context, key string) error {
-	if err := s.rdb.Del(ctx, seenKeyPrefix+key).Err(); err != nil {
+	if err := s.rdb.Del(ctx, s.markKey(key)).Err(); err != nil {
 		return fmt.Errorf("failed to unmark telegram event: %w", err)
 	}
 
 	return nil
 }
 
-func offsetKey(botID int64) string {
-	return offsetKeyPrefix + strconv.FormatInt(botID, 10)
+func (s *redisStore) offsetKey(botID int64) string {
+	return s.prefix + offsetKeyPrefix + strconv.FormatInt(botID, 10)
+}
+
+func (s *redisStore) markKey(key string) string {
+	return s.prefix + seenKeyPrefix + key
 }
 
 // seenKey identifies an event across bots and restarts.
