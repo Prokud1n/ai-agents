@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The editor (Монтажёр) in Telegram, a deterministic pipeline (T3.4b): a video in «Исходники» (stored by T3.4a)
+  becomes the editor's task (`reels-edit`, the S3 key in `media`, the caption kept as the input and shown in the
+  draft's description), the trainer gets «Исходник получил, начинаю монтаж. Пришлю черновик в «Продакшн»…». The video
+  is edited by a new service **`media-worker`** (`cmd/media-worker`, `internal/mediaworker`, the media image, its own
+  container: no ports, nonroot, read-only root, `cpus: 2`, `mem_limit: 3g`, healthcheck by a heartbeat file, only
+  S3, Redis and `OPENAI_API_KEY` — no bot tokens, Claude API key or PostgreSQL): download → probe (a picture, sound,
+  `MEDIA_WORKER_MAX_SOURCE_DURATION`, default 10 min, refused before the transcription) → Whisper → rough cut plan with
+  the default settings (disputed repeats are kept and counted) → the cut, the brand subtitles and the Instagram
+  export in **one** ffmpeg pass (1080×1920, H.264 High, yuv420p, CRF 20 capped at 10 Mbit/s, AAC 128k 48 kHz,
+  the source frame rate up to 60, `+faststart`; a source that is not 9:16 is padded, `MEDIA_WORKER_FIT=crop` crops)
+  → the reel, `plan.json`, `decisions.log` and the source transcript in S3 under `MEDIA_RESULT_PREFIX`, next to the
+  source by its message. The app and the worker meet on a Redis board (`internal/editjob`: a stream of jobs with a
+  consumer group, job states, results, locks with a heartbeat, a «done» channel). The app's side (`internal/editor`)
+  is an executor of the editor's tasks that never blocks a task worker: a run without a result is deferred
+  (`tasks.DeferredError`, the attempt is not counted) and the worker's announcement wakes the task
+  (`tasks.Service.Wake`); the job is keyed by the task and the version, so retries, restarts of the app or the worker
+  and redelivered stream entries never edit twice. The draft is a **video** from the editor's bot in «Продакшн» (or
+  the source topic when `TELEGRAM_TOPIC_PRODUCTION_ID` is not set) with a link to the source, the description
+  (durations before/after, how much was cut, disputed repeats, the trainer's caption) and «Одобрить / Правки /
+  Отклонить»; the file goes through `TELEGRAM_OUTBOX_DIR` and is removed after sending. «Правки» and a reply to
+  a video draft answer «Правки текстом к видео появятся на следующем шаге…» (`tasks.ErrVideoRevision`), approval and
+  rejection work as for text drafts. Failures (no key, a source that is too long, without sound or speech, missing
+  brand fonts, a timeout `EDITOR_JOB_TIMEOUT`, default 45 min) reach the trainer as a short text, details go to the
+  worker's log. New settings `MEDIA_RESULT_PREFIX`, `EDITOR_STREAM`, `EDITOR_JOB_TIMEOUT`, `EDITOR_POLL_INTERVAL`,
+  `MEDIA_WORKER_*`; migration `006_video_drafts` (`task_versions.media_key`).
+- `tasks`: `Executor` returns `tasks.Output` (text and an optional video key); `RoutingExecutor` routes agents to
+  their executors; `DeferredError` and `Service.Wake` for work that goes on elsewhere; `TemporaryError` carries the
+  trainer's text for a retried failure. Video drafts are sent with a longer lease (20 min) and timeout (15 min), and
+  interrupted by stop instead of holding it.
+- `ffmpeg.BurnSubtitlesData.Cut` renders a rough cut and the subtitles in one pass (the graph from a file in the
+  working directory); `roughcut.Result.Render` and `Segments` give the cut of a plan-only run. `gateway.OutgoingMedia`
+  sends a video's width and height and marks it streamable.
+- Integration tests: `TestIntegrationPipeline` (real ffmpeg, libass and brand fonts on synthetic clips, a fake speech
+  recognition; checks the export), run by `make test-integration` (needs ffmpeg on the host) and inside the media
+  image in CI; `TestIntegrationEditorWorkerExchange` / `…Failure` (app ↔ worker through a real Redis and S3 with a fake
+  pipeline), `TestIntegrationBoard*`, `TestIntegrationDeferredVideoDraft`.
+
 - Video intake in the team chat (T3.4a, `internal/media`, `teamchat`): a video for the editor (topic «Исходники» or
   a mention of the editor's bot; a video or a video file) is downloaded by the gateway and copied to S3 right away,
   in the event's slot, under `<MEDIA_KEY_PREFIX>/<chat id>/<message id>/<file_unique_id>.<ext>` (the extension and
@@ -229,6 +266,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
 
 ### Changed
+
+- The answer to a voice message or a video note: «Голосовые и кружки не обрабатываю — продиктуйте текст…»; to a video
+  above `TELEGRAM_MAX_FILE_SIZE`: «Файл больше лимита 2 ГБ: …» (the limit in ГБ/МБ, with a comma).
+- A text message to the editor gets a hint to send a video to «Исходники» instead of the stub (the designer's stub
+  stays).
 
 - The application uses `teamchat.Module` instead of `tasks.LogNotifierModule`: the gateway no longer answers with
   the «Принял…» acknowledgement (`gateway.AckHandler` stays the default of the gateway module alone).

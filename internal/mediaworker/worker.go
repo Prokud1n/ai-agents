@@ -2,6 +2,7 @@ package mediaworker
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,6 +31,8 @@ const (
 	heartbeatMode   = 0o600
 	// lockRefreshes per lock lifetime: a refresh is missed only after several failures in a row.
 	lockRefreshes = 3
+	// consumerSuffix: random characters that make the consumer name unique per process.
+	consumerSuffix = 8
 )
 
 // leftoverPrefixes are the temporary directories of a job (the job's own and those of ffmpeg, the subtitles and
@@ -58,8 +61,9 @@ type jobRunner interface {
 //
 // A job is run under a lock refreshed while it runs, and acked only after its result is stored: a worker that dies
 // mid-job leaves the entry pending, its lock expires, and the entry is claimed again (by this worker after a restart
-// or by another one). An entry whose job has a result or a live lock is acked and skipped, so a job is never edited
-// twice at the same time and a finished job is not edited again.
+// or by another one). An entry whose job has a result is acked and skipped; one whose job is locked is left pending
+// for a later claim. So a job is never edited twice at the same time, a finished job is not edited again, and a job of
+// a dead worker is not lost.
 //
 // Stop cancels the running job at once (ffmpeg is killed with its context): the job is not acked and is taken again
 // after the restart.
@@ -83,9 +87,11 @@ func NewWorker(board workerBoard, pipeline jobRunner, cfg *config.MediaWorker, l
 	}
 
 	return &Worker{
-		board:         board,
-		pipeline:      pipeline,
-		consumer:      host + "-" + strconv.Itoa(os.Getpid()),
+		board:    board,
+		pipeline: pipeline,
+		// Unique per process: a restarted container has the same host name and PID 1, and must not pass for its
+		// previous run (its lock and its pending entries).
+		consumer:      host + "-" + strconv.Itoa(os.Getpid()) + "-" + rand.Text()[:consumerSuffix],
 		workDir:       cfg.WorkDir,
 		heartbeatFile: HeartbeatFile(cfg),
 		log:           log,
@@ -195,13 +201,11 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 		return
 	}
 
+	// A held lock is another live worker, or one that died a moment ago (its lock has not expired yet): the entry
+	// stays pending and is claimed again after the claim time; by then the job has a result or a free lock.
 	locked, err := w.board.Lock(ctx, job.ID, w.consumer)
 	if err != nil || !locked {
-		w.log.InfoContext(ctx, "mediaworker: job is taken by another worker", "job_id", job.ID, "error", err)
-
-		if err == nil {
-			w.ack(ctx, d)
-		}
+		w.log.InfoContext(ctx, "mediaworker: job is locked, it will be taken again later", "job_id", job.ID, "error", err)
 
 		return
 	}

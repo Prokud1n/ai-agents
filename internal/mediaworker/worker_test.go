@@ -172,8 +172,8 @@ func TestWorkerHandle(t *testing.T) {
 			expectedCode: editjob.TimeoutCode,
 		},
 		{
-			name: "a job locked by another worker is skipped", board: &fakeBoard{lockHeld: true},
-			runner: &fakeRunner{}, delivery: delivery(later), expectedAcks: 1,
+			name: "a locked job is left pending for a later claim", board: &fakeBoard{lockHeld: true},
+			runner: &fakeRunner{}, delivery: delivery(later),
 		},
 		{
 			name: "a malformed entry is acked", board: &fakeBoard{}, runner: &fakeRunner{},

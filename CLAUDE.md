@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Команда ИИ-агентов (Маркетолог, Копирайтер, Монтажёр, Дизайнер), которая ведёт Instagram фитнес-тренера;
 тренер общается с агентами в Telegram. Go-сервис + docker compose (`app`, одноразовый `migrate`, `postgres` с pgvector,
-`redis`, `s3` на RustFS, `telegram-bot-api` под профилем `telegram`). Запуск локально и на хосте — в README.md.
+`redis`, `s3` на RustFS, `telegram-bot-api` под профилем `telegram`, `media-worker` на образе `media` с ffmpeg). Запуск локально и на хосте — в README.md.
 
 ## Команды сверх AGENTS.md
 
@@ -32,11 +32,14 @@ make kb-ingest KB_PATH=./kb/brand KB_KIND=brand         # база знаний 
 make transcribe ARGS="-in video.mp4"                    # нужен ffmpeg и OPENAI_API_KEY
 make subtitles ARGS="-in video.mp4 -transcript result.json -out reel.mp4"  # субтитры; нужен ffmpeg с libass
 FFMPEG_TESTS_REQUIRED=1 go test -run TestBurnSubtitlesWithFFmpeg ./internal/subtitles/  # рендер субтитров
+INTEGRATION=1 go test -run TestIntegrationPipeline ./internal/mediaworker/  # конвейер Монтажёра на ffmpeg, без Redis/S3
+docker compose logs -f media-worker                     # шаги монтажа (step done) с секундами
 ```
 
 - `make lint`/`make fmt` идут через `scripts/golangci-lint.sh` (запиненная версия), а не через глобальный бинарь.
 - Интеграционный тест: в имени есть `Integration`, первой строкой вызывает `pgtest.Connect(t)`. Без `INTEGRATION=1`
-  он скипается; с ним получает отдельную свежую БД со всеми миграциями (можно `t.Parallel()`). Redis — через
+  он скипается; с ним получает отдельную свежую БД со всеми миграциями (можно `t.Parallel()`). Redis — `redistest`,
+  S3 — `s3test`; `TestIntegrationPipeline` требует ffmpeg с libass на хосте (`make test-integration` без него падает). Redis — через
   `redistest.Connect(t)` (свой префикс ключей), S3 — через `s3test.Connect(t)` (свой бакет на тест, одноразовый
   RustFS из `make s3-test-up` на `127.0.0.1:9100`, вне compose-проекта).
 
@@ -54,10 +57,12 @@ FFMPEG_TESTS_REQUIRED=1 go test -run TestBurnSubtitlesWithFFmpeg ./internal/subt
 | `cmd/transcribe` | `internal/transcribe.go` | ffmpeg + whisper + transcription; логи в stderr, JSON в stdout |
 | `cmd/roughcut` | `internal/roughcut.go` | ffmpeg + whisper + transcription + roughcut; логи в stderr, файлы в `-out` |
 | `cmd/subtitles` | `internal/subtitles.go` | ffmpeg + subtitles (ASS через libass, шрифты `assets/fonts`); логи в stderr; код выхода 2 — подмена шрифта |
+| `cmd/media-worker` (сервис `media-worker`) | `internal/mediaworker.go: DeclareMediaWorkerOptions` | redis + s3 + media + ffmpeg + whisper + transcription + roughcut + subtitles + editjob + mediaworker; **без** gateway, anthropic, postgres (проверяет `TestMediaWorkerHasNoAppSecrets`); `media-worker healthcheck` — свежесть heartbeat-файла |
 | `cmd/migrate` | вне fx (`internal/migrator`) | — |
 
 Долгие CLI-команды (`kb`, `transcribe`, `roughcut`, `subtitles`) выполняются **между** `app.Start` и `app.Stop` или вовсе без `Start`, а не в
-start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`. Новую команду строй так же. Таймауты старта и остановки
+start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`. Новую команду строй так же. `media-worker` — сервис: задания
+идут в горутине, запущенной start-хуком; стоп отменяет текущее задание (ffmpeg убивается по контексту). Таймауты старта и остановки
 читаются заранее (`config.ParseLifecycle`), потому что это опции верхнего уровня fx.
 
 Каждая сборка парсит только нужный ей конфиг (`config.Parse`, `ParseTranscribe`, `ParseSubtitlesCommand`, `ParseMigrate`, …). Не добавляй
@@ -100,14 +105,43 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   `gateway.AckHandler` через `fx.Decorate` **на верхнем уровне** опций (`teamchat.Module` — `fx.Options`, а не
   `fx.Module`: декоратор внутри модуля не дошёл бы до `gateway.Module`); `Notifier` шлёт черновики от бота агента.
   Без токенов `tasks.Notifier` — `tasks.LogNotifier`. Имя агента = роль бота (`agents/marketer`, `agents/copywriter`);
-  за Монтажёра и Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`), агентов для них нет.
+  за Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`); Монтажёр — не LLM-агент, а конвейер в
+  `media-worker` (раздел ниже), на текст он отвечает подсказкой прислать видео.
   Из медиа `teamchat` принимает только видео для Монтажёра (`gateway.MediaFilter` разрешает шлюзу скачать только его):
   файл сразу копируется в S3 через `internal/media` (ключ `<MEDIA_KEY_PREFIX>/<chat>/<message>/<file_unique_id>.<ext>`,
-  обратно — `media.Store.Download`), Монтажёр отвечает заглушкой, задачи нет. Голосовые и видеокружки принципиально
+  обратно — `media.Store.Download`) и становится задачей Монтажёра. Голосовые и видеокружки принципиально
   не обрабатываются (тренер диктует текст), фото и аудио — пока; на всё это честный ответ без скачивания.
+- `tasks.Executor` возвращает `tasks.Output` (текст и, для видео-черновика, ключ видео в S3 — `task_versions.media_key`).
+  Агентов маршрутизирует `tasks.RoutingExecutor`: модуль `editor` декорирует `tasks.Executor` **на верхнем уровне**
+  (как `teamchat`), задачи `editor` идут в `editor.Executor`, остальные — в `AgentExecutor`.
 - Порядок остановки fx — обратный порядку регистрации хуков. Хук ожидания фоновой работы регистрируй в конструкторе
   того, кто её запускает (`tasks.provideService`, `teamchat.newHandler`): потребители (шлюз, воркеры) создаются позже
   и останавливаются раньше. Проверка — `teamchat.TestIntegrationStopOrder`.
+
+### Монтажёр: app ↔ media-worker
+
+ffmpeg разбирает недоверенные файлы, а `app` держит токены ботов и ключи API, поэтому монтаж — в отдельном сервисе
+`media-worker` (образ `media`, nonroot, read-only root, без портов, только S3/Redis/`OPENAI_API_KEY`).
+
+- Видео в «Исходники» → `teamchat` создаёт задачу `editor` / `reels-edit` (`Media` = ключ исходника, `Input` = подпись).
+- `internal/editjob` — контракт и «доска» в Redis: stream заданий с consumer group воркеров, `<stream>:job:<id>`,
+  `<stream>:result:<id>`, блокировка `<stream>:lock:<id>` с heartbeat, канал `<stream>:done`. ID задания =
+  `task-<id>-v<версия>`: повторный запуск задачи находит то же задание. Ключи файлов результата обе стороны
+  считают сами (`editjob.Files` от ключа исходника, `MEDIA_RESULT_PREFIX`) — от воркера приходят только числа и код.
+- `internal/editor` (app): `Executor` **не ждёт** воркер — нет результата → `tasks.DeferredError` (задача в очередь,
+  попытка не считается, проверка через `EDITOR_POLL_INTERVAL`), `Waker` по каналу `done` будит задачу
+  (`tasks.Service.Wake`). Готово → `Output{Text: описание, MediaKey: рилс}`; провал → `PermanentError` с текстом по коду
+  или `TemporaryError` (ретраи `tasks`), задание забывается, чтобы ретрай отправил новое; нет результата к `Deadline`
+  (`EDITOR_JOB_TIMEOUT`) → таймаут. Остановку app ничего не держит.
+- `internal/mediaworker`: `Worker` берёт задания по одному, под блокировкой; ack — только после записи результата;
+  у задания с результатом — ack и повторное уведомление; заблокированное оставляет до повторного claim (через 2 TTL),
+  чтобы не потерять задание умершего воркера. `Pipeline`: скачать → probe и лимиты → Whisper → `roughcut.Cut(PlanOnly)`
+  → `subtitles.BurnSubtitles` с `Cut` (склейка, субтитры и экспорт под Instagram — один проход ffmpeg) → загрузить
+  рилс, план, лог решений и транскрипт исходника. Причины отказа — `editjob.FailureCode`.
+- Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
+  Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
+  стопом (аренда доставки 20 мин). «Правки» и реплай на видео-черновик → `tasks.ErrVideoRevision` (правки текстом —
+  T3.4c; ему пригодятся `plan.json` и транскрипт рядом с рилсом в S3).
 
 ### База знаний
 
