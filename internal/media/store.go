@@ -76,6 +76,8 @@ func (s *Store) Save(ctx context.Context, f *File, r io.ReadSeeker) (string, err
 type LocalFile struct {
 	// Path ends with the extension of the key.
 	Path string
+	// Size is the number of bytes written.
+	Size int64
 }
 
 // Remove deletes the local copy; a copy already removed is not an error.
@@ -88,9 +90,10 @@ func (f *LocalFile) Remove() error {
 }
 
 // Download copies a stored file to a new temporary file in dir (empty: the system temporary directory) and returns
-// it; the caller removes it. Only keys of this store are accepted (ErrInvalidKey); a missing object is
-// ErrFileNotFound.
-func (s *Store) Download(ctx context.Context, key, dir string) (*LocalFile, error) {
+// it; the caller removes it. At most maxSize bytes are written: a larger object is ErrFileTooLarge and leaves no
+// file behind, so a wrong object cannot fill the disk. Only keys of this store are accepted (ErrInvalidKey);
+// a missing object is ErrFileNotFound.
+func (s *Store) Download(ctx context.Context, key, dir string, maxSize int64) (*LocalFile, error) {
 	info, err := s.parseOwnKey(key)
 	if err != nil {
 		return nil, err
@@ -109,7 +112,11 @@ func (s *Store) Download(ctx context.Context, key, dir string) (*LocalFile, erro
 
 	local := &LocalFile{Path: file.Name()}
 
-	_, copyErr := io.Copy(file, obj)
+	size, copyErr := io.Copy(file, io.LimitReader(obj, maxSize+1))
+	if copyErr == nil && size > maxSize {
+		copyErr = fmt.Errorf("object is above %d bytes: %w", maxSize, ErrFileTooLarge)
+	}
+
 	closeErr := file.Close()
 
 	if err := errors.Join(copyErr, closeErr); err != nil {
@@ -119,6 +126,8 @@ func (s *Store) Download(ctx context.Context, key, dir string) (*LocalFile, erro
 
 		return nil, fmt.Errorf("failed to download media file: %w", err)
 	}
+
+	local.Size = size
 
 	return local, nil
 }

@@ -243,6 +243,7 @@ func gatewayConfig(t *testing.T, api *fakeBotAPI, base int64) *config.Telegram {
 		RetryBaseDelay:  time.Millisecond,
 		RetryMaxDelay:   5 * time.Millisecond,
 		Workers:         2,
+		MediaWorkers:    2,
 	}
 }
 

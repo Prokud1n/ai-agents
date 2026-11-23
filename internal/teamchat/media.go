@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/media"
 )
+
+// mediaReplyTimeout bounds the answer after a copy, which is sent even when the app is stopping.
+const mediaReplyTimeout = 10 * time.Second
 
 type mediaStore interface {
 	Save(ctx context.Context, f *media.File, r io.ReadSeeker) (string, error)
@@ -24,8 +28,8 @@ func (*Handler) WantsMedia(event *gateway.Event) bool {
 // handleMedia stores a video for the editor and answers; any other file gets an honest answer. The file is copied
 // here, in the event's slot, not in the background: it is already on this machine (the gateway's download from
 // Telegram, the slow part, was made in this slot too), the Bot API server may delete it later, and the trainer is
-// told «stored» only once it is safe in S3. A large video holds one of TELEGRAM_WORKERS slots for the copy
-// (bounded by MEDIA_UPLOAD_TIMEOUT); button presses have their own slots.
+// told «stored» only once it is safe in S3. A large video holds one of the TELEGRAM_MEDIA_WORKERS slots for the copy
+// (bounded by MEDIA_UPLOAD_TIMEOUT); text messages and button presses have slots of their own.
 func (h *Handler) handleMedia(ctx context.Context, event *gateway.Event) error {
 	if refusal := mediaRefusal(event); refusal != "" {
 		h.log.InfoContext(ctx, "teamchat: file not accepted", "event", event)
@@ -38,10 +42,15 @@ func (h *Handler) handleMedia(ctx context.Context, event *gateway.Event) error {
 	}
 
 	key, err := h.saveFile(ctx, event)
+
+	// The copy may take minutes and end with the stop of the app: the trainer still gets the outcome.
+	replyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mediaReplyTimeout)
+	defer cancel()
+
 	if err != nil {
 		h.log.ErrorContext(ctx, "teamchat: failed to store file", "event", event, "error", err)
 
-		return h.reply(ctx, event.Target, event, fileSaveFailedText)
+		return h.reply(replyCtx, event.Target, event, fileSaveFailedText)
 	}
 
 	h.log.InfoContext(ctx, "teamchat: source video stored", "event", event, "key", key)
@@ -51,7 +60,7 @@ func (h *Handler) handleMedia(ctx context.Context, event *gateway.Event) error {
 		text += videoCaptionNote
 	}
 
-	return h.reply(ctx, event.Target, event, text)
+	return h.reply(replyCtx, event.Target, event, text)
 }
 
 // mediaRefusal is the answer to a file that will not be stored, "" for a video that will. Videos are the editor's
@@ -63,7 +72,7 @@ func mediaRefusal(event *gateway.Event) string {
 	switch m.Type {
 	case gateway.VideoMediaType:
 		if event.Target != gateway.EditorRole {
-			return videoToEditorText
+			return withCaptionNote(videoForOtherRoleText(event), event.Text)
 		}
 
 		if m.TooLarge {
@@ -76,6 +85,15 @@ func mediaRefusal(event *gateway.Event) string {
 	default:
 		return mediaText(m.Type, event.Text)
 	}
+}
+
+// videoForOtherRoleText: a video already in «Исходники» went to another bot because of a mention or a reply.
+func videoForOtherRoleText(event *gateway.Event) string {
+	if event.Topic == gateway.SourcesTopic {
+		return videoMentionText
+	}
+
+	return videoToEditorText
 }
 
 // saveFile copies the downloaded file of the event to S3 and returns its key.

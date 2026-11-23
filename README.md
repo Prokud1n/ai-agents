@@ -544,6 +544,10 @@ make up && make test-integration
 `REDIS_TEST_HOST_PORT`), передаёт тестам его адрес в `REDIS_TEST_ADDRESS` и удаляет контейнер по окончании
 (вручную — `make redis-test-down`).
 Ключи каждого теста — со своим префиксом (`internal/redistest`).
+Так же для S3: `make test-integration` поднимает одноразовый RustFS (`ai-agents-s3-test`, образ сервиса `s3` из
+`docker-compose.yml`, анонимный том, тестовые ключи, `127.0.0.1:9100`, порт — `S3_TEST_HOST_PORT`), передаёт тестам
+`S3_TEST_ENDPOINT`, `S3_TEST_ACCESS_KEY`, `S3_TEST_SECRET_KEY` и удаляет контейнер с томом по окончании (вручную —
+`make s3-test-down`). Каждый тест получает свой бакет, который удаляется после теста (`internal/s3test`).
 
 В CI они идут в job `compose-smoke`. Тесты не видят данных друг друга и данных `POSTGRES_DB`, поэтому могут
 вызывать `t.Parallel`. Пользователю БД нужно право `CREATEDB` (у пользователя из compose оно есть). Базы `pgtest_*`,

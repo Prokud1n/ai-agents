@@ -134,6 +134,10 @@ func validateConfig(cfg *config.Telegram) error {
 		errs = append(errs, errors.New("TELEGRAM_WORKERS must be positive"))
 	}
 
+	if cfg.MediaWorkers <= 0 {
+		errs = append(errs, errors.New("TELEGRAM_MEDIA_WORKERS must be positive"))
+	}
+
 	if cfg.PollTimeout < time.Second {
 		errs = append(errs, errors.New("TELEGRAM_POLL_TIMEOUT must be at least 1s"))
 	}

@@ -31,6 +31,8 @@ var (
 	ErrInvalidConfig = errors.New("invalid media config")
 	// ErrFileNotFound: there is no file under the key (never stored, or deleted).
 	ErrFileNotFound = errors.New("media file not found")
+	// ErrFileTooLarge: the stored file is above the size the caller accepts.
+	ErrFileTooLarge = errors.New("media file is too large")
 )
 
 var (

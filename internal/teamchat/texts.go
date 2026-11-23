@@ -44,7 +44,9 @@ const (
 	// voiceText: voice messages and video notes are not processed on purpose; the trainer dictates text.
 	voiceText = "Голосовые не обрабатываю — продиктуйте текст (диктовка на клавиатуре телефона) и отправьте " +
 		"его сообщением."
-	videoToEditorText  = "Видео монтирует Монтажёр: пришлите его в топик «Исходники»."
+	videoToEditorText = "Видео монтирует Монтажёр: пришлите его в топик «Исходники»."
+	// videoMentionText: a video in «Исходники» addressed to another bot (a mention or a reply).
+	videoMentionText   = "Уберите упоминание другого бота — видео монтирует Монтажёр."
 	videoStoredText    = "Исходник получил и сохранил. Монтаж скоро появится — пока я только храню видео."
 	videoCaptionNote   = " Подпись к видео пока не сохраняю."
 	downloadFailedText = "Не смог скачать файл — отправьте его ещё раз."
@@ -135,8 +137,13 @@ func mediaText(mediaType gateway.MediaType, caption string) string {
 		text = photoText
 	}
 
+	return withCaptionNote(text, caption)
+}
+
+// withCaptionNote tells the trainer that the caption of a file that is not processed is not taken either.
+func withCaptionNote(text, caption string) string {
 	if strings.TrimSpace(caption) != "" {
-		text += captionNote
+		return text + captionNote
 	}
 
 	return text

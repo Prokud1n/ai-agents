@@ -43,8 +43,11 @@ type Telegram struct {
 	MaxRetries     int           `env:"TELEGRAM_MAX_RETRIES"      envDefault:"3"`
 	RetryBaseDelay time.Duration `env:"TELEGRAM_RETRY_BASE_DELAY" envDefault:"1s"`
 	RetryMaxDelay  time.Duration `env:"TELEGRAM_RETRY_MAX_DELAY"  envDefault:"30s"`
-	// Workers is how many incoming events are handled at once (a media download blocks one worker).
+	// Workers is how many incoming events without a file download are handled at once.
 	Workers int `env:"TELEGRAM_WORKERS" envDefault:"4"`
+	// MediaWorkers is how many events with a file download (a video for the editor) are handled at once, in
+	// slots of their own: videos never delay text messages.
+	MediaWorkers int `env:"TELEGRAM_MEDIA_WORKERS" envDefault:"2"`
 }
 
 // Enabled reports whether any bot token is set: the gateway runs only then.

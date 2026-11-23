@@ -10,8 +10,9 @@ const bytesInMB = 1 << 20
 
 // Handler receives every accepted event. Contract:
 //   - fast: record the work (a task, keyed by chat_id+message_id or the callback ID) and return; anything heavy
-//     (LLM calls, editing video) goes to a queue. Events run concurrently, TELEGRAM_WORKERS at a time, callbacks
-//     in their own pool, so a slow handler delays other events;
+//     (LLM calls, editing video) goes to a queue. Events run concurrently, TELEGRAM_WORKERS at a time; callbacks
+//     and events with a file download (TELEGRAM_MEDIA_WORKERS) have pools of their own, so a slow handler delays
+//     other events of its pool;
 //   - idempotent: the same message may come again after a restart or a Redis failure;
 //   - delivery is at most once: on an error or a panic the event's mark in Redis is removed (and a callback is
 //     answered without text), but the update is delivered again only if its offset was not saved yet.

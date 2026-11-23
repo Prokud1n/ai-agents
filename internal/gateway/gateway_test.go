@@ -328,6 +328,7 @@ func TestValidateConfig(t *testing.T) {
 		{name: "empty allowlist", mutate: func(cfg *config.Telegram) { cfg.AllowedUserIDs = nil }, wantErr: true},
 		{name: "same topic twice", mutate: func(cfg *config.Telegram) { cfg.TechTopicID = cfg.SourcesTopicID }, wantErr: true},
 		{name: "no workers", mutate: func(cfg *config.Telegram) { cfg.Workers = 0 }, wantErr: true},
+		{name: "no media workers", mutate: func(cfg *config.Telegram) { cfg.MediaWorkers = 0 }, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -536,11 +537,46 @@ func TestGatewayMarketerCallbackDoesNotWaitForVideos(t *testing.T) {
 	lc.RequireStop()
 }
 
+// TestGatewayTextDoesNotWaitForVideos: videos being downloaded fill the media slots, a text message still gets
+// a slot of its own.
+func TestGatewayTextDoesNotWaitForVideos(t *testing.T) {
+	t.Parallel()
+
+	api, baseURL := newFakeBotAPI(t)
+	gate := make(chan struct{})
+	api.fileGate = gate
+
+	first := sourcesMessage(1, 730, "")
+	first.Message.Video = &telegram.Video{FileID: "slow-1", FileSize: 10}
+	second := sourcesMessage(2, 731, "")
+	second.Message.Video = &telegram.Video{FileID: "slow-2", FileSize: 10}
+	text := sourcesMessage(3, 732, "текст")
+	api.queue(marketerAuth, first, second, text)
+
+	cfg := testConfig(baseURL, t.TempDir())
+	cfg.Workers = 1
+	cfg.MediaWorkers = 1
+
+	handler := newRecordingHandler()
+	lc, _ := startGateway(t, cfg, newMemoryStore(), handler, slog.New(slog.DiscardHandler))
+
+	event := handler.next(t)
+	assert.Equal(t, int64(732), event.MessageID, "the text is handled while the videos hold the media slot")
+	assert.Nil(t, event.Media)
+
+	close(gate)
+
+	ids := []int64{handler.next(t).MessageID, handler.next(t).MessageID}
+	assert.ElementsMatch(t, []int64{730, 731}, ids)
+
+	lc.RequireStop()
+}
+
 func TestGatewayFinishesWaitingEventsOnStop(t *testing.T) {
 	t.Parallel()
 
 	api, baseURL := newFakeBotAPI(t)
-	gate := make(chan struct{}) // the first video holds the only worker
+	gate := make(chan struct{}) // the first video holds the only media slot
 	api.fileGate = gate
 
 	first := sourcesMessage(1, 720, "")
@@ -551,6 +587,7 @@ func TestGatewayFinishesWaitingEventsOnStop(t *testing.T) {
 
 	cfg := testConfig(baseURL, t.TempDir())
 	cfg.Workers = 1
+	cfg.MediaWorkers = 1
 
 	store := newMemoryStore()
 	handler := newRecordingHandler()

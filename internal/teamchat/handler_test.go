@@ -249,9 +249,9 @@ func TestHandlerMessages(t *testing.T) {
 			expected: handlerCalls{texts: []sentText{reply(gateway.EditorRole, voiceText)}},
 		},
 		{
-			name:     "video for the marketer: send it to «Исходники»",
+			name:     "video with a caption for the marketer: send it to «Исходники», the caption is not taken",
 			event:    withMedia(messageEvent("смонтируй"), gateway.VideoMediaType),
-			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, videoToEditorText)}},
+			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, videoToEditorText+captionNote)}},
 		},
 		{
 			name:     "photo is not processed yet",

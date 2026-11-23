@@ -136,8 +136,9 @@ func TestStoreSaveAndDownload(t *testing.T) {
 
 	dir := t.TempDir()
 
-	local, err := store.Download(t.Context(), key, dir)
+	local, err := store.Download(t.Context(), key, dir, int64(len(testContent)))
 	require.NoError(t, err)
+	assert.Equal(t, int64(len(testContent)), local.Size)
 	assert.Equal(t, dir, filepath.Dir(local.Path))
 	assert.Equal(t, extMOV, filepath.Ext(local.Path))
 
@@ -171,6 +172,11 @@ func TestStoreDownloadErrors(t *testing.T) {
 	broken := newFakeStorage()
 	broken.getErr = errStorageDown
 
+	// One byte above the limit of the download below.
+	stored := newFakeStorage()
+	storedKey := "incoming/-100/2/u.mp4"
+	stored.objects[storedKey] = storedObject{data: []byte(testContent)}
+
 	tests := []struct {
 		name        string
 		storage     *fakeStorage
@@ -181,6 +187,7 @@ func TestStoreDownloadErrors(t *testing.T) {
 		{name: "key of another prefix", storage: newFakeStorage(), key: "other/-100/1/u.mp4", expectedErr: ErrInvalidKey},
 		{name: "not a media key", storage: newFakeStorage(), key: "incoming/../../etc/passwd", expectedErr: ErrInvalidKey},
 		{name: "storage error", storage: broken, key: "incoming/-100/1/u.mp4", expectedErr: errStorageDown},
+		{name: "object above the limit", storage: stored, key: storedKey, expectedErr: ErrFileTooLarge},
 	}
 
 	for _, tt := range tests {
@@ -189,7 +196,7 @@ func TestStoreDownloadErrors(t *testing.T) {
 
 			dir := t.TempDir()
 
-			_, err := newTestStore(t, tt.storage).Download(t.Context(), tt.key, dir)
+			_, err := newTestStore(t, tt.storage).Download(t.Context(), tt.key, dir, int64(len(testContent))-1)
 			require.ErrorIs(t, err, tt.expectedErr)
 
 			entries, err := os.ReadDir(dir)

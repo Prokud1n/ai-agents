@@ -1,6 +1,7 @@
 package teamchat
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -47,6 +48,45 @@ func mediaEvent(text string, target gateway.Role, m *gateway.Media) *gateway.Eve
 	event.Media = m
 
 	return event
+}
+
+func inTopic(event *gateway.Event, topic gateway.Topic) *gateway.Event {
+	event.Topic = topic
+
+	return event
+}
+
+// TestHandlerAnswersStoredVideoOnStop: the copy ends after the gateway's context is cancelled (stop), the
+// trainer still gets the answer.
+func TestHandlerAnswersStoredVideoOnStop(t *testing.T) {
+	t.Parallel()
+
+	dir := testFilesDir(t)
+	sender := &ctxSender{}
+	h := NewHandler(&fakeService{}, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.NoError(t, h.HandleEvent(ctx, mediaEvent("", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir))))
+	assert.Equal(t, []string{videoStoredText}, sender.sent)
+}
+
+// ctxSender fails a send with a cancelled context, like the real Bot API client.
+type ctxSender struct {
+	fakeSender
+
+	sent []string
+}
+
+func (s *ctxSender) SendText(ctx context.Context, role gateway.Role, msg *gateway.OutgoingMessage) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	s.sent = append(s.sent, msg.Text)
+
+	return s.fakeSender.SendText(ctx, role, msg)
 }
 
 func tooLarge(m *gateway.Media) *gateway.Media {
@@ -144,9 +184,14 @@ func TestHandlerMedia(t *testing.T) {
 			expectedTexts: []sentText{reply(gateway.EditorRole, fileTooLargeText(3<<30))},
 		},
 		{
-			name:          "video for the copywriter goes to «Исходники»",
+			name:          "video in «Исходники» addressed to the copywriter: remove the mention",
 			event:         mediaEvent("", gateway.CopywriterRole, videoMedia(gateway.VideoMediaType, dir)),
-			expectedTexts: []sentText{reply(gateway.CopywriterRole, videoToEditorText)},
+			expectedTexts: []sentText{reply(gateway.CopywriterRole, videoMentionText)},
+		},
+		{
+			name:          "video with a caption in «Продакшн»: send it to «Исходники», the caption is not taken",
+			event:         inTopic(mediaEvent("подпись", gateway.CopywriterRole, videoMedia(gateway.VideoMediaType, dir)), gateway.ProductionTopic),
+			expectedTexts: []sentText{reply(gateway.CopywriterRole, videoToEditorText+captionNote)},
 		},
 		{
 			name:          "video note is speech: dictate text instead",

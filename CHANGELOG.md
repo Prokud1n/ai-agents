@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TELEGRAM_MAX_FILE_SIZE`, a failed download or a failed copy get an answer, details go to the log without paths.
   `s3.Client.PutObject` / `GetObject`, `gateway.Media.WithLocalFile` (a local file for handler tests). New settings
   `MEDIA_KEY_PREFIX`, `MEDIA_UPLOAD_TIMEOUT`.
+- `media.Store.Download(ctx, key, dir, maxSize)` for the editor (T3.4b): the local copy reports its `Size`, and an
+  object above `maxSize` is `ErrFileTooLarge` and leaves no file on disk.
+- Media slots in the gateway: events whose file is downloaded (videos for the editor) take one of
+  `TELEGRAM_MEDIA_WORKERS` (default 2) slots instead of `TELEGRAM_WORKERS`, so videos do not delay text messages.
+- S3 integration tests against RustFS (`internal/s3test`, `make s3-test-up` / `s3-test-down`): `make test-integration`
+  starts a throwaway RustFS container (the compose image, published on 127.0.0.1 only, outside the compose
+  project) and removes it at the end; each test gets its own bucket. `TestIntegrationClientObjects` (put/get,
+  overwrite, `NoSuchKey` → `s3.ErrObjectNotFound`, a multipart upload) and `TestIntegrationStoreSaveAndDownload`.
+- A video in «Исходники» addressed to another bot (a mention or a reply) gets «Уберите упоминание другого бота —
+  видео монтирует Монтажёр.»; a video for another role with a caption also gets the caption note, as photos do. The
+  answer after copying a video is sent even when the app is stopping (its own 10 s timeout).
 
 - Integration tests of the Telegram gateway's Redis store (T1.7, `internal/gateway/store_integration_test.go`, run
   by `make test-integration` on `internal/redistest`): the offset is saved, read, overwritten and kept per bot and

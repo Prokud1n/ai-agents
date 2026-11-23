@@ -243,6 +243,7 @@ func testConfig(baseURL, filesDir string) *config.Telegram {
 		RetryBaseDelay:  time.Millisecond,
 		RetryMaxDelay:   5 * time.Millisecond,
 		Workers:         2,
+		MediaWorkers:    2,
 	}
 }
 
