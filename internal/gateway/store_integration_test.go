@@ -160,7 +160,7 @@ func TestIntegrationRedisStoreMarkSeenKeysAreIndependent(t *testing.T) {
 		seenKey(&Event{ChatID: -100, MessageID: 42}),
 		seenKey(&Event{ChatID: -100, MessageID: 43}),
 		seenKey(&Event{ChatID: -200, MessageID: 42}),
-		seenKey(&Event{Callback: &Callback{ID: "cb-1"}}),
+		seenKey(&Event{Callback: &Callback{ID: "store-callback"}}),
 	}
 
 	for _, key := range keys {
