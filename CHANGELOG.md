@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Video intake in the team chat (T3.4a, `internal/media`, `teamchat`): a video for the editor (topic «Исходники» or
+  a mention of the editor's bot; a video or a video file) is downloaded by the gateway and copied to S3 right away,
+  in the event's slot, under `<MEDIA_KEY_PREFIX>/<chat id>/<message id>/<file_unique_id>.<ext>` (the extension and
+  the content type come from a known video MIME type, the file name only gives a known extension; unsafe file ids
+  are refused), with `MEDIA_UPLOAD_TIMEOUT`; the editor's bot answers «Исходник получил и сохранил…», no task is
+  created yet (editing is T3.4b, it reads the file back with `media.Store.Download`). A redelivered message writes
+  the same key and is answered once (the gateway's mark in Redis). Voice messages and video notes are not processed
+  on purpose (the trainer dictates text) and get «Голосовые не обрабатываю — продиктуйте текст…»; photos, audio
+  files and videos for other roles get an honest answer; none of them is downloaded (`WantsMedia`). A video above
+  `TELEGRAM_MAX_FILE_SIZE`, a failed download or a failed copy get an answer, details go to the log without paths.
+  `s3.Client.PutObject` / `GetObject`, `gateway.Media.WithLocalFile` (a local file for handler tests). New settings
+  `MEDIA_KEY_PREFIX`, `MEDIA_UPLOAD_TIMEOUT`.
+
 - Integration tests of the Telegram gateway's Redis store (T1.7, `internal/gateway/store_integration_test.go`, run
   by `make test-integration` on `internal/redistest`): the offset is saved, read, overwritten and kept per bot and
   does not expire; a corrupted offset is a parse error; a repeated `MarkSeen` returns false, after `Unmark` the event

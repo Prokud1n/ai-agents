@@ -111,6 +111,12 @@ func TestMediaOpen(t *testing.T) {
 			input:        &Media{dir: files, rel: filepath.Join(fileToken, "videos", "file_0.mp4"), maxSize: 50},
 			expectedData: "0123456789",
 		},
+		{
+			name: "local file given to a handler",
+			input: (&Media{Type: VideoMediaType}).WithLocalFile(files,
+				filepath.Join(fileToken, "videos", "file_0.mp4"), 50),
+			expectedData: "0123456789",
+		},
 		{name: "not downloaded", input: &Media{}, expectedErr: ErrMediaNotDownloaded},
 		{
 			name:        "path through a symlink outside",

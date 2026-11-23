@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +23,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
+	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/pgtest"
 	"github.com/Prokud1n/ai-agents/internal/providers/embeddings"
 	"github.com/Prokud1n/ai-agents/internal/providers/redis"
@@ -37,6 +40,10 @@ const (
 	revisionRequest  = "Короче, без вступления"
 	ideaMessageID    = int64(10)
 	revisionMsgID    = int64(11)
+	videoMessageID   = int64(12)
+	voiceMessageID   = int64(13)
+	videoFileID      = "video-file-id"
+	neverWait        = 300 * time.Millisecond
 )
 
 // firstVersion is above the Telegram limit: the draft is sent in two parts.
@@ -153,6 +160,65 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 	}, integrationWait, integrationTick, "the decisions are told in the topic")
 }
 
+// TestIntegrationVideoIntake runs a video through the real gateway against the fake Bot API: a video in
+// «Исходники» is downloaded (getFile, a file in TELEGRAM_FILES_DIR), stored and answered by the editor's bot; the
+// same message delivered again is skipped by the gateway's mark in Redis (one copy, one answer); a voice message
+// is answered without a download.
+func TestIntegrationVideoIntake(t *testing.T) {
+	t.Parallel()
+
+	env := startIntegrationEnv(t)
+	api := env.api
+
+	path := filepath.Join(env.filesDir, testVideoName)
+	require.NoError(t, os.WriteFile(path, []byte(testVideoContent), 0o600))
+	api.addFile(telegram.File{
+		FileID: videoFileID, FileUniqueID: testFileUniqueID, FileSize: int64(len(testVideoContent)), FilePath: path,
+	})
+
+	video := topicMessage(env.groupID, videoMessageID, "")
+	video.MessageThreadID = testSourcesTopicID
+	video.Video = &telegram.Video{
+		FileID: videoFileID, FileUniqueID: testFileUniqueID, MIMEType: "video/mp4",
+		FileSize: int64(len(testVideoContent)), Duration: 3,
+	}
+
+	// The same message twice: a redelivery (e.g. the offset was not saved before a restart).
+	api.queue(env.marketer, telegram.Update{UpdateID: 1, Message: video}, telegram.Update{UpdateID: 2, Message: video})
+
+	require.Eventually(t, func() bool {
+		return hasText(api, videoStoredText)
+	}, integrationWait, integrationTick, "the video is stored and answered")
+
+	voice := topicMessage(env.groupID, voiceMessageID, "")
+	voice.Voice = &telegram.Voice{FileID: "voice-file-id", FileUniqueID: "voice-uniq", MIMEType: "audio/ogg", Duration: 5}
+	api.queue(env.marketer, telegram.Update{UpdateID: 3, Message: voice})
+
+	require.Eventually(t, func() bool {
+		return hasText(api, voiceText)
+	}, integrationWait, integrationTick, "the voice message is answered")
+
+	assert.Never(t, func() bool {
+		return countText(api, videoStoredText) > 1 || len(env.store.Files()) > 1
+	}, neverWait, integrationTick, "a redelivered video is stored and answered once")
+
+	assert.Len(t, api.callsOf("getFile"), 1, "only the video is downloaded")
+	assert.Equal(t, [][]byte{[]byte(testVideoContent)}, env.store.Saved())
+	assert.Equal(t, []media.File{{
+		ChatID: env.groupID, MessageID: videoMessageID, FileUniqueID: testFileUniqueID, MIMEType: "video/mp4",
+	}}, env.store.Files())
+
+	for _, c := range api.callsOf("sendMessage") {
+		var params telegram.SendMessageParams
+		require.NoError(t, json.Unmarshal(c.body, &params))
+
+		if params.Text == videoStoredText {
+			assert.Equal(t, env.editor, c.token, "the editor's bot answers the video")
+			assert.Equal(t, testSourcesTopicID, params.MessageThreadID)
+		}
+	}
+}
+
 // TestIntegrationStopOrder: on stop the gateway (no new events) and the workers stop before the handler and
 // the task service wait for their background work, so nothing adds background work while it is waited for.
 func TestIntegrationStopOrder(t *testing.T) {
@@ -182,6 +248,9 @@ type integrationEnv struct {
 	api         *fakeBotAPI
 	service     *tasks.Service
 	executor    *scriptedExecutor
+	store       *fakeStore
+	filesDir    string // TELEGRAM_FILES_DIR of the gateway
+	editor      string // the editor bot's token
 	groupID     int64
 	callbackID  string
 	marketer    string // the marketer bot's token
@@ -232,16 +301,21 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		groupID:    -1_000_000_000_000 - base,
 		callbackID: "cb-" + strconv.FormatInt(base, 10),
 		marketer:   botToken(gateway.MarketerRole, base),
+		editor:     botToken(gateway.EditorRole, base),
 		executor:   &scriptedExecutor{answers: []string{firstVersion, secondVersion}},
+		store:      &fakeStore{},
 		stops:      &stopRecorder{},
 	}
 	env.marketerBot = botUsers(base)[env.marketer]
 	env.api = newFakeBotAPI(t, env.groupID, botUsers(base))
 	cleanGatewayKeys(t, rdb, base, env.groupID, env.callbackID)
 
+	gatewayCfg := gatewayConfig(t, env.api, base)
+	env.filesDir = gatewayCfg.FilesDir
+
 	app := fxtest.New(t,
 		fx.Supply(
-			gatewayConfig(t, env.api, base),
+			gatewayCfg,
 			integrationTasksConfig(prefix),
 			&config.LLM{}, &config.OpenAI{}, &config.Embeddings{},
 			slog.New(slog.DiscardHandler),
@@ -254,6 +328,8 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		tasks.Module,
 		Module,
 		fx.Decorate(func() tasks.Executor { return env.executor }),
+		// Videos go to a fake store: S3 of the compose stack is not reachable from the tests.
+		fx.Decorate(func() mediaStore { return env.store }),
 		fx.Populate(&env.service),
 		fx.WithLogger(func() fxevent.Logger { return env.stops }),
 	)
@@ -352,6 +428,19 @@ func hasText(api *fakeBotAPI, text string) bool {
 	return false
 }
 
+func countText(api *fakeBotAPI, text string) int {
+	n := 0
+
+	for _, c := range api.callsOf("sendMessage") {
+		var params telegram.SendMessageParams
+		if json.Unmarshal(c.body, &params) == nil && params.Text == text {
+			n++
+		}
+	}
+
+	return n
+}
+
 func topicMessage(groupID, messageID int64, text string) *telegram.Message {
 	return &telegram.Message{
 		MessageID:       messageID,
@@ -389,7 +478,7 @@ func cleanGatewayKeys(t *testing.T, rdb *redis.Client, base, groupID int64, call
 			keys = append(keys, "telegram:offset:"+strconv.FormatInt(base+int64(i)+1, 10))
 		}
 
-		for _, id := range []int64{ideaMessageID, revisionMsgID} {
+		for _, id := range []int64{ideaMessageID, revisionMsgID, videoMessageID, voiceMessageID} {
 			keys = append(keys, "telegram:seen:message:"+strconv.FormatInt(groupID, 10)+":"+strconv.FormatInt(id, 10))
 		}
 

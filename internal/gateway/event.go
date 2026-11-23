@@ -130,6 +130,15 @@ func (m *Media) Downloaded() bool {
 	return m.rel != ""
 }
 
+// WithLocalFile returns a copy of the media that reads the file rel inside dir like a downloaded file (through
+// os.Root, at most maxSize bytes): for tests of handlers and for tools that pass a file already on disk.
+func (m *Media) WithLocalFile(dir, rel string, maxSize int64) *Media {
+	local := *m
+	local.dir, local.rel, local.maxSize = dir, rel, maxSize
+
+	return &local
+}
+
 // Open opens the downloaded file through os.Root of the files directory: a symlink cannot lead outside it,
 // and the file is checked again (regular, within the size limit) after opening. Errors contain no path.
 func (m *Media) Open() (io.ReadSeekCloser, error) {

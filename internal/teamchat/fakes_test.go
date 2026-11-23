@@ -2,21 +2,25 @@ package teamchat
 
 import (
 	"context"
+	"io"
 	"sync"
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
 const (
-	testChatID    = int64(-1001000)
-	testTopicID   = int64(7)
-	testMessageID = int64(100)
-	testUserID    = int64(42)
-	testTaskID    = int64(5)
-	testDraftID   = int64(900)
-	partLimit     = 100 // fakeSender splits longer texts in two parts
+	testChatID  = int64(-1001000)
+	testTopicID = int64(7)
+	// testSourcesTopicID is «Исходники» in the integration tests' gateway config.
+	testSourcesTopicID = int64(8)
+	testMessageID      = int64(100)
+	testUserID         = int64(42)
+	testTaskID         = int64(5)
+	testDraftID        = int64(900)
+	partLimit          = 100 // fakeSender splits longer texts in two parts
 )
 
 // fakeService records the calls of the handler; the errors are returned by the matching methods.
@@ -268,4 +272,49 @@ func callbackEvent(role gateway.Role, data string) *gateway.Event {
 // source is the task source of the test message.
 func source() tasks.Source {
 	return tasks.Source{ChatID: testChatID, TopicID: testTopicID, MessageID: testMessageID}
+}
+
+// testKeyPrefix is the key prefix of fakeStore: the keys are real media keys.
+const testKeyPrefix = "incoming"
+
+// fakeStore records the saved files and their content; err fails every save.
+type fakeStore struct {
+	mu sync.Mutex
+
+	saved [][]byte
+	files []media.File
+	err   error
+}
+
+func (f *fakeStore) Save(_ context.Context, file *media.File, r io.ReadSeeker) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.files = append(f.files, *file)
+	if f.err != nil {
+		return "", f.err
+	}
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", err
+	}
+
+	f.saved = append(f.saved, data)
+
+	return media.Key(testKeyPrefix, file)
+}
+
+func (f *fakeStore) Files() []media.File {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]media.File(nil), f.files...)
+}
+
+func (f *fakeStore) Saved() [][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([][]byte(nil), f.saved...)
 }
