@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Integration tests of the Telegram gateway's Redis store (T1.7, `internal/gateway/store_integration_test.go`, run
+  by `make test-integration` on `internal/redistest`): the offset is saved, read, overwritten and kept per bot and
+  does not expire; a corrupted offset is a parse error; a repeated `MarkSeen` returns false, after `Unmark` the event
+  is new again; the mark has a TTL of at most 48 hours. The store takes a key prefix (empty in production, so the
+  keys `telegram:offset:<bot id>` and `telegram:seen:<key>` are unchanged; `redistest.Prefix` in tests).
 - `docs/MVP-BACKLOG.md` and `docs/PLAN.md`: follow-up (technical debt) tasks with priority and deadline — T1.6 `KB_ROOT`
   from `.env` for `make kb-*`, T1.7 integration tests of the Telegram gateway's Redis store on `internal/redistest`,
   T3.6 replacing `whisper-1` before OpenAI shuts it down on 2027-02-26 (main candidate ElevenLabs Scribe, compared on
