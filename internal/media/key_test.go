@@ -9,6 +9,9 @@ import (
 )
 
 const (
+	mimeMP4       = "video/mp4"
+	mimeMOV       = "video/quicktime"
+	extMOV        = ".mov"
 	testPrefix    = "incoming"
 	testChatID    = int64(-1001234567890)
 	testMessageID = int64(42)
@@ -32,11 +35,11 @@ func TestKey(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			name: "video by its MIME type", prefix: testPrefix, input: testFile("video/mp4", "IMG_1.MOV"),
+			name: "video by its MIME type", prefix: testPrefix, input: testFile(mimeMP4, "IMG_1.MOV"),
 			expected: "incoming/-1001234567890/42/AgADBAADq-_x.mp4",
 		},
 		{
-			name: "nested prefix", prefix: "dev/incoming", input: testFile("video/quicktime", ""),
+			name: "nested prefix", prefix: "dev/incoming", input: testFile(mimeMOV, ""),
 			expected: "dev/incoming/-1001234567890/42/AgADBAADq-_x.mov",
 		},
 		{
@@ -55,12 +58,12 @@ func TestKey(t *testing.T) {
 		},
 		{
 			name: "unsafe file unique id", prefix: testPrefix,
-			input:       &File{ChatID: testChatID, MessageID: testMessageID, FileUniqueID: "../x", MIMEType: "video/mp4"},
+			input:       &File{ChatID: testChatID, MessageID: testMessageID, FileUniqueID: "../x", MIMEType: mimeMP4},
 			expectedErr: ErrInvalidFile,
 		},
 		{
 			name: "file unique id with a dot", prefix: testPrefix,
-			input:       &File{ChatID: testChatID, MessageID: testMessageID, FileUniqueID: "a.mp4", MIMEType: "video/mp4"},
+			input:       &File{ChatID: testChatID, MessageID: testMessageID, FileUniqueID: "a.mp4", MIMEType: mimeMP4},
 			expectedErr: ErrInvalidFile,
 		},
 		{
@@ -78,10 +81,10 @@ func TestKey(t *testing.T) {
 			input:       &File{ChatID: testChatID, FileUniqueID: testUniqueID},
 			expectedErr: ErrInvalidFile,
 		},
-		{name: "upper-case prefix", prefix: "Incoming", input: testFile("video/mp4", ""), expectedErr: ErrInvalidConfig},
-		{name: "prefix with dots", prefix: "../incoming", input: testFile("video/mp4", ""), expectedErr: ErrInvalidConfig},
-		{name: "prefix with an empty segment", prefix: "a//b", input: testFile("video/mp4", ""), expectedErr: ErrInvalidConfig},
-		{name: "empty prefix", prefix: "", input: testFile("video/mp4", ""), expectedErr: ErrInvalidConfig},
+		{name: "upper-case prefix", prefix: "Incoming", input: testFile(mimeMP4, ""), expectedErr: ErrInvalidConfig},
+		{name: "prefix with dots", prefix: "../incoming", input: testFile(mimeMP4, ""), expectedErr: ErrInvalidConfig},
+		{name: "prefix with an empty segment", prefix: "a//b", input: testFile(mimeMP4, ""), expectedErr: ErrInvalidConfig},
+		{name: "empty prefix", prefix: "", input: testFile(mimeMP4, ""), expectedErr: ErrInvalidConfig},
 	}
 
 	for _, tt := range tests {
@@ -110,9 +113,9 @@ func TestContentType(t *testing.T) {
 		ext      string
 		expected string
 	}{
-		{name: "known type with parameters", mimeType: "video/MP4; codecs=avc1", ext: ".mp4", expected: "video/mp4"},
-		{name: "upper case", mimeType: "VIDEO/QUICKTIME", ext: ".mov", expected: "video/quicktime"},
-		{name: "unknown type: by the extension", mimeType: "", ext: ".mov", expected: "video/quicktime"},
+		{name: "known type with parameters", mimeType: "video/MP4; codecs=avc1", ext: ".mp4", expected: mimeMP4},
+		{name: "upper case", mimeType: "VIDEO/QUICKTIME", ext: extMOV, expected: mimeMOV},
+		{name: "unknown type: by the extension", mimeType: "", ext: extMOV, expected: mimeMOV},
 		{name: "an arbitrary type is never stored", mimeType: "text/html", ext: ".bin", expected: defaultContentType},
 		{name: "broken type", mimeType: "video/", ext: ".bin", expected: defaultContentType},
 	}
@@ -143,7 +146,7 @@ func TestParseKey(t *testing.T) {
 		{
 			name:     "nested prefix",
 			input:    "dev/incoming/5/1/u.mov",
-			expected: KeyInfo{Prefix: "dev/incoming", ChatID: 5, MessageID: 1, Extension: ".mov"},
+			expected: KeyInfo{Prefix: "dev/incoming", ChatID: 5, MessageID: 1, Extension: extMOV},
 		},
 		{name: "dots in the path", input: "incoming/../-100/42/u.mp4", expectedErr: ErrInvalidKey},
 		{name: "no extension", input: "incoming/-100/42/u", expectedErr: ErrInvalidKey},

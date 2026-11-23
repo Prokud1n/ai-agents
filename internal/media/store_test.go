@@ -114,7 +114,7 @@ func TestStoreSaveAndDownload(t *testing.T) {
 
 	storage := newFakeStorage()
 	store := newTestStore(t, storage)
-	file := testFile("video/quicktime", "IMG_1.MOV")
+	file := testFile(mimeMOV, "IMG_1.MOV")
 
 	// The reader is not at its start and Telegram's size is not used: the size comes from the file.
 	reader := strings.NewReader(testContent)
@@ -131,7 +131,7 @@ func TestStoreSaveAndDownload(t *testing.T) {
 	assert.Equal(t, key, again)
 
 	assert.Len(t, storage.objects, 1)
-	assert.Equal(t, storedObject{data: []byte(testContent), contentType: "video/quicktime"}, storage.objects[key])
+	assert.Equal(t, storedObject{data: []byte(testContent), contentType: mimeMOV}, storage.objects[key])
 	assert.Equal(t, []int64{int64(len(testContent)), int64(len(testContent))}, storage.sizes)
 
 	dir := t.TempDir()
@@ -139,7 +139,7 @@ func TestStoreSaveAndDownload(t *testing.T) {
 	local, err := store.Download(t.Context(), key, dir)
 	require.NoError(t, err)
 	assert.Equal(t, dir, filepath.Dir(local.Path))
-	assert.Equal(t, ".mov", filepath.Ext(local.Path))
+	assert.Equal(t, extMOV, filepath.Ext(local.Path))
 
 	data, err := os.ReadFile(local.Path)
 	require.NoError(t, err)
@@ -157,7 +157,7 @@ func TestStoreSaveErrors(t *testing.T) {
 	storage.putErr = errStorageDown
 	store := newTestStore(t, storage)
 
-	_, err := store.Save(t.Context(), testFile("video/mp4", ""), strings.NewReader(testContent))
+	_, err := store.Save(t.Context(), testFile(mimeMP4, ""), strings.NewReader(testContent))
 	require.ErrorIs(t, err, errStorageDown)
 
 	_, err = store.Save(t.Context(), &File{ChatID: testChatID, MessageID: testMessageID, FileUniqueID: "a/b"},

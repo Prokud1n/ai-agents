@@ -95,7 +95,7 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 
 	if !known {
-		writeAPI(w, http.StatusUnauthorized, map[string]any{"ok": false, "error_code": 401, "description": "Unauthorized"})
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
 
 		return
 	}
@@ -141,7 +141,7 @@ func (f *fakeBotAPI) serveFile(w http.ResponseWriter, body []byte) {
 	f.mu.Unlock()
 
 	if !ok {
-		writeAPI(w, http.StatusBadRequest, map[string]any{"ok": false, "error_code": 400, "description": "Bad Request: invalid file_id"})
+		writeError(w, http.StatusBadRequest, "Bad Request: invalid file_id")
 
 		return
 	}
@@ -177,6 +177,10 @@ func (f *fakeBotAPI) takeUpdates(ctx context.Context, token string) []telegram.U
 
 func writeResult(w http.ResponseWriter, result any) {
 	writeAPI(w, http.StatusOK, map[string]any{"ok": true, "result": result})
+}
+
+func writeError(w http.ResponseWriter, status int, description string) {
+	writeAPI(w, status, map[string]any{"ok": false, "error_code": status, "description": description})
 }
 
 func writeAPI(w http.ResponseWriter, status int, body any) {
