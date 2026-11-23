@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"time"
 
@@ -94,6 +95,10 @@ func (f *LocalFile) Remove() error {
 // file behind, so a wrong object cannot fill the disk. Only keys of this store are accepted (ErrInvalidKey);
 // a missing object is ErrFileNotFound.
 func (s *Store) Download(ctx context.Context, key, dir string, maxSize int64) (*LocalFile, error) {
+	if maxSize <= 0 {
+		return nil, fmt.Errorf("max size %d: %w", maxSize, ErrInvalidLimit)
+	}
+
 	info, err := s.parseOwnKey(key)
 	if err != nil {
 		return nil, err
@@ -112,7 +117,14 @@ func (s *Store) Download(ctx context.Context, key, dir string, maxSize int64) (*
 
 	local := &LocalFile{Path: file.Name()}
 
-	size, copyErr := io.Copy(file, io.LimitReader(obj, maxSize+1))
+	// One byte above the limit tells a larger object from one of exactly maxSize bytes; maxSize+1 would overflow
+	// at math.MaxInt64, where no object can be larger anyway.
+	limit := maxSize
+	if maxSize < math.MaxInt64 {
+		limit = maxSize + 1
+	}
+
+	size, copyErr := io.Copy(file, io.LimitReader(obj, limit))
 	if copyErr == nil && size > maxSize {
 		copyErr = fmt.Errorf("object is above %d bytes: %w", maxSize, ErrFileTooLarge)
 	}

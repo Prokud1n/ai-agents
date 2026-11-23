@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,6 +165,37 @@ func TestStoreSaveErrors(t *testing.T) {
 	_, err = store.Save(t.Context(), &File{ChatID: testChatID, MessageID: testMessageID, FileUniqueID: "a/b"},
 		strings.NewReader(testContent))
 	require.ErrorIs(t, err, ErrInvalidFile)
+}
+
+// TestStoreDownloadLimitEdges: the largest limit does not overflow (the whole object is written), a limit that is
+// not positive is refused before anything is read.
+func TestStoreDownloadLimitEdges(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	key := "incoming/-100/3/u.mp4"
+	storage.objects[key] = storedObject{data: []byte(testContent)}
+	store := newTestStore(t, storage)
+
+	local, err := store.Download(t.Context(), key, t.TempDir(), math.MaxInt64)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(testContent)), local.Size)
+
+	data, err := os.ReadFile(local.Path)
+	require.NoError(t, err)
+	assert.Equal(t, testContent, string(data))
+	require.NoError(t, local.Remove())
+
+	for _, limit := range []int64{0, -1, math.MinInt64} {
+		dir := t.TempDir()
+
+		_, err := store.Download(t.Context(), key, dir, limit)
+		require.ErrorIs(t, err, ErrInvalidLimit, "limit %d", limit)
+
+		entries, err := os.ReadDir(dir)
+		require.NoError(t, err)
+		assert.Empty(t, entries)
+	}
 }
 
 func TestStoreDownloadErrors(t *testing.T) {

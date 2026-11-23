@@ -57,7 +57,7 @@ redis-test-up:
 	fi
 	@for i in $$(seq 1 30); do \
 		docker exec $(REDIS_TEST_CONTAINER) redis-cli ping 2>/dev/null | grep -q PONG && exit 0; sleep 1; \
-	done; echo "redis-test: not ready"; exit 1
+	done; echo "redis-test: not ready"; docker rm -f $(REDIS_TEST_CONTAINER) >/dev/null 2>&1 || true; exit 1
 
 redis-test-down:
 	@docker rm -f $(REDIS_TEST_CONTAINER) >/dev/null 2>&1 || true
@@ -82,7 +82,8 @@ s3-test-up:
 	fi
 	@for i in $$(seq 1 60); do \
 		curl -fsS http://127.0.0.1:$(S3_TEST_HOST_PORT)/health >/dev/null 2>&1 && exit 0; sleep 1; \
-	done; echo "s3-test: not ready"; docker logs $(S3_TEST_CONTAINER) 2>&1 | tail -n 20; exit 1
+	done; echo "s3-test: not ready"; docker logs $(S3_TEST_CONTAINER) 2>&1 | tail -n 20; \
+		docker rm -f -v $(S3_TEST_CONTAINER) >/dev/null 2>&1 || true; exit 1
 
 s3-test-down:
 	@docker rm -f -v $(S3_TEST_CONTAINER) >/dev/null 2>&1 || true
