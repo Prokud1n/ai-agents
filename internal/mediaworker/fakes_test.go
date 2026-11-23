@@ -52,12 +52,22 @@ func (s *localStore) Download(_ context.Context, key, dir string, maxSize int64)
 		return nil, media.ErrFileTooLarge
 	}
 
-	local := filepath.Join(dir, "source.mov")
-	if err := os.WriteFile(local, data, 0o600); err != nil {
+	file, err := os.CreateTemp(dir, "source-*.mov")
+	if err != nil {
 		return nil, err
 	}
 
-	return &media.LocalFile{Path: local, Size: int64(len(data))}, nil
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+
+		return nil, err
+	}
+
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+
+	return &media.LocalFile{Path: file.Name(), Size: int64(len(data))}, nil
 }
 
 func (s *localStore) PutResult(_ context.Context, key string, r io.ReadSeeker, contentType string) error {
