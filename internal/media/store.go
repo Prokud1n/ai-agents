@@ -14,7 +14,11 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/providers/s3"
 )
 
-const tempFilePattern = "media-*"
+// TempFilePrefix starts the names of the local copies Download makes (media-<random><ext>): a directory of them can be
+// cleaned of the copies a killed process left.
+const TempFilePrefix = "media-"
+
+const tempFilePattern = TempFilePrefix + "*"
 
 type objectStorage interface {
 	PutObject(ctx context.Context, key string, r io.Reader, size int64, contentType string) error

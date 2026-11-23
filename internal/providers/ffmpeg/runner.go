@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -159,6 +160,7 @@ func (r *Runner) execute(
 
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
+	cmd.Env = childEnv(os.Environ())
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -173,6 +175,27 @@ func (r *Runner) execute(
 	}
 
 	return stdout.String(), nil
+}
+
+// childEnvKeys are what ffmpeg, ffprobe and libass/fontconfig need of the environment: where the binaries are, the
+// home, temporary and cache directories, the fontconfig setup and the locale.
+var childEnvKeys = map[string]bool{
+	"PATH": true, "HOME": true, "TMPDIR": true, "XDG_CACHE_HOME": true,
+	"FONTCONFIG_FILE": true, "FONTCONFIG_PATH": true, "LANG": true, "LC_ALL": true, "TZ": true,
+}
+
+// childEnv keeps only childEnvKeys of the environment: the secrets of the process (OPENAI_API_KEY, S3_SECRET_KEY,
+// REDIS_PASSWORD...) never reach ffmpeg, which parses files from users.
+func childEnv(environ []string) []string {
+	env := make([]string, 0, len(childEnvKeys))
+
+	for _, kv := range environ {
+		if key, _, ok := strings.Cut(kv, "="); ok && childEnvKeys[key] {
+			env = append(env, kv)
+		}
+	}
+
+	return env
 }
 
 // explainStop tells apart the runner's own timeout (FFMPEG_TIMEOUT) and the caller's context

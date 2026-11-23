@@ -26,6 +26,8 @@ type BurnSubtitlesData struct {
 	// Cut, if set, renders only its fragments of the video in the same pass (the rough cut and the subtitles are
 	// one encode); the transcript must then be on the cut's timeline.
 	Cut *ffmpeg.Cut
+	// ToneMap converts an HDR (HLG/PQ) video to SDR bt709 (ffmpeg.MediaInfo.HDR).
+	ToneMap bool
 }
 
 // Subtitles is a rendered ASS document.

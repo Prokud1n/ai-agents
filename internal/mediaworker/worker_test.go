@@ -32,6 +32,26 @@ type fakeBoard struct {
 	finished []editjob.Result
 	notified int
 	unlocked int
+	// started is the recorded start of the job (zero: not taken yet).
+	started time.Time
+}
+
+func (b *fakeBoard) Started(context.Context, string) (time.Time, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.started, !b.started.IsZero(), nil
+}
+
+func (b *fakeBoard) MarkStarted(_ context.Context, _ string, now time.Time) (time.Time, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.started.IsZero() {
+		b.started = now
+	}
+
+	return b.started, nil
 }
 
 func (*fakeBoard) Init(context.Context) error { return nil }
@@ -123,9 +143,15 @@ func newTestWorker(board *fakeBoard, runner *fakeRunner) *Worker {
 	return w
 }
 
-func delivery(deadline time.Time) *editjob.Delivery {
+// delivery is a job that may wait in the queue until queueDeadline and runs for an hour.
+func delivery(queueDeadline time.Time) *editjob.Delivery {
+	return deliveryWithTimeout(queueDeadline, time.Hour)
+}
+
+func deliveryWithTimeout(queueDeadline time.Time, timeout time.Duration) *editjob.Delivery {
 	return &editjob.Delivery{MessageID: "1-0", Job: &editjob.Job{
-		ID: editjob.JobID(17, 1), TaskID: 17, Version: 1, SourceKey: testSourceKey, Deadline: deadline,
+		ID: editjob.JobID(17, 1), TaskID: 17, Version: 1, SourceKey: testSourceKey, QueueDeadline: queueDeadline,
+		Timeout: timeout,
 	}}
 }
 
@@ -167,8 +193,19 @@ func TestWorkerHandle(t *testing.T) {
 			runner: &fakeRunner{}, delivery: delivery(later), expectedAcks: 1, expectedNotify: 1,
 		},
 		{
-			name: "an expired job is a timeout without a run", board: &fakeBoard{}, runner: &fakeRunner{},
+			name: "a job that waited past its queue deadline is not run", board: &fakeBoard{}, runner: &fakeRunner{},
 			delivery: delivery(testNow), expectedAcks: 1, expectedStatus: editjob.FailedStatus,
+			expectedCode: editjob.QueueTimeoutCode,
+		},
+		{
+			name:  "a job taken before (the worker died) runs again past the queue deadline",
+			board: &fakeBoard{started: testNow.Add(-time.Minute)}, runner: &fakeRunner{result: done},
+			delivery: delivery(testNow), expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
+		},
+		{
+			name:  "a job taken before whose time is over is a timeout without a run",
+			board: &fakeBoard{started: testNow.Add(-2 * time.Hour)}, runner: &fakeRunner{},
+			delivery: delivery(later), expectedAcks: 1, expectedStatus: editjob.FailedStatus,
 			expectedCode: editjob.TimeoutCode,
 		},
 		{
@@ -238,7 +275,8 @@ func TestWorkerStopsJobWithLostLock(t *testing.T) {
 	assert.Empty(t, board.acked)
 }
 
-// TestWorkerDeadline: a job that runs past its deadline fails with a timeout.
+// TestWorkerDeadline: the timeout counts from the start, not from the submit: a job that waited in the queue runs
+// its full time, and one that runs longer fails with a timeout.
 func TestWorkerDeadline(t *testing.T) {
 	t.Parallel()
 
@@ -246,11 +284,14 @@ func TestWorkerDeadline(t *testing.T) {
 	w := newTestWorker(board, runner)
 	w.now = time.Now
 
-	w.handle(t.Context(), delivery(time.Now().Add(50*time.Millisecond)))
+	started := time.Now()
+	w.handle(t.Context(), deliveryWithTimeout(time.Now().Add(time.Hour), 100*time.Millisecond))
 
 	require.Len(t, board.finished, 1)
 	assert.Equal(t, editjob.TimeoutCode, board.finished[0].Code)
+	assert.GreaterOrEqual(t, time.Since(started), 100*time.Millisecond, "the job had its whole timeout")
 	assert.Len(t, board.acked, 1)
+	assert.False(t, board.started.IsZero(), "the start is recorded for the app")
 }
 
 func TestCheckHeartbeat(t *testing.T) {

@@ -7,6 +7,11 @@
 // goes back to the queue, no task worker is held for the minutes of the edit, the app stops at once, and the task is
 // picked up again after a restart. The job is keyed by the task and the draft version, so every run finds the same
 // job: a retried or restarted run never submits a second edit.
+//
+// Limits: a job waits for a worker up to EDITOR_QUEUE_TIMEOUT (sources are edited one by one), runs up to
+// EDITOR_JOB_TIMEOUT from the moment a worker took it, and fails at once when no worker is running
+// (no heartbeat EDITOR_WORKER_WAIT after the submit). Technical failures reach the trainer as one plain text; the code
+// goes to the log and to «Техничка».
 package editor
 
 import (
@@ -24,37 +29,62 @@ import (
 // AgentName is the editor's agent: the tasks of the editor's bot (gateway.EditorRole).
 const AgentName = "editor"
 
-var errNoSource = errors.New("the task has no source video")
+const (
+	// startGrace: the worker reports a job that ran out of time itself; the app fails it only this much later.
+	startGrace = time.Minute
+	// Codes of the app's own technical failures (the worker's are editjob.FailureCode).
+	workerUnavailableCode = "worker_unavailable"
+	resultKeysCode        = "result_keys"
+)
+
+var (
+	errNoSource          = errors.New("the task has no source video")
+	errWorkerUnavailable = errors.New("no media worker is running")
+)
 
 type board interface {
 	Submit(ctx context.Context, job *editjob.Job) (bool, error)
 	Job(ctx context.Context, id string) (editjob.Job, bool, error)
 	Result(ctx context.Context, id string) (editjob.Result, bool, error)
 	Forget(ctx context.Context, id string) error
+	Started(ctx context.Context, id string) (time.Time, bool, error)
+	Locked(ctx context.Context, id string) (bool, error)
+	WorkerAlive(ctx context.Context) (bool, error)
 }
 
 type resultKeys interface {
 	ResultKey(sourceKey, name, ext string) (string, error)
 }
 
+type techReporter interface {
+	Report(ctx context.Context, agent, text string) error
+}
+
 // Executor is the tasks.Executor of the editor's tasks; see the package description.
 type Executor struct {
 	board        board
 	keys         resultKeys
+	tech         techReporter
 	jobTimeout   time.Duration
+	queueTimeout time.Duration
+	workerWait   time.Duration
 	pollInterval time.Duration
 	log          *slog.Logger
 	now          func() time.Time
 }
 
-func NewExecutor(b board, keys resultKeys, cfg *config.Editor, log *slog.Logger) *Executor {
+func NewExecutor(b board, keys resultKeys, tech techReporter, cfg *config.Editor, log *slog.Logger) *Executor {
 	return &Executor{
-		board: b, keys: keys, jobTimeout: cfg.JobTimeout, pollInterval: cfg.PollInterval, log: log, now: time.Now,
+		board: b, keys: keys, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
+		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, log: log, now: time.Now,
 	}
 }
 
 // Execute returns the video draft when the worker has finished, a permanent or temporary error when it failed, and
 // a tasks.DeferredError while the job is waiting or running. The job is submitted by the first run.
+//
+// A result stored right after the check below is not lost: the worker's announcement may come while this run is still
+// going (Wake leaves a running task alone), and then the next poll finds the result.
 func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.Output, error) {
 	if len(data.Media) == 0 {
 		return tasks.Output{}, &tasks.PermanentError{Message: noSourceText, Err: errNoSource}
@@ -84,17 +114,68 @@ func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.
 		return tasks.Output{}, e.submit(ctx, data, id)
 	}
 
-	now := e.now()
-	if !now.Before(job.Deadline) {
-		e.forget(ctx, id)
+	return tasks.Output{}, e.wait(ctx, data, &job)
+}
 
-		return tasks.Output{}, &tasks.PermanentError{
-			Message: timeoutText(e.jobTimeout),
-			Err:     fmt.Errorf("job %s has no result by its deadline %s: %w", id, job.Deadline.Format(time.RFC3339), context.DeadlineExceeded),
+// wait defers the run of a submitted job, or fails it: it ran out of time since a worker took it, it waited in the
+// queue too long, or no worker is running at all.
+func (e *Executor) wait(ctx context.Context, data *tasks.ExecuteData, job *editjob.Job) error {
+	now := e.now()
+
+	started, found, err := e.board.Started(ctx, job.ID)
+	if err != nil {
+		return err
+	}
+
+	if found {
+		deadline := started.Add(e.jobTimeout + startGrace)
+		if !now.Before(deadline) {
+			e.forget(ctx, job.ID)
+
+			return &tasks.PermanentError{Message: runningTimeoutText(e.jobTimeout), Err: timeoutError(job.ID, "running")}
+		}
+
+		return &tasks.DeferredError{After: min(e.pollInterval, deadline.Sub(now))}
+	}
+
+	if !now.Before(job.QueueDeadline) {
+		e.forget(ctx, job.ID)
+
+		return &tasks.PermanentError{Message: queueTimeoutText(e.queueTimeout), Err: timeoutError(job.ID, "queue")}
+	}
+
+	if now.Sub(job.CreatedAt) >= e.workerWait {
+		if err := e.checkWorker(ctx, data, job.ID); err != nil {
+			return err
 		}
 	}
 
-	return tasks.Output{}, &tasks.DeferredError{After: min(e.pollInterval, job.Deadline.Sub(now))}
+	return &tasks.DeferredError{After: min(e.pollInterval, job.QueueDeadline.Sub(now))}
+}
+
+// checkWorker fails a job nobody took when no worker has sent a heartbeat: the media-worker service is not running.
+func (e *Executor) checkWorker(ctx context.Context, data *tasks.ExecuteData, id string) error {
+	alive, err := e.board.WorkerAlive(ctx)
+	if err != nil {
+		return err
+	}
+
+	locked, err := e.board.Locked(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if alive || locked {
+		return nil
+	}
+
+	e.forget(ctx, id)
+
+	return e.technical(ctx, data, workerUnavailableCode, fmt.Errorf("job %s is not taken: %w", id, errWorkerUnavailable))
+}
+
+func timeoutError(id, phase string) error {
+	return fmt.Errorf("job %s: %s timeout: %w", id, phase, context.DeadlineExceeded)
 }
 
 // submit gives the job to the worker and defers the run.
@@ -102,7 +183,7 @@ func (e *Executor) submit(ctx context.Context, data *tasks.ExecuteData, id strin
 	now := e.now()
 	job := &editjob.Job{
 		ID: id, TaskID: data.TaskID, Version: data.Version, SourceKey: data.Media[0],
-		CreatedAt: now, Deadline: now.Add(e.jobTimeout),
+		CreatedAt: now, QueueDeadline: now.Add(e.queueTimeout), Timeout: e.jobTimeout,
 	}
 
 	submitted, err := e.board.Submit(ctx, job)
@@ -111,7 +192,8 @@ func (e *Executor) submit(ctx context.Context, data *tasks.ExecuteData, id strin
 	}
 
 	if submitted {
-		e.log.InfoContext(ctx, "editor: job submitted", "job_id", id, "task_id", data.TaskID, "deadline", job.Deadline)
+		e.log.InfoContext(ctx, "editor: job submitted", "job_id", id, "task_id", data.TaskID,
+			"queue_deadline", job.QueueDeadline)
 	}
 
 	return &tasks.DeferredError{After: e.pollInterval}
@@ -123,7 +205,7 @@ func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *
 	if result.Status == editjob.DoneStatus {
 		files, err := editjob.Files(e.keys, data.Media[0], data.Version)
 		if err != nil {
-			return tasks.Output{}, &tasks.PermanentError{Message: editFailedText, Err: err}
+			return tasks.Output{}, e.technical(ctx, data, resultKeysCode, err)
 		}
 
 		e.log.InfoContext(ctx, "editor: reel ready", "task_id", data.TaskID, "job_id", result.JobID, "key", files.Reel,
@@ -135,11 +217,33 @@ func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *
 	e.forget(ctx, result.JobID)
 
 	err := fmt.Errorf("edit job %s failed: %s", result.JobID, result.Code)
-	if result.Code == editjob.TemporaryCode {
+
+	switch {
+	case result.Code == editjob.TemporaryCode:
 		return tasks.Output{}, &tasks.TemporaryError{Message: editFailedText, Err: err}
+	case technicalCodes[result.Code]:
+		return tasks.Output{}, e.technical(ctx, data, string(result.Code), err)
+	default:
+		return tasks.Output{}, &tasks.PermanentError{Message: e.failureText(result), Err: err}
+	}
+}
+
+// technicalCodes are failures of the setup, not of the video: the trainer gets technicalText, the team the code.
+var technicalCodes = map[editjob.FailureCode]bool{
+	editjob.NotConfiguredCode:         true,
+	editjob.TranscriptionRejectedCode: true,
+	editjob.FontsCode:                 true,
+}
+
+// technical fails the task with the plain text for the trainer and tells the team the code in «Техничка».
+func (e *Executor) technical(ctx context.Context, data *tasks.ExecuteData, code string, cause error) error {
+	e.log.ErrorContext(ctx, "editor: editing is unavailable", "task_id", data.TaskID, "code", code, "error", cause)
+
+	if err := e.tech.Report(ctx, AgentName, techReportText(data.TaskID, code)); err != nil {
+		e.log.ErrorContext(ctx, "editor: failed to report to «Техничка»", "error", err, "task_id", data.TaskID)
 	}
 
-	return tasks.Output{}, &tasks.PermanentError{Message: failureText(result), Err: err}
+	return &tasks.PermanentError{Message: technicalText, Err: cause}
 }
 
 func (e *Executor) forget(ctx context.Context, id string) {

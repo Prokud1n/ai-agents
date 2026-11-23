@@ -50,8 +50,10 @@ const (
 	NoAudioCode FailureCode = "no_audio"
 	// NoSpeechCode: the transcript has no words to keep.
 	NoSpeechCode FailureCode = "no_speech"
-	// TimeoutCode: the job did not finish by its deadline (EDITOR_JOB_TIMEOUT).
+	// TimeoutCode: the job ran longer than its timeout (EDITOR_JOB_TIMEOUT) from the moment a worker took it.
 	TimeoutCode FailureCode = "timeout"
+	// QueueTimeoutCode: no worker took the job before its queue deadline (EDITOR_QUEUE_TIMEOUT).
+	QueueTimeoutCode FailureCode = "queue_timeout"
 	// TemporaryCode: the API, the storage or ffmpeg failed; another attempt may succeed.
 	TemporaryCode FailureCode = "temporary"
 )
@@ -60,14 +62,19 @@ const (
 var ErrInvalidJob = errors.New("invalid edit job")
 
 // Job is an edit of the source video of a task; Version is the draft version it makes.
+//
+// Two limits: a job waits in the queue until QueueDeadline (a few sources in a row wait for each other), and once a
+// worker takes it (Board.MarkStarted), it runs for at most Timeout from that moment.
 type Job struct {
 	ID        string    `json:"id"`
 	TaskID    int64     `json:"task_id"`
 	Version   int       `json:"version"`
 	SourceKey string    `json:"source_key"`
 	CreatedAt time.Time `json:"created_at"`
-	// Deadline: the worker stops the job by then, the app fails the task after it.
-	Deadline time.Time `json:"deadline"`
+	// QueueDeadline: a job no worker has taken by then is not started.
+	QueueDeadline time.Time `json:"queue_deadline"`
+	// Timeout of the edit from the moment a worker took the job.
+	Timeout time.Duration `json:"timeout"`
 }
 
 // JobID is the ID of the job that makes the version of the task: the same for every run of the task.
@@ -84,8 +91,8 @@ func (j *Job) Validate() error {
 		return fmt.Errorf("job %q: task and version must be positive: %w", j.ID, ErrInvalidJob)
 	case j.SourceKey == "":
 		return fmt.Errorf("job %q has no source: %w", j.ID, ErrInvalidJob)
-	case j.Deadline.IsZero():
-		return fmt.Errorf("job %q has no deadline: %w", j.ID, ErrInvalidJob)
+	case j.QueueDeadline.IsZero() || j.Timeout <= 0:
+		return fmt.Errorf("job %q has no queue deadline or timeout: %w", j.ID, ErrInvalidJob)
 	}
 
 	return nil

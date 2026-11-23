@@ -19,9 +19,10 @@ import (
 const (
 	testOwner      = "worker-a"
 	testBlock      = 100 * time.Millisecond
-	integrationTTL = 300 * time.Millisecond
+	integrationTTL = time.Second
 	waitFor        = 5 * time.Second
 	tick           = 20 * time.Millisecond
+	presenceJob    = "task-1-v1"
 )
 
 func newTestBoard(t *testing.T) *Board {
@@ -31,6 +32,7 @@ func newTestBoard(t *testing.T) *Board {
 
 	board, err := NewBoard(client, &config.Editor{
 		Stream: redistest.Prefix(t, client) + "editor:jobs", JobTimeout: time.Minute, PollInterval: time.Minute,
+		QueueTimeout: time.Hour, WorkerWait: time.Minute,
 	}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
@@ -47,7 +49,7 @@ func newTestBoard(t *testing.T) *Board {
 func testJob(taskID int64) *Job {
 	return &Job{
 		ID: JobID(taskID, 1), TaskID: taskID, Version: 1, SourceKey: testSourceKey,
-		CreatedAt: testDeadline.Add(-time.Hour), Deadline: testDeadline,
+		CreatedAt: testDeadline.Add(-time.Hour), QueueDeadline: testDeadline, Timeout: time.Hour,
 	}
 }
 
@@ -74,7 +76,8 @@ func TestIntegrationBoardJobLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, job.SourceKey, stored.SourceKey)
-	assert.True(t, job.Deadline.Equal(stored.Deadline))
+	assert.True(t, job.QueueDeadline.Equal(stored.QueueDeadline))
+	assert.Equal(t, job.Timeout, stored.Timeout)
 
 	d, err := board.Fetch(ctx, testOwner)
 	require.NoError(t, err)
@@ -83,6 +86,7 @@ func TestIntegrationBoardJobLifecycle(t *testing.T) {
 	assert.Equal(t, job.ID, d.Job.ID)
 
 	checkLock(t, board, job.ID)
+	checkStarted(t, board, job.ID)
 
 	result := &Result{JobID: job.ID, Status: DoneStatus, SourceDuration: 180, Duration: 141, FinishedAt: testDeadline}
 	require.NoError(t, board.Finish(ctx, job, result))
@@ -146,6 +150,56 @@ func checkLock(t *testing.T, board *Board, jobID string) {
 	}, waitFor, tick, "a lock without refreshes expires")
 
 	require.NoError(t, board.Unlock(ctx, jobID, testOwner))
+}
+
+// checkStarted: the first take of the job is its start; a second one (after a crash) keeps it.
+func checkStarted(t *testing.T, board *Board, jobID string) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	_, found, err := board.Started(ctx, jobID)
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	first, err := board.MarkStarted(ctx, jobID, testDeadline.Add(-30*time.Minute))
+	require.NoError(t, err)
+
+	again, err := board.MarkStarted(ctx, jobID, testDeadline)
+	require.NoError(t, err)
+	assert.True(t, first.Equal(again), "the first start counts")
+
+	started, found, err := board.Started(ctx, jobID)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.True(t, started.Equal(first))
+}
+
+// TestIntegrationBoardPresence: the app sees a worker by its heartbeat and a running job by its lock.
+func TestIntegrationBoardPresence(t *testing.T) {
+	t.Parallel()
+
+	board := newTestBoard(t)
+	ctx := context.Background()
+
+	alive, err := board.WorkerAlive(ctx)
+	require.NoError(t, err)
+	assert.False(t, alive, "no worker yet")
+
+	require.NoError(t, board.Heartbeat(ctx, testOwner))
+	alive, err = board.WorkerAlive(ctx)
+	require.NoError(t, err)
+	assert.True(t, alive)
+
+	locked, err := board.Locked(ctx, presenceJob)
+	require.NoError(t, err)
+	assert.False(t, locked)
+
+	_, err = board.Lock(ctx, presenceJob, testOwner)
+	require.NoError(t, err)
+	locked, err = board.Locked(ctx, presenceJob)
+	require.NoError(t, err)
+	assert.True(t, locked)
 }
 
 // TestIntegrationBoardClaimsJobOfDeadWorker: an entry not acked by a dead worker is delivered again after the

@@ -110,9 +110,15 @@ func UpdateToDeferred(runID string, runAfter, now time.Time) UpdaterFn {
 	}
 }
 
-// UpdateToWoken makes a queued task due now: its work elsewhere has finished. Any other status is ErrConflict.
-func UpdateToWoken(now time.Time) UpdaterFn {
+// UpdateToWoken makes a queued task of the agent due now: its work elsewhere has finished. A task of another agent
+// or in any other status is ErrConflict. A running task is refused too: if the result came while it was running and
+// it was then deferred, the next poll (DeferredError.After) finds the result.
+func UpdateToWoken(agent string, now time.Time) UpdaterFn {
 	return func(t Task) (Change, error) {
+		if t.Agent != agent {
+			return Change{}, fmt.Errorf("task %d is not a task of %s: %w", t.ID, agent, ErrConflict)
+		}
+
 		if t.Status != QueuedStatus {
 			return Change{}, fmt.Errorf("task %d is %s, not waiting: %w", t.ID, t.Status, ErrConflict)
 		}

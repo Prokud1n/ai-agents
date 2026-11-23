@@ -236,17 +236,18 @@ func TestUpdateToWoken(t *testing.T) {
 		expected    time.Time
 		expectedErr error
 	}{
-		{name: "deferred task becomes due", input: Task{ID: 1, Status: QueuedStatus, RunAfter: later}, expected: testNow},
-		{name: "a due task stays due", input: Task{ID: 1, Status: QueuedStatus, RunAfter: earlier}, expected: earlier},
-		{name: "running", input: Task{ID: 1, Status: RunningStatus}, expectedErr: ErrConflict},
-		{name: "decided", input: Task{ID: 1, Status: ApprovedStatus}, expectedErr: ErrConflict},
+		{name: "deferred task becomes due", input: Task{ID: 1, Agent: "editor", Status: QueuedStatus, RunAfter: later}, expected: testNow},
+		{name: "a due task stays due", input: Task{ID: 1, Agent: "editor", Status: QueuedStatus, RunAfter: earlier}, expected: earlier},
+		{name: "another agent's task", input: Task{ID: 1, Agent: "copywriter", Status: QueuedStatus, RunAfter: later}, expectedErr: ErrConflict},
+		{name: "running", input: Task{ID: 1, Agent: "editor", Status: RunningStatus}, expectedErr: ErrConflict},
+		{name: "decided", input: Task{ID: 1, Agent: "editor", Status: ApprovedStatus}, expectedErr: ErrConflict},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			change, err := UpdateToWoken(testNow)(tt.input)
+			change, err := UpdateToWoken("editor", testNow)(tt.input)
 			if tt.expectedErr != nil {
 				require.ErrorIs(t, err, tt.expectedErr)
 

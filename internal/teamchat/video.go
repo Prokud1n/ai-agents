@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -21,6 +24,9 @@ const (
 	// supergroupPrefix: a supergroup ID is -100<channel id>; its message links use the channel id.
 	supergroupPrefix = "-100"
 	sourceLinkLabel  = "Исходник: "
+	// maxVideoCaption is the Telegram limit of a media caption, in UTF-16 code units.
+	maxVideoCaption = 1024
+	ellipsis        = "…"
 )
 
 var errNoVideoSender = errors.New("video drafts are not configured")
@@ -75,15 +81,18 @@ func (n *Notifier) sendVideoDraft(ctx context.Context, draft *tasks.Draft) (task
 	}()
 
 	topicID, replyTo := v.topic(draft.TopicID), draft.ReplyToMessageID
-	caption := draftText(draft)
+	link := ""
 
 	if topicID != draft.TopicID {
 		replyTo = 0
 
-		if link := messageLink(draft.ChatID, draft.TopicID, draft.ReplyToMessageID); link != "" {
-			caption += paragraphBreak + sourceLinkLabel + link
+		if url := messageLink(draft.ChatID, draft.TopicID, draft.ReplyToMessageID); url != "" {
+			link = paragraphBreak + sourceLinkLabel + url
 		}
 	}
+
+	// Within the caption limit the video carries its buttons; a longer caption would go as separate messages.
+	caption := fitCaption(draftText(draft), link, maxVideoCaption)
 
 	id, err := v.sender.SendMedia(ctx, roleOf(draft.Agent), &gateway.OutgoingMedia{
 		Type:    gateway.VideoMediaType,
@@ -100,6 +109,80 @@ func (n *Notifier) sendVideoDraft(ctx context.Context, draft *tasks.Draft) (task
 	}
 
 	return tasks.SentDraft{MessageID: id}, nil
+}
+
+// cleanOutbox removes the reels a killed app left in the outbox: only regular files named like the copies of
+// media.Store.Download, only in the outbox itself. Failures are only logged.
+func cleanOutbox(ctx context.Context, dir string, log *slog.Logger) {
+	root, err := os.OpenRoot(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+
+	if err != nil {
+		log.WarnContext(ctx, "teamchat: failed to open the outbox", "error", err)
+
+		return
+	}
+	defer root.Close()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		log.WarnContext(ctx, "teamchat: failed to read the outbox", "error", err)
+
+		return
+	}
+
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !strings.HasPrefix(e.Name(), media.TempFilePrefix) {
+			continue
+		}
+
+		if err := root.Remove(e.Name()); err != nil {
+			log.WarnContext(ctx, "teamchat: failed to remove a leftover reel from the outbox", "error", err, "name", e.Name())
+
+			continue
+		}
+
+		log.InfoContext(ctx, "teamchat: removed a leftover reel from the outbox", "name", e.Name())
+	}
+}
+
+// fitCaption joins the text and the suffix within limit UTF-16 code units (how Telegram counts): the text is cut
+// with «…», the suffix (the link to the source) is kept whole.
+func fitCaption(text, suffix string, limit int) string {
+	room := limit - utf16Len(suffix)
+	if utf16Len(text) <= room {
+		return text + suffix
+	}
+
+	room -= utf16Len(ellipsis)
+
+	var b strings.Builder
+
+	used := 0
+
+	for _, r := range text {
+		n := max(utf16.RuneLen(r), 1)
+		if used+n > room {
+			break
+		}
+
+		b.WriteRune(r)
+
+		used += n
+	}
+
+	return strings.TrimSpace(b.String()) + ellipsis + suffix
+}
+
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n += max(utf16.RuneLen(r), 1)
+	}
+
+	return n
 }
 
 // messageLink is the link to a message of a private supergroup (https://t.me/c/<channel id>/<topic>/<message>);

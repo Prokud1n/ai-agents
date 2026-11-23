@@ -25,7 +25,9 @@ func TestJobID(t *testing.T) {
 func TestJobValidate(t *testing.T) {
 	t.Parallel()
 
-	valid := Job{ID: JobID(5, 1), TaskID: 5, Version: 1, SourceKey: testSourceKey, Deadline: testDeadline}
+	valid := Job{
+		ID: JobID(5, 1), TaskID: 5, Version: 1, SourceKey: testSourceKey, QueueDeadline: testDeadline, Timeout: time.Hour,
+	}
 
 	tests := []struct {
 		name        string
@@ -35,7 +37,8 @@ func TestJobValidate(t *testing.T) {
 		{name: "valid", input: func(j Job) Job { return j }},
 		{name: "id of another task", input: func(j Job) Job { j.ID = JobID(6, 1); return j }, expectedErr: ErrInvalidJob},
 		{name: "no source", input: func(j Job) Job { j.SourceKey = ""; return j }, expectedErr: ErrInvalidJob},
-		{name: "no deadline", input: func(j Job) Job { j.Deadline = time.Time{}; return j }, expectedErr: ErrInvalidJob},
+		{name: "no queue deadline", input: func(j Job) Job { j.QueueDeadline = time.Time{}; return j }, expectedErr: ErrInvalidJob},
+		{name: "no timeout", input: func(j Job) Job { j.Timeout = 0; return j }, expectedErr: ErrInvalidJob},
 		{
 			name: "zero task", input: func(j Job) Job { j.TaskID, j.ID = 0, JobID(0, 1); return j },
 			expectedErr: ErrInvalidJob,

@@ -6,6 +6,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/editjob"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
+	"github.com/Prokud1n/ai-agents/internal/teamchat"
 )
 
 // Module runs the editor's tasks through the media worker; it needs editjob.Module, media.Module and tasks.Module.
@@ -17,7 +18,7 @@ var Module = fx.Options(
 	fx.Module("editor",
 		// Executor is visible to the application: the decorator of tasks.Executor below takes it.
 		fx.Provide(NewExecutor),
-		fx.Provide(NewWaker, asBoard, asDoneListener, asResultKeys, asTaskWaker, fx.Private),
+		fx.Provide(NewWaker, asBoard, asDoneListener, asResultKeys, asTaskWaker, asTechReporter, fx.Private),
 		fx.Invoke(registerWaker),
 	),
 	fx.Decorate(routeExecutor),
@@ -43,6 +44,10 @@ func asDoneListener(b *editjob.Board) doneListener {
 
 func asResultKeys(s *media.Store) resultKeys {
 	return s
+}
+
+func asTechReporter(r *teamchat.TechReporter) techReporter {
+	return r
 }
 
 func asTaskWaker(s *tasks.Service) taskWaker {

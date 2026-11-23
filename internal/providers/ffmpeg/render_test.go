@@ -142,6 +142,15 @@ func TestParseProbe(t *testing.T) {
 				Duration: 2, HasVideo: true, AvgFrameRate: Rational{Num: 25, Den: 1}, RealFrameRate: Rational{Num: 25, Den: 1},
 			},
 		},
+		{
+			name: "iPhone HDR (HLG)",
+			input: `{"streams":[{"codec_type":"video","r_frame_rate":"30/1","avg_frame_rate":"30/1",` +
+				`"color_transfer":"arib-std-b67","color_primaries":"bt2020"}],"format":{"duration":"3"}}`,
+			expected: MediaInfo{
+				Duration: 3, HasVideo: true, AvgFrameRate: Rational{Num: 30, Den: 1}, RealFrameRate: Rational{Num: 30, Den: 1},
+				ColorTransfer: "arib-std-b67", ColorPrimaries: "bt2020",
+			},
+		},
 		{name: "no duration", input: `{"streams":[],"format":{}}`, expectErr: true},
 		{name: "not json", input: "oops", expectErr: true},
 	}
@@ -159,6 +168,30 @@ func TestParseProbe(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestMediaInfoHDR(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{name: "HLG", input: "arib-std-b67", expected: true},
+		{name: "PQ", input: "smpte2084", expected: true},
+		{name: "SDR", input: "bt709"},
+		{name: "untagged", input: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			info := MediaInfo{ColorTransfer: tt.input}
+			assert.Equal(t, tt.expected, info.HDR())
 		})
 	}
 }

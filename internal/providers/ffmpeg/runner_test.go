@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,4 +201,16 @@ func TestRunnerErrors(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.expected)
 		})
 	}
+}
+
+func TestChildEnv(t *testing.T) {
+	t.Parallel()
+
+	got := childEnv([]string{
+		"PATH=/usr/bin", "HOME=/work", "TMPDIR=/work", "XDG_CACHE_HOME=/work/.cache", "LANG=C.UTF-8",
+		"OPENAI_API_KEY=sk-secret", "S3_SECRET_KEY=s3-secret", "REDIS_PASSWORD=r-secret", "PATHX=/x", "broken",
+	})
+
+	assert.Equal(t, []string{"PATH=/usr/bin", "HOME=/work", "TMPDIR=/work", "XDG_CACHE_HOME=/work/.cache", "LANG=C.UTF-8"}, got)
+	assert.NotContains(t, strings.Join(got, " "), "secret", "no secrets reach ffmpeg")
 }

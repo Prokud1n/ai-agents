@@ -33,7 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejection work as for text drafts. Failures (no key, a source that is too long, without sound or speech, missing
   brand fonts, a timeout `EDITOR_JOB_TIMEOUT`, default 45 min) reach the trainer as a short text, details go to the
   worker's log. New settings `MEDIA_RESULT_PREFIX`, `EDITOR_STREAM`, `EDITOR_JOB_TIMEOUT`, `EDITOR_POLL_INTERVAL`,
-  `MEDIA_WORKER_*`; migration `006_video_drafts` (`task_versions.media_key`).
+  `EDITOR_QUEUE_TIMEOUT`, `EDITOR_WORKER_WAIT`, `MEDIA_WORKER_*`; migration `006_video_drafts` (`task_versions.media_key`).
+- Editor limits and reports (review of T3.4b): the job timeout counts from the moment a worker took the job
+  (`<stream>:started:<id>`), waiting in the queue has its own `EDITOR_QUEUE_TIMEOUT` (3 h); a job not taken while no
+  worker sends heartbeats fails after `EDITOR_WORKER_WAIT` (3 min). Setup failures (no key, the key refused, no brand
+  fonts, no worker) reach the trainer as one plain text, and the editor's bot posts the code and the task to
+  «Техничка» (`teamchat.TechReporter`, `TELEGRAM_TOPIC_TECH_ID`). HDR sources (HLG/PQ) are tone mapped to SDR bt709
+  (`zscale`, `tonemap`), the export is always tagged bt709 limited range and stereo; ffmpeg runs with a minimal
+  environment, without the worker's keys. A video caption is cut to 1024 characters so the buttons stay on the video;
+  leftover reels are removed from the outbox on start; `Wake` wakes only the editor's tasks.
+- The media worker still has full rights in Redis and S3 (the shared Redis password, the RustFS admin keys): a Redis
+  ACL user and a RustFS user limited to its keys and prefixes are a separate task before the VPS deploy.
 - `tasks`: `Executor` returns `tasks.Output` (text and an optional video key); `RoutingExecutor` routes agents to
   their executors; `DeferredError` and `Service.Wake` for work that goes on elsewhere; `TemporaryError` carries the
   trainer's text for a retried failure. Video drafts are sent with a longer lease (20 min) and timeout (15 min), and

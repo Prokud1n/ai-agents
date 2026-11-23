@@ -22,6 +22,12 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
+// Transfer functions as ffprobe names them.
+const (
+	testHLG = "arib-std-b67"
+	testSDR = "bt709"
+)
+
 var (
 	testDeadline = time.Date(2026, 11, 23, 12, 45, 0, 0, time.UTC)
 	errS3Down    = errors.New("s3 is down")
@@ -78,7 +84,10 @@ func (f *pipelineFakes) pipeline(t *testing.T, workDir string) *Pipeline {
 }
 
 func testJob() *editjob.Job {
-	return &editjob.Job{ID: editjob.JobID(17, 1), TaskID: 17, Version: 1, SourceKey: testSourceKey, Deadline: testDeadline}
+	return &editjob.Job{
+		ID: editjob.JobID(17, 1), TaskID: 17, Version: 1, SourceKey: testSourceKey, QueueDeadline: testDeadline,
+		Timeout: time.Hour,
+	}
 }
 
 func TestPipelineRun(t *testing.T) {
@@ -115,6 +124,20 @@ func TestPipelineRun(t *testing.T) {
 	entries, err := os.ReadDir(workDir)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "the job dir is removed")
+}
+
+// TestPipelineToneMapsHDR: an HLG/PQ source is tone mapped, an SDR one is not.
+func TestPipelineToneMapsHDR(t *testing.T) {
+	t.Parallel()
+
+	for _, transfer := range []string{testHLG, "smpte2084", testSDR} {
+		fakes := newPipelineFakes(t)
+		fakes.prober.info.ColorTransfer = transfer
+
+		_, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), testJob())
+		require.NoError(t, err)
+		assert.Equal(t, transfer != testSDR, fakes.burner.got.ToneMap, transfer)
+	}
 }
 
 func TestPipelineFailures(t *testing.T) {

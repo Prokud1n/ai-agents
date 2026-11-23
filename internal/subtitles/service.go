@@ -126,6 +126,7 @@ func (s *Service) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*
 		Input: data.VideoPath, Dir: dir,
 		SubtitlesName: assName, FontsName: fontsName,
 		Width: FrameWidth, Height: FrameHeight, Fit: fit, Shade: shade(&style), Cut: data.Cut,
+		ToneMap: data.ToneMap,
 	})
 	if err != nil {
 		return nil, err

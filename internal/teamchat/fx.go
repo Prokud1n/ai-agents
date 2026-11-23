@@ -1,6 +1,7 @@
 package teamchat
 
 import (
+	"context"
 	"log/slog"
 
 	"go.uber.org/fx"
@@ -23,7 +24,7 @@ import (
 // mediaStore is provided outside fx.Private, so a test can replace it with fx.Decorate.
 var Module = fx.Options(
 	fx.Module("teamchat",
-		fx.Provide(newHandler, newNotifier, asMediaStore),
+		fx.Provide(newHandler, newNotifier, asMediaStore, newTechReporter),
 	),
 	fx.Decorate(useHandler),
 )
@@ -55,10 +56,22 @@ func asMediaStore(s *media.Store) mediaStore {
 	return s
 }
 
-func newNotifier(cfg *config.Telegram, sender *gateway.Sender, files mediaStore, log *slog.Logger) tasks.Notifier {
+// newNotifier cleans the outbox on start of the reels a killed app left there (they are sent from it and removed after
+// sending).
+func newNotifier(
+	lc fx.Lifecycle,
+	cfg *config.Telegram,
+	sender *gateway.Sender,
+	files mediaStore,
+	log *slog.Logger,
+) tasks.Notifier {
 	if !cfg.Enabled() {
 		return tasks.NewLogNotifier(log)
 	}
+
+	lc.Append(fx.StartHook(func(ctx context.Context) {
+		cleanOutbox(ctx, cfg.OutboxDir, log)
+	}))
 
 	n := NewNotifier(sender, log)
 	n.videos = &videoDrafts{
@@ -72,4 +85,8 @@ func newNotifier(cfg *config.Telegram, sender *gateway.Sender, files mediaStore,
 // useHandler replaces the gateway's default handler.
 func useHandler(h *Handler) gateway.Handler {
 	return h
+}
+
+func newTechReporter(cfg *config.Telegram, sender *gateway.Sender, log *slog.Logger) *TechReporter {
+	return NewTechReporter(cfg, sender, log)
 }

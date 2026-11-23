@@ -59,6 +59,7 @@ return 0
 //	<stream>                 stream of submitted jobs, read by the consumer group of the workers
 //	<stream>:job:<id>        the submitted job (the app submits a job only when it has none)
 //	<stream>:result:<id>     the result
+//	<stream>:started:<id>    when a worker took the job (the job timeout counts from it)
 //	<stream>:lock:<id>       the worker editing the job, refreshed by its heartbeat
 //	<stream>:done            channel: the task ID of a finished job, so the app runs the task at once
 //	<stream>:worker          presence of a live worker
@@ -76,8 +77,9 @@ func NewBoard(client *redis.Client, cfg *config.Editor, log *slog.Logger) (*Boar
 	switch {
 	case strings.TrimSpace(cfg.Stream) == "":
 		return nil, fmt.Errorf("EDITOR_STREAM is empty: %w", ErrInvalidConfig)
-	case cfg.JobTimeout <= 0 || cfg.PollInterval <= 0:
-		return nil, fmt.Errorf("EDITOR_JOB_TIMEOUT and EDITOR_POLL_INTERVAL must be positive: %w", ErrInvalidConfig)
+	case cfg.JobTimeout <= 0 || cfg.PollInterval <= 0 || cfg.QueueTimeout <= 0 || cfg.WorkerWait <= 0:
+		return nil, fmt.Errorf("EDITOR_JOB_TIMEOUT, _POLL_INTERVAL, _QUEUE_TIMEOUT and _WORKER_WAIT must be positive: %w",
+			ErrInvalidConfig)
 	}
 
 	return &Board{
@@ -85,11 +87,12 @@ func NewBoard(client *redis.Client, cfg *config.Editor, log *slog.Logger) (*Boar
 	}, nil
 }
 
-func (b *Board) jobKey(id string) string    { return b.stream + ":job:" + id }
-func (b *Board) resultKey(id string) string { return b.stream + ":result:" + id }
-func (b *Board) lockKey(id string) string   { return b.stream + ":lock:" + id }
-func (b *Board) doneChannel() string        { return b.stream + ":done" }
-func (b *Board) presenceKey() string        { return b.stream + ":worker" }
+func (b *Board) jobKey(id string) string     { return b.stream + ":job:" + id }
+func (b *Board) resultKey(id string) string  { return b.stream + ":result:" + id }
+func (b *Board) lockKey(id string) string    { return b.stream + ":lock:" + id }
+func (b *Board) startedKey(id string) string { return b.stream + ":started:" + id }
+func (b *Board) doneChannel() string         { return b.stream + ":done" }
+func (b *Board) presenceKey() string         { return b.stream + ":worker" }
 
 // Submit stores the job and puts it into the stream; false if the job is already submitted (nothing is added).
 func (b *Board) Submit(ctx context.Context, job *Job) (bool, error) {
@@ -145,7 +148,7 @@ func (b *Board) Result(ctx context.Context, id string) (Result, bool, error) {
 
 // Forget deletes the job and its result, so the next run submits the job again.
 func (b *Board) Forget(ctx context.Context, id string) error {
-	if err := b.rdb.Del(ctx, b.jobKey(id), b.resultKey(id)).Err(); err != nil {
+	if err := b.rdb.Del(ctx, b.jobKey(id), b.resultKey(id), b.startedKey(id)).Err(); err != nil {
 		return fmt.Errorf("failed to forget job %s: %w", id, err)
 	}
 
@@ -200,4 +203,64 @@ func (b *Board) ListenDone(ctx context.Context, handle func(ctx context.Context,
 			handle(ctx, taskID)
 		}
 	}
+}
+
+// MarkStarted records that a worker took the job, once: it returns the moment of the first take (a job restarted after
+// a crash keeps its start, so its timeout is not extended).
+func (b *Board) MarkStarted(ctx context.Context, id string, now time.Time) (time.Time, error) {
+	key := b.startedKey(id)
+
+	if err := b.rdb.SetNX(ctx, key, now.UTC().Format(time.RFC3339Nano), recordTTL).Err(); err != nil {
+		return time.Time{}, fmt.Errorf("failed to mark job %s started: %w", id, err)
+	}
+
+	started, found, err := b.Started(ctx, id)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	if !found { // expired between the two calls: a week later, only in theory
+		return now, nil
+	}
+
+	return started, nil
+}
+
+// Started returns when a worker took the job; false if none has.
+func (b *Board) Started(ctx context.Context, id string) (time.Time, bool, error) {
+	raw, err := b.rdb.Get(ctx, b.startedKey(id)).Result()
+	if errors.Is(err, goredis.Nil) {
+		return time.Time{}, false, nil
+	}
+
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("failed to read the start of job %s: %w", id, err)
+	}
+
+	started, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("failed to parse the start of job %s: %w", id, err)
+	}
+
+	return started, true, nil
+}
+
+// Locked reports whether a worker holds the job's lock now.
+func (b *Board) Locked(ctx context.Context, id string) (bool, error) {
+	n, err := b.rdb.Exists(ctx, b.lockKey(id)).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to check the lock of job %s: %w", id, err)
+	}
+
+	return n > 0, nil
+}
+
+// WorkerAlive reports whether a worker has sent a heartbeat within presenceTTL.
+func (b *Board) WorkerAlive(ctx context.Context) (bool, error) {
+	n, err := b.rdb.Exists(ctx, b.presenceKey()).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to check media worker presence: %w", err)
+	}
+
+	return n > 0, nil
 }

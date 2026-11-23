@@ -16,7 +16,7 @@ type doneListener interface {
 }
 
 type taskWaker interface {
-	Wake(ctx context.Context, taskID int64) error
+	Wake(ctx context.Context, taskID int64, agent string) error
 }
 
 // Waker runs the task of a finished job as soon as the worker announces it, instead of waiting for the next poll
@@ -85,7 +85,8 @@ func (w *Waker) listen(ctx context.Context) {
 }
 
 func (w *Waker) wake(ctx context.Context, taskID int64) {
-	if err := w.tasks.Wake(ctx, taskID); err != nil {
+	// Only the editor's tasks: an ID from the channel cannot wake a task of another agent.
+	if err := w.tasks.Wake(ctx, taskID, AgentName); err != nil {
 		w.log.WarnContext(ctx, "editor: failed to wake the task, it is polled", "error", err, "task_id", taskID)
 
 		return

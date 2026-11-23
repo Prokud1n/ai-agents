@@ -218,6 +218,8 @@ type jobWork struct {
 	transcript *transcription.Result
 	cut        *roughcut.Result
 	reel       string
+	// hdr: the source is HLG/PQ and is tone mapped to SDR bt709.
+	hdr bool
 }
 
 func (p *Pipeline) download(ctx context.Context, w *jobWork) error {
@@ -249,6 +251,12 @@ func (p *Pipeline) check(ctx context.Context, w *jobWork) error {
 	}
 
 	w.result.SourceDuration = roundTime(info.Duration)
+	w.hdr = info.HDR()
+
+	if w.hdr {
+		p.log.InfoContext(ctx, "mediaworker: HDR source, tone mapping to SDR", "job_id", w.job.ID,
+			"transfer", info.ColorTransfer, "primaries", info.ColorPrimaries)
+	}
 
 	switch {
 	case !info.HasVideo:
@@ -332,6 +340,7 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		OutputPath:          w.reel,
 		Fit:                 p.fit,
 		Cut:                 &ffmpeg.Cut{Segments: w.cut.Segments(), Options: w.cut.Render},
+		ToneMap:             w.hdr,
 	})
 	if err != nil {
 		return err

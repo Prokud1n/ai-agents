@@ -205,12 +205,12 @@ func (s *Service) deferRun(ctx context.Context, task *Task, after time.Duration)
 	return nil
 }
 
-// Wake runs a deferred task now: its work elsewhere has finished. A task that is not waiting in the queue (running,
-// decided, unknown) is left alone.
-func (s *Service) Wake(ctx context.Context, taskID int64) error {
+// Wake runs a deferred task of the agent now: its work elsewhere has finished. A task of another agent, or one that
+// is not waiting in the queue (running, decided, unknown), is left alone.
+func (s *Service) Wake(ctx context.Context, taskID int64, agent string) error {
 	now := s.now()
 
-	_, err := s.repo.Update(ctx, taskID, UpdateToWoken(now))
+	_, err := s.repo.Update(ctx, taskID, UpdateToWoken(agent, now))
 	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
 		return nil
 	}

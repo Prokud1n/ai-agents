@@ -91,7 +91,7 @@ services:
       MEDIA_WORKER_MAX_SOURCE_DURATION: ${MEDIA_WORKER_MAX_SOURCE_DURATION:-10m}
       MEDIA_WORKER_MAX_SOURCE_SIZE: ${MEDIA_WORKER_MAX_SOURCE_SIZE:-2147483648}
       MEDIA_WORKER_FIT: ${MEDIA_WORKER_FIT:-pad}
-      # One render of a 10-minute source within the job; the job itself is bounded by EDITOR_JOB_TIMEOUT (in app).
+      # One render of a 10-minute source within the job; the job itself is bounded by EDITOR_JOB_TIMEOUT (it comes with the job from the app).
       FFMPEG_TIMEOUT: ${MEDIA_WORKER_FFMPEG_TIMEOUT:-30m}
       SUBTITLES_STYLE_FILE: ${SUBTITLES_STYLE_FILE:-}
       # The root filesystem is read-only: the job files, temporary files and the fontconfig cache go to /work.

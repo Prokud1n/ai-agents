@@ -157,6 +157,14 @@ jobs:
           go test -count=1 -v -run 'TestRender' ./internal/roughcut/
           go test -count=1 -v -run 'TestBurnSubtitlesWithFFmpeg' ./internal/subtitles/
 
+      # The editor's limits (a job waits in the queue, then runs its timeout from the start; no worker → a technical
+      # failure) and the environment ffmpeg gets: shown verbosely, they are the proof of the review's points.
+      - name: Show editor tests
+        run: |
+          go test -count=1 -v -run 'TestExecutor|TestFailureText' ./internal/editor/
+          go test -count=1 -v -run 'TestWorker|TestPipelineToneMapsHDR' ./internal/mediaworker/
+          go test -count=1 -v -run 'TestChildEnv|TestMediaInfoHDR' ./internal/providers/ffmpeg/
+
       # Hostile input for kb: PDFs are parsed in real child processes (the test binary re-run as the
       # parser), symlinks inside KB_ROOT lead outside it. The log shows each attack failing as an ordinary
       # error while the parent test process survives.
@@ -213,19 +221,34 @@ jobs:
       - name: Integration tests
         run: make test-integration
 
-      # The media worker runs apart from the app: without its secrets, as the image's nonroot user, healthy.
+      # The media worker runs apart from the app: healthy, as the image's nonroot user, with a read-only root, no
+      # capabilities, no new privileges, and only the allowed variables (an allowlist: anything new in its environment
+      # must be added here on purpose).
       - name: Check the media worker container
+        shell: bash
         run: |
+          set -euo pipefail
+          id=$(docker compose ps -q media-worker)
           docker compose ps media-worker
-          [[ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q media-worker)")" == healthy ]] \
-            || { echo "::error::media-worker is not healthy"; exit 1; }
-          [[ "$(docker compose exec -T media-worker id -u)" == 65532 ]] || { echo "::error::media-worker must run as nonroot"; exit 1; }
-          if docker compose exec -T media-worker env | grep -E '^(TELEGRAM_|ANTHROPIC_|POSTGRES_)'; then
-            echo "::error::media-worker must not get the app's secrets"
-            exit 1
-          fi
+          fail() { echo "::error::$*"; exit 1; }
+          [[ "$(docker inspect -f '{{.State.Health.Status}}' "$id")" == healthy ]] || fail "media-worker is not healthy"
+          [[ "$(docker compose exec -T media-worker id -u)" == 65532 ]] || fail "media-worker must run as nonroot"
+          [[ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$id")" == true ]] || fail "the root filesystem must be read-only"
+          docker inspect -f '{{json .HostConfig.CapDrop}}' "$id" | grep -q '"ALL"' || fail "CapDrop must contain ALL"
+          docker inspect -f '{{json .HostConfig.SecurityOpt}}' "$id" | grep -q 'no-new-privileges' \
+            || fail "SecurityOpt must contain no-new-privileges"
+          allowed=(PATH HOSTNAME HOME TERM SUBTITLES_FONTS_DIR
+            LOG_LEVEL APP_STOP_TIMEOUT REDIS_ADDRESS REDIS_PASSWORD REDIS_DB
+            S3_ENDPOINT S3_ACCESS_KEY S3_SECRET_KEY S3_BUCKET S3_REGION S3_USE_SSL
+            MEDIA_KEY_PREFIX MEDIA_RESULT_PREFIX MEDIA_UPLOAD_TIMEOUT OPENAI_API_KEY OPENAI_BASE_URL WHISPER_LANGUAGE
+            EDITOR_STREAM MEDIA_WORKER_MAX_SOURCE_DURATION MEDIA_WORKER_MAX_SOURCE_SIZE MEDIA_WORKER_FIT FFMPEG_TIMEOUT
+            SUBTITLES_STYLE_FILE MEDIA_WORKER_DIR TMPDIR XDG_CACHE_HOME)
+          docker compose exec -T media-worker env | cut -d= -f1 | sort -u > env-keys.txt
+          echo "media-worker environment: $(tr '\n' ' ' < env-keys.txt)"
+          extra=$(grep -vxF -f <(printf '%s\n' "${allowed[@]}") env-keys.txt || true)
+          [[ -z "$extra" ]] || fail "media-worker has variables outside the allowlist: $extra"
           docker compose logs --no-log-prefix media-worker | grep -q '"msg":"mediaworker: started"'
-          echo "media-worker: healthy, nonroot, no app secrets"
+          echo "media-worker: healthy, nonroot, read-only, no capabilities, only allowed variables"
 
       - name: Check that only app and postgres are published, on 127.0.0.1
         run: |
@@ -426,6 +449,8 @@ jobs:
         run: |
           docker run --rm --entrypoint ffmpeg ai-agents-media:ci -hide_banner -version | sed -n 1p
           docker run --rm --entrypoint sh ai-agents-media:ci -c 'ffmpeg -hide_banner -filters | grep -E " ass "'
+          # The HDR tone mapping of the editor (zimg) is in the image's ffmpeg.
+          docker run --rm --entrypoint sh ai-agents-media:ci -c 'ffmpeg -hide_banner -filters > /tmp/f && grep -E " zscale " /tmp/f && grep -E " tonemap " /tmp/f'
           docker run --rm --entrypoint /app/subtitles ai-agents-media:ci -h
           docker run --rm --entrypoint ls ai-agents-media:ci -l /app/fonts
           docker run --rm --entrypoint ffprobe ai-agents-media:ci -hide_banner -version | sed -n 1p

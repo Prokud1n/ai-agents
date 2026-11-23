@@ -38,8 +38,8 @@ docker compose logs -f media-worker                     # шаги монтаж�
 
 - `make lint`/`make fmt` идут через `scripts/golangci-lint.sh` (запиненная версия), а не через глобальный бинарь.
 - Интеграционный тест: в имени есть `Integration`, первой строкой вызывает `pgtest.Connect(t)`. Без `INTEGRATION=1`
-  он скипается; с ним получает отдельную свежую БД со всеми миграциями (можно `t.Parallel()`). Redis — `redistest`,
-  S3 — `s3test`; `TestIntegrationPipeline` требует ffmpeg с libass на хосте (`make test-integration` без него падает). Redis — через
+  он скипается; с ним получает отдельную свежую БД со всеми миграциями (можно `t.Parallel()`).
+  `TestIntegrationPipeline` требует ffmpeg с libass на хосте (`make test-integration` без него падает). Redis — через
   `redistest.Connect(t)` (свой префикс ключей), S3 — через `s3test.Connect(t)` (свой бакет на тест, одноразовый
   RustFS из `make s3-test-up` на `127.0.0.1:9100`, вне compose-проекта).
 
@@ -123,6 +123,8 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
 ffmpeg разбирает недоверенные файлы, а `app` держит токены ботов и ключи API, поэтому монтаж — в отдельном сервисе
 `media-worker` (образ `media`, nonroot, read-only root, без портов, только S3/Redis/`OPENAI_API_KEY`).
 
+- **Пока у воркера полные права в Redis и S3** (общий пароль Redis, ключи администратора RustFS): отдельный
+  ACL-пользователь Redis и пользователь RustFS только на нужные ключи/префиксы — отдельная задача до деплоя на VPS.
 - Видео в «Исходники» → `teamchat` создаёт задачу `editor` / `reels-edit` (`Media` = ключ исходника, `Input` = подпись).
 - `internal/editjob` — контракт и «доска» в Redis: stream заданий с consumer group воркеров, `<stream>:job:<id>`,
   `<stream>:result:<id>`, блокировка `<stream>:lock:<id>` с heartbeat, канал `<stream>:done`. ID задания =

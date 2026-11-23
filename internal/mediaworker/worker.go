@@ -48,6 +48,8 @@ type workerBoard interface {
 	Refresh(ctx context.Context, jobID, owner string) (bool, error)
 	Unlock(ctx context.Context, jobID, owner string) error
 	Finish(ctx context.Context, job *editjob.Job, result *editjob.Result) error
+	Started(ctx context.Context, jobID string) (time.Time, bool, error)
+	MarkStarted(ctx context.Context, jobID string, now time.Time) (time.Time, error)
 	NotifyDone(ctx context.Context, job *editjob.Job)
 	Heartbeat(ctx context.Context, owner string) error
 	LockTTL() time.Duration
@@ -212,7 +214,7 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 
 	defer w.unlock(ctx, job)
 
-	result := w.run(ctx, job)
+	result := w.start(ctx, job)
 	if result == nil { // stopped or lost: the entry stays pending and is taken again (after the restart)
 		w.log.InfoContext(ctx, "mediaworker: job interrupted", "job_id", job.ID)
 
@@ -232,8 +234,8 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 	w.ack(finalCtx, d)
 }
 
-// skip: a job with a result is announced again (the app may have missed it) and skipped; an expired job gets a
-// timeout result without being run.
+// skip: a job with a result is announced again (the app may have missed it) and skipped; a job that waited in the
+// queue past its deadline gets a queue timeout result without being run.
 func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 	finished, err := w.board.HasResult(ctx, job.ID)
 	if err != nil {
@@ -247,10 +249,18 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 		return true, nil
 	}
 
-	if !w.now().Before(job.Deadline) {
-		w.log.WarnContext(ctx, "mediaworker: job expired before it was taken", "job_id", job.ID, "deadline", job.Deadline)
+	// A job never taken by its queue deadline is not started; one taken before (a worker died mid-job) has its
+	// own deadline from the start, checked when it is taken again.
+	_, started, err := w.board.Started(ctx, job.ID)
+	if err != nil {
+		return false, err
+	}
 
-		if err := w.board.Finish(ctx, job, editjob.Failed(job.ID, editjob.TimeoutCode, w.now())); err != nil {
+	if !started && !w.now().Before(job.QueueDeadline) {
+		w.log.WarnContext(ctx, "mediaworker: job waited in the queue past its deadline", "job_id", job.ID,
+			"queue_deadline", job.QueueDeadline)
+
+		if err := w.board.Finish(ctx, job, editjob.Failed(job.ID, editjob.QueueTimeoutCode, w.now())); err != nil {
 			return false, err
 		}
 
@@ -260,10 +270,32 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 	return false, nil
 }
 
-// run runs the pipeline until the job's deadline with the lock refreshed; nil when the worker is stopping or lost
-// the lock (another worker runs the job now, its result counts).
-func (w *Worker) run(ctx context.Context, job *editjob.Job) *editjob.Result {
-	jobCtx, cancel := context.WithDeadline(ctx, job.Deadline)
+// start marks the job started (the first take counts) and runs it until start + timeout; a job whose time is already
+// over (it was taken before and the worker died) gets a timeout result.
+func (w *Worker) start(ctx context.Context, job *editjob.Job) *editjob.Result {
+	started, err := w.board.MarkStarted(ctx, job.ID, w.now())
+	if err != nil {
+		w.log.WarnContext(ctx, "mediaworker: failed to mark the job started, its timeout counts from now", "error", err,
+			"job_id", job.ID)
+
+		started = w.now()
+	}
+
+	deadline := started.Add(job.Timeout)
+	if !w.now().Before(deadline) {
+		w.log.WarnContext(ctx, "mediaworker: job ran out of time before it was taken again", "job_id", job.ID,
+			"started", started)
+
+		return editjob.Failed(job.ID, editjob.TimeoutCode, w.now())
+	}
+
+	return w.run(ctx, job, deadline)
+}
+
+// run runs the pipeline until the deadline with the lock refreshed; nil when the worker is stopping or lost the lock
+// (another worker runs the job now, its result counts).
+func (w *Worker) run(ctx context.Context, job *editjob.Job, deadline time.Time) *editjob.Result {
+	jobCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
 	var lost atomic.Bool

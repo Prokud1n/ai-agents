@@ -59,19 +59,24 @@ func TestDescribeTruncatesLongCaption(t *testing.T) {
 func TestFailureText(t *testing.T) {
 	t.Parallel()
 
+	e := newTestExecutor(&fakeBoard{})
+
 	for _, code := range []editjob.FailureCode{
-		editjob.NotConfiguredCode, editjob.TranscriptionRejectedCode, editjob.FontsCode, editjob.SourceMissingCode,
-		editjob.SourceTooLargeCode, editjob.SourceTooLongCode, editjob.BadSourceCode, editjob.NoAudioCode,
-		editjob.NoSpeechCode, editjob.TimeoutCode, editjob.TemporaryCode,
+		editjob.SourceMissingCode, editjob.SourceTooLargeCode, editjob.SourceTooLongCode, editjob.BadSourceCode,
+		editjob.NoAudioCode, editjob.NoSpeechCode, editjob.TimeoutCode, editjob.QueueTimeoutCode,
 	} {
-		text := failureText(&editjob.Result{Code: code, SourceDuration: 700, MaxDuration: 600})
+		text := e.failureText(&editjob.Result{Code: code, SourceDuration: 700, MaxDuration: 600})
 
 		assert.NotEmpty(t, text, code)
 		assert.NotContains(t, text, string(code), "no codes for the trainer")
+		assert.NotContains(t, text, "OPENAI", "no setup details for the trainer")
 	}
 
 	assert.Equal(t, "Исходник длится 11:40, а монтирую я видео до 10 мин. Разрежьте его на части и пришлите по одной.",
-		failureText(&editjob.Result{Code: editjob.SourceTooLongCode, SourceDuration: 700, MaxDuration: 600}))
-	assert.Equal(t, "Монтаж не уложился в отведённые 45 мин. Пришлите исходник ещё раз или разрежьте его на части.",
-		timeoutText(testTimeout))
+		e.failureText(&editjob.Result{Code: editjob.SourceTooLongCode, SourceDuration: 700, MaxDuration: 600}))
+	assert.Equal(t, "Монтаж этого видео занял больше 45 мин и был остановлен — скорее всего, оно слишком длинное. "+
+		"Разрежьте его на части и пришлите по одной.", runningTimeoutText(testTimeout))
+	assert.Equal(t, "Очередь на монтаж была слишком длинной: за 3 ч до этого видео дело не дошло. "+
+		"Пришлите исходник ещё раз чуть позже.", queueTimeoutText(testQueue))
+	assert.NotContains(t, technicalText, "OPENAI")
 }

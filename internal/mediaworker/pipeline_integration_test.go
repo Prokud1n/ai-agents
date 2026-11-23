@@ -50,17 +50,20 @@ func TestIntegrationPipeline(t *testing.T) {
 		size   string
 		rate   int
 		padded bool
+		hdr    bool
 	}{
 		{name: "vertical 720p at 30 fps fills the frame", size: "720x1280", rate: 30},
 		{name: "horizontal at 25 fps is padded", size: "640x360", rate: 25, padded: true},
+		// An iPhone-like HDR source: 10-bit HLG (bt2020, arib-std-b67) is tone mapped to an 8-bit SDR bt709 reel.
+		{name: "10-bit HLG is tone mapped to SDR bt709", size: "720x1280", rate: 30, hdr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			source := filepath.Join(t.TempDir(), "source.mp4")
-			makeSpeechClip(t, source, tt.size, tt.rate)
+			source := filepath.Join(t.TempDir(), "source.mkv")
+			makeSpeechClip(t, source, tt.size, tt.rate, tt.hdr)
 
 			store := newLocalStore(map[string]string{testSourceKey: source})
 			started := time.Now()
@@ -145,7 +148,8 @@ func realPipeline(t *testing.T, store *localStore) *Pipeline {
 }
 
 // makeSpeechClip writes a clip where a tone sounds during every word of clipWords and the rest is silence.
-func makeSpeechClip(t *testing.T, path, size string, rate int) {
+// With hdr the picture is 10-bit FFV1 tagged HLG bt2020, as a phone's HDR video (in Matroska, which keeps the tags).
+func makeSpeechClip(t *testing.T, path, size string, rate int, hdr bool) {
 	t.Helper()
 
 	spans := make([]string, 0, len(clipWords))
@@ -158,8 +162,26 @@ func makeSpeechClip(t *testing.T, path, size string, rate int) {
 	audio := "aevalsrc=if(" + strings.Join(spans, "+") + "\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=" + d
 	video := "testsrc=duration=" + d + ":size=" + size + ":rate=" + strconv.Itoa(rate)
 
-	run(t, "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
-		"-f", "lavfi", "-i", audio, "-f", "lavfi", "-i", video, "-c:v", "mpeg4", "-c:a", "aac", "-shortest", path)
+	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", audio, "-f", "lavfi", "-i", video, "-c:a", "aac", "-shortest"}
+
+	if hdr {
+		args = append(args, "-c:v", "ffv1", "-pix_fmt", "yuv420p10le",
+			"-color_primaries", "bt2020", "-color_trc", testHLG, "-colorspace", "bt2020nc")
+	} else {
+		args = append(args, "-c:v", "mpeg4")
+	}
+
+	run(t, "ffmpeg", append(args, path)...)
+
+	if hdr { // the source really is HLG, so the test checks the tone mapping and not an untagged clip
+		var probe probedReel
+
+		require.NoError(t, json.Unmarshal(run(t, "ffprobe", "-v", "error", "-select_streams", "v:0",
+			"-show_entries", "stream=color_transfer,color_primaries", "-of", "json", path), &probe))
+		require.Len(t, probe.Streams, 1)
+		require.Equal(t, testHLG, probe.Streams[0].ColorTransfer)
+	}
 }
 
 type probedReel struct {
@@ -171,7 +193,11 @@ type probedReel struct {
 		Height     int    `json:"height"`
 		PixFmt     string `json:"pix_fmt"`
 		SampleRate string `json:"sample_rate"`
+		Channels   int    `json:"channels"`
 		RFrameRate string `json:"r_frame_rate"`
+		// ColorTransfer and ColorPrimaries: the export is always SDR bt709.
+		ColorTransfer  string `json:"color_transfer"`
+		ColorPrimaries string `json:"color_primaries"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
@@ -185,7 +211,8 @@ func checkReel(t *testing.T, path string, rate int, planned float64) {
 	var probe probedReel
 
 	require.NoError(t, json.Unmarshal(run(t, "ffprobe", "-v", "error", "-show_entries",
-		"stream=codec_type,codec_name,profile,width,height,pix_fmt,sample_rate,r_frame_rate:format=duration",
+		"stream=codec_type,codec_name,profile,width,height,pix_fmt,sample_rate,r_frame_rate,channels,"+
+			"color_transfer,color_primaries:format=duration",
 		"-of", "json", path), &probe))
 	require.Len(t, probe.Streams, 2)
 
@@ -198,9 +225,12 @@ func checkReel(t *testing.T, path string, rate int, planned float64) {
 			assert.Equal(t, 1920, s.Height)
 			assert.Equal(t, "yuv420p", s.PixFmt)
 			assert.Equal(t, strconv.Itoa(rate)+"/1", s.RFrameRate, "the frame rate of the source")
+			assert.Equal(t, testSDR, s.ColorTransfer, "SDR bt709, an HDR source is tone mapped")
+			assert.Equal(t, testSDR, s.ColorPrimaries)
 		case "audio":
 			assert.Equal(t, "aac", s.CodecName)
 			assert.Equal(t, "48000", s.SampleRate)
+			assert.Equal(t, 2, s.Channels, "stereo")
 		}
 	}
 

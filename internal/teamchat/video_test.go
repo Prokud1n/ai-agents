@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -163,6 +164,39 @@ func TestNotifierClosesVideoDraftInProduction(t *testing.T) {
 	assert.Equal(t, approvedText, sender.texts[0].Msg.Text)
 }
 
+func TestFitCaption(t *testing.T) {
+	t.Parallel()
+
+	link := "\n\nИсходник: https://t.me/c/1000/7/100"
+
+	tests := []struct {
+		name  string
+		text  string
+		whole bool
+	}{
+		{name: "short: as it is", text: testReelText, whole: true},
+		{name: "long: cut, the link kept", text: strings.Repeat("слово ", 400)},
+		{name: "emoji count twice", text: strings.Repeat("💪", 600)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := fitCaption(tt.text, link, maxVideoCaption)
+
+			assert.LessOrEqual(t, utf16Len(got), maxVideoCaption)
+			assert.True(t, strings.HasSuffix(got, link), "the link to the source stays")
+
+			if tt.whole {
+				assert.Equal(t, tt.text+link, got)
+			} else {
+				assert.Contains(t, got, "…")
+			}
+		})
+	}
+}
+
 func TestMessageLink(t *testing.T) {
 	t.Parallel()
 
@@ -184,4 +218,29 @@ func TestMessageLink(t *testing.T) {
 			assert.Equal(t, tt.expected, messageLink(tt.chatID, tt.topicID, testMessageID))
 		})
 	}
+}
+
+// TestCleanOutbox: on start the reels a killed app left are removed; other files and directories stay.
+func TestCleanOutbox(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	for _, name := range []string{"media-123.mp4", "cover.png"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600))
+	}
+
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "media-dir"), 0o700))
+
+	cleanOutbox(t.Context(), dir, slog.New(slog.DiscardHandler))
+	cleanOutbox(t.Context(), filepath.Join(dir, "missing"), slog.New(slog.DiscardHandler))
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+
+	assert.ElementsMatch(t, []string{"cover.png", "media-dir"}, names)
 }

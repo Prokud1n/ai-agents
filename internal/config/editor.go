@@ -13,9 +13,15 @@ import (
 type Editor struct {
 	// Stream is the Redis stream of the jobs; the job states and results are keys starting with it.
 	Stream string `env:"EDITOR_STREAM" envDefault:"editor:jobs"`
-	// JobTimeout bounds one edit from the moment it is given to the worker: a job that has no result by then
-	// fails with a timeout. The backlog criterion is 30 minutes for a 3-minute source.
+	// JobTimeout bounds one edit from the moment a worker took it; a longer one fails with a timeout. The backlog
+	// criterion is 30 minutes for a 3-minute source.
 	JobTimeout time.Duration `env:"EDITOR_JOB_TIMEOUT" envDefault:"45m"`
+	// QueueTimeout bounds waiting in the queue before a worker takes the job: several sources in a row are edited one
+	// by one, so it is much longer than JobTimeout.
+	QueueTimeout time.Duration `env:"EDITOR_QUEUE_TIMEOUT" envDefault:"3h"`
+	// WorkerWait: a job not taken this long after it was submitted, while no worker has sent a heartbeat (the
+	// media-worker service is not running), fails at once instead of waiting for QueueTimeout.
+	WorkerWait time.Duration `env:"EDITOR_WORKER_WAIT" envDefault:"3m"`
 	// PollInterval is how often the app checks a job whose result has not come; usually the worker wakes the
 	// task as soon as the result is stored, so this is only a fallback.
 	PollInterval time.Duration `env:"EDITOR_POLL_INTERVAL" envDefault:"1m"`

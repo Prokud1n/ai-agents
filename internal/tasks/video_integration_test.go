@@ -41,8 +41,14 @@ func TestIntegrationDeferredVideoDraft(t *testing.T) {
 	checkDeferred(t, env, task.ID)
 
 	// Woken by the worker's result before the poll interval: due at once.
-	require.NoError(t, env.service.Wake(ctx, task.ID))
+	// A wake for another agent changes nothing (the channel is the editor's).
+	require.NoError(t, env.service.Wake(ctx, task.ID, testAgent))
 	at, ok := env.queue.Scheduled(task.ID)
+	require.True(t, ok)
+	assert.Equal(t, env.clock.Now().Add(testWait), at, "not woken for another agent")
+
+	require.NoError(t, env.service.Wake(ctx, task.ID, testEditor))
+	at, ok = env.queue.Scheduled(task.ID)
 	require.True(t, ok)
 	assert.Equal(t, env.clock.Now(), at)
 
@@ -125,5 +131,5 @@ func checkVideoDecisions(t *testing.T, env *testEnv, task *Task) {
 	assert.True(t, closed[0].Video)
 	assert.Equal(t, RejectAction, closed[0].Decision)
 
-	require.NoError(t, env.service.Wake(ctx, task.ID), "waking a decided task changes nothing")
+	require.NoError(t, env.service.Wake(ctx, task.ID, testEditor), "waking a decided task changes nothing")
 }

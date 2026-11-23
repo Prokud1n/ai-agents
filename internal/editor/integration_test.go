@@ -3,6 +3,7 @@ package editor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -89,7 +90,7 @@ type recordingWaker struct {
 	ids []int64
 }
 
-func (w *recordingWaker) Wake(_ context.Context, taskID int64) error {
+func (w *recordingWaker) Wake(_ context.Context, taskID int64, _ string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -135,7 +136,10 @@ func startExchange(t *testing.T, pipeline *fakePipeline) (*exchangeEnv, *editjob
 		&config.Media{KeyPrefix: "incoming", ResultPrefix: "edits", UploadTimeout: time.Minute}, log)
 	require.NoError(t, err)
 
-	cfg := &config.Editor{Stream: redistest.Prefix(t, client) + "editor:jobs", JobTimeout: time.Minute, PollInterval: time.Second}
+	cfg := &config.Editor{
+		Stream: redistest.Prefix(t, client) + "editor:jobs", JobTimeout: time.Minute, PollInterval: time.Second,
+		QueueTimeout: time.Hour, WorkerWait: time.Minute,
+	}
 
 	board, err := editjob.NewBoard(client, cfg, log)
 	require.NoError(t, err)
@@ -147,7 +151,7 @@ func startExchange(t *testing.T, pipeline *fakePipeline) (*exchangeEnv, *editjob
 
 	pipeline.store = store
 	env := &exchangeEnv{
-		client: client, board: board, store: store, cfg: cfg, executor: NewExecutor(board, store, cfg, log),
+		client: client, board: board, store: store, cfg: cfg, executor: NewExecutor(board, store, &fakeTech{}, cfg, log),
 		wakes: &recordingWaker{}, source: source,
 	}
 
@@ -262,6 +266,72 @@ func TestIntegrationEditorWorkerFailure(t *testing.T) {
 	_, err = env.executor.Execute(ctx, data)
 	require.ErrorAs(t, err, &deferred, "the forgotten job is submitted again by the next run")
 	require.Eventually(t, func() bool { return pipeline.Calls() == 2 }, integrationWait, integrationTick)
+}
+
+// TestIntegrationEditorWithoutWorker: with no media worker running (no heartbeat in Redis) and the job not taken,
+// the task fails after EDITOR_WORKER_WAIT with the technical text, and the team is told the code in «Техничка».
+func TestIntegrationEditorWithoutWorker(t *testing.T) {
+	t.Parallel()
+
+	env, _ := startExchange(t, &fakePipeline{})
+	tech := &fakeTech{}
+	cfg := *env.cfg
+	cfg.WorkerWait = 200 * time.Millisecond
+	executor := NewExecutor(env.board, env.store, tech, &cfg, slog.New(slog.DiscardHandler))
+	data := env.data(33)
+
+	_, err := executor.Execute(t.Context(), data)
+
+	var deferred *tasks.DeferredError
+	require.ErrorAs(t, err, &deferred, "submitted")
+
+	_, err = executor.Execute(t.Context(), data)
+	require.ErrorAs(t, err, &deferred, "a worker may still come")
+
+	var permanent *tasks.PermanentError
+
+	require.Eventually(t, func() bool {
+		_, err = executor.Execute(t.Context(), data)
+
+		return errors.As(err, &permanent)
+	}, integrationWait, integrationTick)
+	assert.Equal(t, technicalText, permanent.Message)
+	assert.Equal(t, []string{"editor: " + techReportText(33, workerUnavailableCode)}, tech.reports)
+}
+
+// TestIntegrationEditorTimeoutFromStart: a job that waited in the queue longer than EDITOR_JOB_TIMEOUT is not failed:
+// the timeout counts from the moment the worker took it.
+func TestIntegrationEditorTimeoutFromStart(t *testing.T) {
+	t.Parallel()
+
+	pipeline := &fakePipeline{}
+	env, board := startExchange(t, pipeline)
+	cfg := *env.cfg
+	cfg.JobTimeout = 300 * time.Millisecond
+	executor := NewExecutor(env.board, env.store, &fakeTech{}, &cfg, slog.New(slog.DiscardHandler))
+	data := env.data(34)
+
+	_, err := executor.Execute(t.Context(), data)
+
+	var deferred *tasks.DeferredError
+	require.ErrorAs(t, err, &deferred)
+
+	time.Sleep(2 * cfg.JobTimeout) // waits in the queue longer than the job timeout
+
+	_, err = executor.Execute(t.Context(), data)
+	require.ErrorAs(t, err, &deferred, "the queue wait does not count")
+
+	startWorker(t, board, pipeline)
+	require.Eventually(t, func() bool { return env.wakes.Count(34) > 0 }, integrationWait, integrationTick)
+
+	out, err := executor.Execute(t.Context(), data)
+	require.NoError(t, err)
+	assert.NotEmpty(t, out.MediaKey)
+
+	started, found, err := board.Started(t.Context(), editjob.JobID(34, 1))
+	require.NoError(t, err)
+	require.True(t, found, "the worker recorded the start")
+	assert.WithinDuration(t, time.Now(), started, integrationWait)
 }
 
 // resubmitEntry adds the job to the stream again, as a redelivery would (the entry's field is "job").
