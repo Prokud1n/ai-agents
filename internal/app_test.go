@@ -7,6 +7,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 	"github.com/Prokud1n/ai-agents/internal/teamchat"
 )
@@ -34,7 +35,7 @@ func TestDeclareOptions(t *testing.T) {
 }
 
 // TestApplicationWiresGatewayToTasks checks only that the application graph resolves gateway.Handler,
-// tasks.Notifier and teamchat.Handler: ValidateApp runs no constructors. That the gateway really gets
+// tasks.Notifier, teamchat.Handler and the media store: ValidateApp runs no constructors. That the gateway really gets
 // teamchat.Handler and drafts go to Telegram is checked by teamchat's TestIntegrationGatewayTaskCycle; the
 // notifier choice by the config — by TestNewNotifierFollowsGateway.
 func TestApplicationWiresGatewayToTasks(t *testing.T) {
@@ -42,6 +43,7 @@ func TestApplicationWiresGatewayToTasks(t *testing.T) {
 
 	err := fx.ValidateApp(append(DeclareApplicationOptions(),
 		fx.Invoke(func(gateway.Handler, tasks.Notifier, *teamchat.Handler) {}),
+		fx.Invoke(func(*media.Store) {}),
 	)...)
 
 	require.NoError(t, err)

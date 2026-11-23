@@ -56,9 +56,11 @@ type gateway struct {
 	log            *slog.Logger
 	sleep          func(ctx context.Context, d time.Duration) error
 
-	// Semaphores of concurrent handlers: callbacks have their own, so a button never waits for a video download.
+	// Semaphores of concurrent handlers: callbacks and events with a file download have their own, so a button
+	// or a text message never waits for a video download.
 	messageWorkers  chan struct{}
 	callbackWorkers chan struct{}
+	mediaWorkers    chan struct{}
 	pending         chan struct{}
 	pollers         sync.WaitGroup
 	handlers        sync.WaitGroup
@@ -98,6 +100,7 @@ func newGateway(
 		sleep:           sleepContext,
 		messageWorkers:  make(chan struct{}, workers),
 		callbackWorkers: make(chan struct{}, workers),
+		mediaWorkers:    make(chan struct{}, max(cfg.MediaWorkers, 1)),
 		pending:         make(chan struct{}, maxPendingEvents),
 	}
 
@@ -337,8 +340,12 @@ func (g *gateway) dispatch(ctx, handlerCtx context.Context, rt *router, b *bot, 
 	}
 
 	workers := g.messageWorkers
-	if event.Type == CallbackEventType {
+
+	switch {
+	case event.Type == CallbackEventType:
 		workers = g.callbackWorkers
+	case g.downloads(event):
+		workers = g.mediaWorkers
 	}
 
 	key := seenKey(event)
@@ -396,7 +403,7 @@ func (g *gateway) handle(ctx context.Context, b *bot, event *Event, key string) 
 		}
 	}()
 
-	if event.Media != nil && !event.Media.TooLarge && wantsMedia(g.handler, event) {
+	if g.downloads(event) {
 		g.download(ctx, b, event.Media)
 	}
 
@@ -407,6 +414,11 @@ func (g *gateway) handle(ctx context.Context, b *bot, event *Event, key string) 
 	}
 
 	handled = true
+}
+
+// downloads reports whether the event's file is downloaded before the handler: such an event takes a media slot.
+func (g *gateway) downloads(event *Event) bool {
+	return event.Media != nil && !event.Media.TooLarge && wantsMedia(g.handler, event)
 }
 
 func (g *gateway) cleanupFailed(ctx context.Context, b *bot, event *Event, key string) {

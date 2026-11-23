@@ -59,21 +59,25 @@ type chatSender interface {
 //   - draft buttons: «Одобрить» and «Отклонить» decide, «Правки» asks to reply to the draft with the revision;
 //     a button counts only on the draft message of its task and version;
 //   - /status, /plan, /idea, /pause are the marketer's; any other command gets the list of commands;
-//   - voice messages, videos and photos are not processed yet: the trainer gets an honest answer, and the
-//     gateway does not download the file (WantsMedia).
+//   - a video for the editor (topic «Исходники» or a mention of the editor's bot) is stored in S3 and answered
+//     from the editor's bot; the editing (a task for the editor agent) comes later. Voice messages and video notes
+//     are not processed on purpose (the trainer dictates text instead), photos and audio files not yet, videos
+//     for other roles are sent to «Исходники»: all of them get an honest answer, and the gateway does not
+//     download them (WantsMedia).
 //
 // Errors of the task service reach the trainer as tasks.UserMessage; details go to the log only.
 type Handler struct {
 	tasks  taskService
 	sender chatSender
+	files  mediaStore
 	log    *slog.Logger
 	now    func() time.Time
 	// background tracks reactions being set; see WaitBackground.
 	background sync.WaitGroup
 }
 
-func NewHandler(service taskService, sender chatSender, log *slog.Logger) *Handler {
-	return &Handler{tasks: service, sender: sender, log: log, now: time.Now}
+func NewHandler(service taskService, sender chatSender, files mediaStore, log *slog.Logger) *Handler {
+	return &Handler{tasks: service, sender: sender, files: files, log: log, now: time.Now}
 }
 
 func (h *Handler) HandleEvent(ctx context.Context, event *gateway.Event) error {
@@ -85,11 +89,6 @@ func (h *Handler) HandleEvent(ctx context.Context, event *gateway.Event) error {
 	default:
 		return h.handleMessage(ctx, event)
 	}
-}
-
-// WantsMedia: files are not processed yet, so the gateway answers at once instead of downloading them.
-func (*Handler) WantsMedia(*gateway.Event) bool {
-	return false
 }
 
 // WaitBackground waits for reactions being set, at most until ctx is done.
@@ -111,7 +110,7 @@ func (h *Handler) WaitBackground(ctx context.Context) error {
 
 func (h *Handler) handleMessage(ctx context.Context, event *gateway.Event) error {
 	if event.Media != nil {
-		return h.reply(ctx, event.Target, event, mediaText(event.Media.Type, event.Text))
+		return h.handleMedia(ctx, event)
 	}
 
 	// A command (a bot_command entity at the start, not just a slash: «/2 подхода убрать» is a revision) that

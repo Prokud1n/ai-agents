@@ -19,4 +19,5 @@ type App struct {
 	LLM        *LLM        `env:",init"`
 	Agents     *Agents     `env:",init"`
 	Tasks      *Tasks      `env:",init"`
+	Media      *Media      `env:",init"`
 }

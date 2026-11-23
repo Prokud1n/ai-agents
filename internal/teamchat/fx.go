@@ -7,6 +7,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -17,21 +18,38 @@ import (
 //
 // The decoration is outside fx.Module on purpose: a decorator applies to its own scope and the scopes below it,
 // so only at the level of the application options does it reach gateway.Module.
+//
+// Videos are stored with media.Module (needed too); mediaStore is provided outside fx.Private, so a test can
+// replace it with fx.Decorate.
 var Module = fx.Options(
 	fx.Module("teamchat",
-		fx.Provide(newHandler, newNotifier),
+		fx.Provide(newHandler, newNotifier, asMediaStore),
 	),
 	fx.Decorate(useHandler),
 )
 
+type handlerParams struct {
+	fx.In
+
+	Lifecycle fx.Lifecycle
+	Service   *tasks.Service
+	Sender    *gateway.Sender
+	Files     mediaStore
+	Log       *slog.Logger
+}
+
 // newHandler registers waiting for the reactions set in the background when the handler is constructed: the
 // gateway that calls the handler is constructed after it, so on stop the gateway stops first and no new
 // reaction starts while they are waited for.
-func newHandler(lc fx.Lifecycle, service *tasks.Service, sender *gateway.Sender, log *slog.Logger) *Handler {
-	h := NewHandler(service, sender, log)
-	lc.Append(fx.Hook{OnStop: h.WaitBackground})
+func newHandler(p handlerParams) *Handler {
+	h := NewHandler(p.Service, p.Sender, p.Files, p.Log)
+	p.Lifecycle.Append(fx.Hook{OnStop: h.WaitBackground})
 
 	return h
+}
+
+func asMediaStore(s *media.Store) mediaStore {
+	return s
 }
 
 func newNotifier(cfg *config.Telegram, sender *gateway.Sender, log *slog.Logger) tasks.Notifier {

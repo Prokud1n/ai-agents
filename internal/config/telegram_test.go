@@ -79,5 +79,6 @@ func defaultTelegram() Telegram {
 		RetryBaseDelay: time.Second,
 		RetryMaxDelay:  30 * time.Second,
 		Workers:        4,
+		MediaWorkers:   2,
 	}
 }

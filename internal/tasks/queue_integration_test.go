@@ -166,7 +166,11 @@ func TestIntegrationPoolRunsTasks(t *testing.T) {
 	require.NoError(t, err)
 
 	waitAwaiting(t, env.service, task.ID, 2)
-	assert.Len(t, env.notifier.Drafts(), 2)
+
+	// The status is committed before the worker delivers the draft: wait for the delivery too.
+	require.Eventually(t, func() bool {
+		return len(env.notifier.Drafts()) == 2
+	}, 15*time.Second, 50*time.Millisecond, "the drafts of both versions are not delivered")
 
 	stopCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

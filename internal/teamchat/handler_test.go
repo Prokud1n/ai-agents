@@ -244,14 +244,14 @@ func TestHandlerMessages(t *testing.T) {
 			},
 		},
 		{
-			name:     "voice message is not processed yet",
+			name:     "voice message is not processed: dictate text instead",
 			event:    withTarget(withMedia(messageEvent(""), gateway.VoiceMediaType), gateway.EditorRole),
-			expected: handlerCalls{texts: []sentText{reply(gateway.EditorRole, voiceAndVideoText)}},
+			expected: handlerCalls{texts: []sentText{reply(gateway.EditorRole, voiceText)}},
 		},
 		{
-			name:     "video with a caption: the caption is not taken either",
+			name:     "video with a caption for the marketer: send it to «Исходники», the caption is not taken",
 			event:    withMedia(messageEvent("смонтируй"), gateway.VideoMediaType),
-			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, voiceAndVideoText+captionNote)}},
+			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, videoToEditorText+captionNote)}},
 		},
 		{
 			name:     "photo is not processed yet",
@@ -353,7 +353,7 @@ func TestHandlerStatusPeriod(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeService{}
-	h := NewHandler(service, &fakeSender{}, slog.New(slog.DiscardHandler))
+	h := NewHandler(service, &fakeSender{}, &fakeStore{}, slog.New(slog.DiscardHandler))
 	h.now = func() time.Time { return testNow }
 
 	require.NoError(t, h.HandleEvent(t.Context(), commandEvent(gateway.StatusCommand, "")))
@@ -469,15 +469,6 @@ func TestHandlerCallbacks(t *testing.T) {
 
 // TestHandlerSendFailure: when the trainer cannot be answered, the gateway gets the error (and answers
 // a button press without text itself).
-// TestHandlerDoesNotWantMedia: files are not processed yet, the gateway does not download them.
-func TestHandlerDoesNotWantMedia(t *testing.T) {
-	t.Parallel()
-
-	h := NewHandler(&fakeService{}, &fakeSender{}, slog.New(slog.DiscardHandler))
-
-	assert.False(t, h.WantsMedia(withMedia(messageEvent(""), gateway.VideoMediaType)))
-}
-
 func TestHandlerSendFailure(t *testing.T) {
 	t.Parallel()
 
@@ -512,7 +503,7 @@ func handle(t *testing.T, service *fakeService, sender *fakeSender, event *gatew
 		sender = &fakeSender{}
 	}
 
-	h := NewHandler(service, sender, slog.New(slog.DiscardHandler))
+	h := NewHandler(service, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
 	err := h.HandleEvent(t.Context(), event)
 	require.NoError(t, h.WaitBackground(t.Context()))
 

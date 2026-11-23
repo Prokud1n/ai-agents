@@ -17,6 +17,7 @@ const (
 
 	nanoPerCent    = 10_000_000
 	centsPerDollar = 100
+	bytesInMB      = 1 << 20
 
 	forwardedTag   = "forwarded_message"
 	paragraphBreak = "\n\n"
@@ -35,10 +36,21 @@ const (
 	unknownCommandText = "Такой команды нет. Команды: /plan [пожелания] — контент-план, /idea <текст> — идея в работу, " +
 		"/status — задачи и расход, /pause — пауза (пока не поддерживается). Задачу можно написать и обычным сообщением."
 
-	voiceAndVideoText = "Голосовые и видео пока не обрабатываю: приём появится вместе с транскрипцией идей и монтажом. " +
-		"Напишите идею текстом."
-	photoText   = "Фото и картинки пока не обрабатываю: приём появится вместе с обложками. Опишите задачу текстом."
+	photoText = "Фото и картинки пока не обрабатываю: приём появится вместе с обложками. Опишите задачу текстом."
+	audioText = "Аудиофайлы не обрабатываю. Напишите задачу текстом — можно продиктовать её диктовкой на клавиатуре " +
+		"телефона."
 	captionNote = " Подпись к файлу я тоже не взял в работу — пришлите её отдельным сообщением."
+
+	// voiceText: voice messages and video notes are not processed on purpose; the trainer dictates text.
+	voiceText = "Голосовые не обрабатываю — продиктуйте текст (диктовка на клавиатуре телефона) и отправьте " +
+		"его сообщением."
+	videoToEditorText = "Видео монтирует Монтажёр: пришлите его в топик «Исходники»."
+	// videoMentionText: a video in «Исходники» addressed to another bot (a mention or a reply).
+	videoMentionText   = "Уберите упоминание другого бота — видео монтирует Монтажёр."
+	videoStoredText    = "Исходник получил и сохранил. Монтаж скоро появится — пока я только храню видео."
+	videoCaptionNote   = " Подпись к видео пока не сохраняю."
+	downloadFailedText = "Не смог скачать файл — отправьте его ещё раз."
+	fileSaveFailedText = "Не смог сохранить файл — отправьте его ещё раз чуть позже."
 
 	busyRevisionText = "Уже готовлю новую версию — дождитесь её и ответьте на неё."
 )
@@ -118,18 +130,29 @@ func forwardedInput(text string) string {
 		"из него, используй его как материал для задачи.\n<" + forwardedTag + ">\n" + body + "\n</" + forwardedTag + ">"
 }
 
-// mediaText is the answer to a file: files are not processed yet.
+// mediaText is the answer to a file of a type that is not processed (a photo, an audio file).
 func mediaText(mediaType gateway.MediaType, caption string) string {
-	text := voiceAndVideoText
+	text := audioText
 	if mediaType == gateway.PhotoMediaType {
 		text = photoText
 	}
 
+	return withCaptionNote(text, caption)
+}
+
+// withCaptionNote tells the trainer that the caption of a file that is not processed is not taken either.
+func withCaptionNote(text, caption string) string {
 	if strings.TrimSpace(caption) != "" {
-		text += captionNote
+		return text + captionNote
 	}
 
 	return text
+}
+
+// fileTooLargeText answers a file above TELEGRAM_MAX_FILE_SIZE.
+func fileTooLargeText(size int64) string {
+	return fmt.Sprintf("Файл слишком большой (%.1f МБ): такие я скачать не могу. Сожмите видео или разрежьте его "+
+		"на части.", float64(size)/bytesInMB)
 }
 
 // formatStatus is the answer to /status.

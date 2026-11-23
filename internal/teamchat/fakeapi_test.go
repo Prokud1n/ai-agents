@@ -41,6 +41,8 @@ type fakeBotAPI struct {
 	calls   []botCall
 	nextID  int64
 	baseURL string
+	// files answer getFile by file_id.
+	files map[string]telegram.File
 }
 
 func newFakeBotAPI(t *testing.T, groupID int64, users map[string]telegram.User) *fakeBotAPI {
@@ -50,6 +52,7 @@ func newFakeBotAPI(t *testing.T, groupID int64, users map[string]telegram.User) 
 		groupID: groupID,
 		users:   users,
 		updates: map[string][]telegram.Update{},
+		files:   map[string]telegram.File{},
 		nextID:  5000,
 	}
 
@@ -92,7 +95,7 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 
 	if !known {
-		writeAPI(w, http.StatusUnauthorized, map[string]any{"ok": false, "error_code": 401, "description": "Unauthorized"})
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
 
 		return
 	}
@@ -102,6 +105,9 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, user)
 	case "getUpdates":
 		writeResult(w, f.takeUpdates(r.Context(), token))
+	case "getFile":
+		f.record(token, method, body, 0)
+		f.serveFile(w, body)
 	case "answerCallbackQuery", "setMessageReaction":
 		f.record(token, method, body, 0)
 		writeResult(w, true)
@@ -114,6 +120,33 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.record(token, method, body, id)
 		writeResult(w, telegram.Message{MessageID: id, Chat: telegram.Chat{ID: f.groupID, Type: supergroupType}})
 	}
+}
+
+func (f *fakeBotAPI) addFile(file telegram.File) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.files[file.FileID] = file
+}
+
+func (f *fakeBotAPI) serveFile(w http.ResponseWriter, body []byte) {
+	var params struct {
+		FileID string `json:"file_id"`
+	}
+
+	_ = json.Unmarshal(body, &params)
+
+	f.mu.Lock()
+	file, ok := f.files[params.FileID]
+	f.mu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Bad Request: invalid file_id")
+
+		return
+	}
+
+	writeResult(w, file)
 }
 
 func (f *fakeBotAPI) record(token, method string, body []byte, result int64) {
@@ -144,6 +177,10 @@ func (f *fakeBotAPI) takeUpdates(ctx context.Context, token string) []telegram.U
 
 func writeResult(w http.ResponseWriter, result any) {
 	writeAPI(w, http.StatusOK, map[string]any{"ok": true, "result": result})
+}
+
+func writeError(w http.ResponseWriter, status int, description string) {
+	writeAPI(w, status, map[string]any{"ok": false, "error_code": status, "description": description})
 }
 
 func writeAPI(w http.ResponseWriter, status int, body any) {
@@ -196,6 +233,7 @@ func gatewayConfig(t *testing.T, api *fakeBotAPI, base int64) *config.Telegram {
 		GroupID:         api.groupID,
 		AllowedUserIDs:  []int64{testUserID},
 		PlanningTopicID: testTopicID,
+		SourcesTopicID:  testSourcesTopicID,
 		FilesDir:        dir,
 		OutboxDir:       dir + "/outbox",
 		MaxFileSize:     1 << 20,
@@ -205,6 +243,7 @@ func gatewayConfig(t *testing.T, api *fakeBotAPI, base int64) *config.Telegram {
 		RetryBaseDelay:  time.Millisecond,
 		RetryMaxDelay:   5 * time.Millisecond,
 		Workers:         2,
+		MediaWorkers:    2,
 	}
 }
 

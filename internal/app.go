@@ -14,6 +14,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/knowledge/kbtool"
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/logger"
+	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
 	"github.com/Prokud1n/ai-agents/internal/providers/embeddings"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
@@ -42,6 +43,8 @@ func DeclareApplicationOptions() []fx.Option {
 		knowledge.Module,
 		kbtool.Module,
 		agents.Module,
+		// Incoming videos of the team chat in S3
+		media.Module,
 		// Telegram gateway: off without bot tokens
 		gateway.Module,
 		// Task workers

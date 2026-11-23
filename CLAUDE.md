@@ -24,7 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 go test -race -run TestName ./internal/agents/          # один тест
-make up && make test-integration                        # интеграционные тесты против compose-postgres
+make up && make test-integration                        # интеграционные тесты против compose-postgres (+ одноразовые Redis и RustFS)
+make s3-test-up / make s3-test-down                     # одноразовый RustFS для тестов вручную (так же redis-test-up/down)
 FFMPEG_TESTS_REQUIRED=1 go test -run TestRunner ./internal/providers/ffmpeg/  # без ffmpeg тесты иначе скипаются
 make agent-run AGENT=<name> PROMPT="..."                # прогнать одного агента в compose (нужен ANTHROPIC_API_KEY)
 make kb-ingest KB_PATH=./kb/brand KB_KIND=brand         # база знаний в образе (KB_HOST=1 — go run): также kb-search / kb-delete / kb-reembed
@@ -35,7 +36,9 @@ FFMPEG_TESTS_REQUIRED=1 go test -run TestBurnSubtitlesWithFFmpeg ./internal/subt
 
 - `make lint`/`make fmt` идут через `scripts/golangci-lint.sh` (запиненная версия), а не через глобальный бинарь.
 - Интеграционный тест: в имени есть `Integration`, первой строкой вызывает `pgtest.Connect(t)`. Без `INTEGRATION=1`
-  он скипается; с ним получает отдельную свежую БД со всеми миграциями (можно `t.Parallel()`).
+  он скипается; с ним получает отдельную свежую БД со всеми миграциями (можно `t.Parallel()`). Redis — через
+  `redistest.Connect(t)` (свой префикс ключей), S3 — через `s3test.Connect(t)` (свой бакет на тест, одноразовый
+  RustFS из `make s3-test-up` на `127.0.0.1:9100`, вне compose-проекта).
 
 ## Архитектура
 
@@ -90,14 +93,18 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
 ### Telegram-шлюз и задачи
 
 - `internal/gateway` — четыре бота в одном сервисе: события группы → `gateway.Handler` (быстрый, идемпотентный,
-  at-most-once), отправка от имени роли — `gateway.Sender`. Без `TELEGRAM_*_TOKEN` шлюз выключен.
+  at-most-once), отправка от имени роли — `gateway.Sender`. Без `TELEGRAM_*_TOKEN` шлюз выключен. Слоты обработчиков
+  раздельные: сообщения — `TELEGRAM_WORKERS`, нажатия — свои, события со скачиванием файла — `TELEGRAM_MEDIA_WORKERS`.
 - `internal/tasks` — задачи с согласованием: очередь Redis Streams, статусы в Postgres, черновик → `tasks.Notifier`.
 - `internal/teamchat` связывает их: `Handler` (события → задачи, кнопки, реплай-правки, команды) подменяет
   `gateway.AckHandler` через `fx.Decorate` **на верхнем уровне** опций (`teamchat.Module` — `fx.Options`, а не
   `fx.Module`: декоратор внутри модуля не дошёл бы до `gateway.Module`); `Notifier` шлёт черновики от бота агента.
   Без токенов `tasks.Notifier` — `tasks.LogNotifier`. Имя агента = роль бота (`agents/marketer`, `agents/copywriter`);
   за Монтажёра и Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`), агентов для них нет.
-  Медиа `teamchat` пока не обрабатывает и через `gateway.MediaFilter` просит шлюз их не скачивать.
+  Из медиа `teamchat` принимает только видео для Монтажёра (`gateway.MediaFilter` разрешает шлюзу скачать только его):
+  файл сразу копируется в S3 через `internal/media` (ключ `<MEDIA_KEY_PREFIX>/<chat>/<message>/<file_unique_id>.<ext>`,
+  обратно — `media.Store.Download`), Монтажёр отвечает заглушкой, задачи нет. Голосовые и видеокружки принципиально
+  не обрабатываются (тренер диктует текст), фото и аудио — пока; на всё это честный ответ без скачивания.
 - Порядок остановки fx — обратный порядку регистрации хуков. Хук ожидания фоновой работы регистрируй в конструкторе
   того, кто её запускает (`tasks.provideService`, `teamchat.newHandler`): потребители (шлюз, воркеры) создаются позже
   и останавливаются раньше. Проверка — `teamchat.TestIntegrationStopOrder`.

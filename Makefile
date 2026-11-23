@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe roughcut subtitles media-image agent-run test-integration redis-test-up redis-test-down kb-ingest kb-search kb-delete kb-reembed
+.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe roughcut subtitles media-image agent-run test-integration redis-test-up redis-test-down s3-test-up s3-test-down kb-ingest kb-search kb-delete kb-reembed
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -23,13 +23,16 @@ test:
 # The verbose output goes to the log as it runs (tee) and is the proof that the tests ran: with INTEGRATION=1
 # a skipped test, or no integration test passed at all, fails the target. bash + pipefail keeps the exit
 # status of go test through the pipe.
-# Redis integration tests (internal/redistest) use a throwaway Redis started by redis-test-up (the compose
-# Redis is not published to the host); it is removed when the target ends, whatever the result.
+# Redis integration tests (internal/redistest) use a throwaway Redis started by redis-test-up, S3 tests
+# (internal/s3test) a throwaway RustFS started by s3-test-up (the compose Redis and S3 are not published to the
+# host); both are removed when the target ends, whatever the result.
 test-integration: SHELL := /bin/bash
 test-integration: .SHELLFLAGS := -o pipefail -c
-test-integration: redis-test-up
-	@log=$$(mktemp); trap 'rm -f "$$log"; docker rm -f $(REDIS_TEST_CONTAINER) >/dev/null 2>&1 || true' EXIT; \
-	$(HOST_DB_ENV) REDIS_TEST_ADDRESS=127.0.0.1:$(REDIS_TEST_HOST_PORT) INTEGRATION=1 go test -race -count=1 -v -run Integration ./... 2>&1 | tee "$$log"; \
+test-integration: redis-test-up s3-test-up
+	@log=$$(mktemp); trap 'rm -f "$$log"; docker rm -f -v $(REDIS_TEST_CONTAINER) $(S3_TEST_CONTAINER) >/dev/null 2>&1 || true' EXIT; \
+	$(HOST_DB_ENV) REDIS_TEST_ADDRESS=127.0.0.1:$(REDIS_TEST_HOST_PORT) \
+	S3_TEST_ENDPOINT=127.0.0.1:$(S3_TEST_HOST_PORT) S3_TEST_ACCESS_KEY=$(S3_TEST_ACCESS_KEY) S3_TEST_SECRET_KEY=$(S3_TEST_SECRET_KEY) \
+	INTEGRATION=1 go test -race -count=1 -v -run Integration ./... 2>&1 | tee "$$log"; \
 	status=$$?; \
 	if grep -q -e '--- SKIP' "$$log"; then \
 		echo "test-integration: tests were skipped with INTEGRATION=1"; status=1; \
@@ -54,10 +57,36 @@ redis-test-up:
 	fi
 	@for i in $$(seq 1 30); do \
 		docker exec $(REDIS_TEST_CONTAINER) redis-cli ping 2>/dev/null | grep -q PONG && exit 0; sleep 1; \
-	done; echo "redis-test: not ready"; exit 1
+	done; echo "redis-test: not ready"; docker rm -f $(REDIS_TEST_CONTAINER) >/dev/null 2>&1 || true; exit 1
 
 redis-test-down:
 	@docker rm -f $(REDIS_TEST_CONTAINER) >/dev/null 2>&1 || true
+
+# Throwaway S3 (RustFS) for integration tests: the image of the compose s3 service (with its digest), an anonymous
+# volume removed with the container, test-only keys, published on 127.0.0.1 only and outside the compose project.
+S3_TEST_CONTAINER := ai-agents-s3-test
+S3_TEST_HOST_PORT ?= 9100
+S3_TEST_ACCESS_KEY := s3test-access
+S3_TEST_SECRET_KEY := s3test-secret-key
+S3_TEST_IMAGE = $(shell sed -n 's/^ *image: \(rustfs\/rustfs:[^ ]*\)$$/\1/p' docker-compose.yml)
+
+s3-test-up:
+	@if [ -z "$(S3_TEST_IMAGE)" ]; then \
+		echo "s3-test: no rustfs image found in docker-compose.yml (service s3, line 'image: rustfs/rustfs:...')"; exit 1; \
+	fi
+	@if [ -z "$$(docker ps -q --filter 'name=^$(S3_TEST_CONTAINER)$$')" ]; then \
+		docker run -d --rm --name $(S3_TEST_CONTAINER) -p 127.0.0.1:$(S3_TEST_HOST_PORT):9000 -v /data \
+			-e RUSTFS_ACCESS_KEY=$(S3_TEST_ACCESS_KEY) -e RUSTFS_SECRET_KEY=$(S3_TEST_SECRET_KEY) \
+			-e RUSTFS_ADDRESS=0.0.0.0:9000 -e RUSTFS_CONSOLE_ENABLE=false \
+			$(S3_TEST_IMAGE) >/dev/null; \
+	fi
+	@for i in $$(seq 1 60); do \
+		curl -fsS http://127.0.0.1:$(S3_TEST_HOST_PORT)/health >/dev/null 2>&1 && exit 0; sleep 1; \
+	done; echo "s3-test: not ready"; docker logs $(S3_TEST_CONTAINER) 2>&1 | tail -n 20; \
+		docker rm -f -v $(S3_TEST_CONTAINER) >/dev/null 2>&1 || true; exit 1
+
+s3-test-down:
+	@docker rm -f -v $(S3_TEST_CONTAINER) >/dev/null 2>&1 || true
 
 lint:
 	$(GOLANGCI_LINT) run ./...
