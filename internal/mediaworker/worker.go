@@ -395,6 +395,7 @@ func (w *Worker) heartbeat(ctx context.Context) {
 	}
 }
 
+// touch sets the modification time of the heartbeat file, creating it first if needed.
 func touch(path string, now time.Time) error {
 	if err := os.Chtimes(path, now, now); err == nil {
 		return nil
@@ -402,6 +403,10 @@ func touch(path string, now time.Time) error {
 
 	if err := os.WriteFile(path, nil, heartbeatMode); err != nil {
 		return fmt.Errorf("failed to write heartbeat file: %w", err)
+	}
+
+	if err := os.Chtimes(path, now, now); err != nil {
+		return fmt.Errorf("failed to touch heartbeat file: %w", err)
 	}
 
 	return nil
