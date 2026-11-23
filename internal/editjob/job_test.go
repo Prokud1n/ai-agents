@@ -19,7 +19,6 @@ func TestJobID(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, "task-17-v1", JobID(17, 1))
-	assert.Equal(t, JobID(17, 1), JobID(17, 1), "every run of the task finds the same job")
 	assert.NotEqual(t, JobID(17, 1), JobID(17, 2))
 }
 

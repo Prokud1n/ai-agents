@@ -256,7 +256,7 @@ func (r *repo) ClaimDelivery(
 	const claim = `
 		UPDATE task_versions v
 		SET delivery_attempts = v.delivery_attempts + 1,
-		    delivery_after = CASE WHEN v.media_key = '' THEN $4 ELSE $5 END
+		    delivery_after = CASE WHEN v.media_key = '' THEN $4::timestamptz ELSE $5::timestamptz END
 		FROM tasks t
 		WHERE v.task_id = $1 AND v.version = $2 AND t.id = v.task_id
 		  AND t.status = 'awaiting_approval' AND t.version = v.version

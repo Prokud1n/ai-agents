@@ -173,8 +173,8 @@ func TestBurnSubtitlesArgsWithCut(t *testing.T) {
 		major    int
 		expected []string
 	}{
-		{name: "ffmpeg 8", major: 8, expected: []string{"-/filter_complex", "graph.txt", mapFlag, "[v]", mapFlag, "[a]"}},
-		{name: "ffmpeg 6", major: 6, expected: []string{"-filter_complex_script", "graph.txt", mapFlag, "[v]", mapFlag, "[a]"}},
+		{name: "ffmpeg 8", major: 8, expected: []string{"-/filter_complex", "graph.txt", mapFlag, "[" + videoLabel + "]", mapFlag, "[a]"}},
+		{name: "ffmpeg 6", major: 6, expected: []string{"-filter_complex_script", "graph.txt", mapFlag, "[" + videoLabel + "]", mapFlag, "[a]"}},
 	}
 
 	for _, tt := range tests {

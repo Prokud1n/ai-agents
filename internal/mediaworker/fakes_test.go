@@ -52,7 +52,7 @@ func (s *localStore) Download(_ context.Context, key, dir string, maxSize int64)
 		return nil, media.ErrFileTooLarge
 	}
 
-	local := filepath.Join(dir, "source"+filepath.Ext(key))
+	local := filepath.Join(dir, "source.mov")
 	if err := os.WriteFile(local, data, 0o600); err != nil {
 		return nil, err
 	}

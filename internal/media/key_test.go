@@ -189,13 +189,13 @@ func TestResultKey(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			name: "reel next to the source", prefix: "edits", file: testUniqueID + "-v1-reel", ext: ".mp4",
+			name: "reel next to the source", prefix: testResultPrefix, file: testUniqueID + "-v1-reel", ext: mp4Extension,
 			expected: "edits/-1001234567890/42/AgADBAADq-_x-v1-reel.mp4",
 		},
-		{name: "json", prefix: "edits", file: "u-plan", ext: ".json", expected: "edits/-1001234567890/42/u-plan.json"},
-		{name: "path in the name", prefix: "edits", file: "../x", ext: ".mp4", expectedErr: ErrInvalidFile},
-		{name: "long extension", prefix: "edits", file: "u", ext: ".mpeg4x", expectedErr: ErrInvalidFile},
-		{name: "invalid prefix", prefix: "Edits", file: "u", ext: ".mp4", expectedErr: ErrInvalidConfig},
+		{name: "json", prefix: testResultPrefix, file: "u-plan", ext: ".json", expected: "edits/-1001234567890/42/u-plan.json"},
+		{name: "path in the name", prefix: testResultPrefix, file: "a/b", ext: mp4Extension, expectedErr: ErrInvalidFile},
+		{name: "long extension", prefix: testResultPrefix, file: "u", ext: ".mpeg4x", expectedErr: ErrInvalidFile},
+		{name: "invalid prefix", prefix: "Edits", file: "u", ext: mp4Extension, expectedErr: ErrInvalidConfig},
 	}
 
 	for _, tt := range tests {

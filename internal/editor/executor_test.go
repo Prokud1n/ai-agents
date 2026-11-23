@@ -18,6 +18,7 @@ import (
 
 const (
 	testTaskID    = int64(17)
+	testJobID     = "task-17-v1"
 	testSourceKey = "incoming/-1001234567890/42/uniq.mov"
 	testReelKey   = "edits/-1001234567890/42/uniq-v1-reel.mp4"
 	testTimeout   = 45 * time.Minute
@@ -119,7 +120,7 @@ func TestExecutorSubmitsAndDefers(t *testing.T) {
 
 	require.Len(t, b.submitted, 1)
 	assert.Equal(t, editjob.Job{
-		ID: "task-17-v1", TaskID: testTaskID, Version: 1, SourceKey: testSourceKey,
+		ID: testJobID, TaskID: testTaskID, Version: 1, SourceKey: testSourceKey,
 		CreatedAt: testNow, Deadline: testNow.Add(testTimeout),
 	}, b.submitted[0])
 }
@@ -156,7 +157,7 @@ func TestExecutorResult(t *testing.T) {
 	t.Parallel()
 
 	done := &editjob.Result{
-		JobID: "task-17-v1", Status: editjob.DoneStatus, SourceDuration: 182, Duration: 141, Candidates: 2,
+		JobID: testJobID, Status: editjob.DoneStatus, SourceDuration: 182, Duration: 141, Candidates: 2,
 	}
 
 	out, err := newTestExecutor(&fakeBoard{result: done}).Execute(t.Context(), editData())
@@ -196,19 +197,19 @@ func TestExecutorFailures(t *testing.T) {
 		},
 		{
 			name:      "a source above the limit",
-			board:     &fakeBoard{result: &editjob.Result{JobID: "task-17-v1", Status: editjob.FailedStatus, Code: editjob.SourceTooLongCode, SourceDuration: 750, MaxDuration: 600}},
+			board:     &fakeBoard{result: &editjob.Result{JobID: testJobID, Status: editjob.FailedStatus, Code: editjob.SourceTooLongCode, SourceDuration: 750, MaxDuration: 600}},
 			permanent: "Исходник длится 12:30, а монтирую я видео до 10 мин. Разрежьте его на части и пришлите по одной.",
 			forgotten: true,
 		},
 		{
 			name:      "no OPENAI_API_KEY in the worker",
-			board:     &fakeBoard{result: &editjob.Result{JobID: "task-17-v1", Status: editjob.FailedStatus, Code: editjob.NotConfiguredCode}},
+			board:     &fakeBoard{result: &editjob.Result{JobID: testJobID, Status: editjob.FailedStatus, Code: editjob.NotConfiguredCode}},
 			permanent: notConfiguredText,
 			forgotten: true,
 		},
 		{
 			name:      "a temporary failure is retried by the task",
-			board:     &fakeBoard{result: &editjob.Result{JobID: "task-17-v1", Status: editjob.FailedStatus, Code: editjob.TemporaryCode}},
+			board:     &fakeBoard{result: &editjob.Result{JobID: testJobID, Status: editjob.FailedStatus, Code: editjob.TemporaryCode}},
 			temporary: true,
 			forgotten: true,
 		},
