@@ -5,18 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 // Output video for Instagram Reels: H.264 High (codec, CRF and pixel format as the rough cut render),
-// AAC 48 kHz, moov atom at the start. The final render is published, so it takes the slower preset.
+// AAC 48 kHz, moov atom at the start. The final render is published, so it takes the slower preset. CRF keeps
+// the quality even; the bitrate is capped (VBV) so a busy frame cannot blow the file up: 10 Mbit/s is well
+// above what a talking head needs at CRF 20 (4-8 Mbit/s at 1080×1920) and what Instagram keeps after its own
+// encode.
 const (
 	publishPreset = "medium"
 	videoProfile  = "high"
 	outAudioRate  = "48000"
 	outAudioBits  = "128k"
+	maxVideoRate  = "10M"
+	videoBuffer   = "20M"
+
+	cutVideoLabel = "cut"
+	cutAudioLabel = "a"
 
 	mapFlag        = "-map"
 	formatFlag     = "-f"
@@ -46,6 +56,7 @@ var (
 	ErrInvalidFitMode = errors.New("unknown fit mode")
 	ErrInvalidSize    = errors.New("output size must be positive and even")
 	ErrInvalidShade   = errors.New("shade must have 0 <= plateau < height <= output height and alpha 0..255")
+	ErrNoWorkDir      = errors.New("a render with a cut needs the working directory")
 
 	safeNameRe   = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 	fontSelectRe = regexp.MustCompile(`fontselect: \((.*), (\d+), (\d+)\) -> (.*), (-?\d+), (.*)$`)
@@ -65,6 +76,16 @@ type BurnSubtitlesData struct {
 	Fit           FitMode
 	// Shade darkens the frame under the subtitles; nil means none.
 	Shade *Shade
+	// Cut, if set, keeps only its fragments of the input, one after another, in the same pass: the video is
+	// decoded and encoded once, the rough cut, the subtitles and the export are one ffmpeg run. The subtitles must
+	// then be on the timeline of the cut (roughcut.RemapTranscript). It needs Dir: the graph is written there.
+	Cut *Cut
+}
+
+// Cut is the rough cut of a render: the kept fragments and how they are cut (see RenderSegments).
+type Cut struct {
+	Segments []Segment
+	Options  RenderOptions
 }
 
 // Shade darkens the frame from its top (or bottom) edge: an even Alpha (0..255) over Plateau pixels — where the
@@ -101,9 +122,23 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 		return nil, err
 	}
 
-	args, err := burnSubtitlesArgs(in, out, data)
+	major := unknownMajor
+	if data.Cut != nil {
+		if major, err = r.majorVersion(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	args, graph, err := burnSubtitlesArgs(in, out, data, major)
 	if err != nil {
 		return nil, fmt.Errorf("failed to burn subtitles: %w", err)
+	}
+
+	if data.Cut != nil {
+		// Hundreds of fragments do not fit one command-line argument: the graph goes through a file in Dir.
+		if err := os.WriteFile(filepath.Join(data.Dir, filterFileName), []byte(graph), filterFileMode); err != nil {
+			return nil, fmt.Errorf("failed to write filter graph: %w", err)
+		}
 	}
 
 	fonts := &lineCollector{marker: fontSelectMarker, maxLines: maxFontLines, maxLine: maxLogLine}
@@ -123,31 +158,71 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 	return &BurnReport{Fonts: parseFontSelections(fonts.String()), MissingGlyphs: missing}, nil
 }
 
-func burnSubtitlesArgs(input, output string, data *BurnSubtitlesData) ([]string, error) {
-	graph, err := burnGraph(data)
+// burnSubtitlesArgs returns the arguments and the filter graph. Without a cut the graph is an argument; with one
+// it is read from the file filterFileName in Dir (ffmpeg runs there), so only our own plain name is on the command
+// line.
+func burnSubtitlesArgs(input, output string, data *BurnSubtitlesData, ffmpegMajor int) (args []string, graph string, err error) {
+	graph, err = burnGraph(data)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	args := commonArgs()
+	args = commonArgs()
 	// libass reports the chosen fonts ("fontselect") at the info level: the fallback check depends on it.
 	args = append(args, "-loglevel", "info")
 	args = append(args, inputArgs(input)...)
-	// The first video stream is required; audio is encoded when there is one ("?").
+
+	// The first video stream is required; without a cut audio is encoded when there is one ("?"), a cut has it.
+	audio := "0:a:0?"
+
+	if data.Cut != nil {
+		if data.Dir == "" {
+			return nil, "", ErrNoWorkDir
+		}
+
+		args = append(args, filterFileArgs(filterFileName, ffmpegMajor)...)
+		audio = "[" + cutAudioLabel + "]"
+	} else {
+		args = append(args, "-filter_complex", graph)
+	}
+
 	args = append(args,
-		"-filter_complex", graph, mapFlag, "["+videoLabel+"]", mapFlag, "0:a:0?",
+		mapFlag, "["+videoLabel+"]", mapFlag, audio,
 		videoCodecFlag, videoCodec, "-preset", publishPreset, "-crf", videoCRF,
+		"-maxrate", maxVideoRate, "-bufsize", videoBuffer,
 		"-profile:v", videoProfile, "-pix_fmt", videoPixFmt,
 		audioCodecFlag, renderACodec, "-b:a", outAudioBits, "-ar", outAudioRate,
 		"-movflags", "+faststart", formatFlag, renderFormat,
 	)
 
-	return append(args, output), nil
+	return append(args, output), graph, nil
 }
 
 // burnGraph scales the frame to the output size (pad or crop), lays the shade over it, then draws the subtitles
-// with libass. The shade is one generated frame: overlay repeats it over the whole video.
+// with libass. The shade is one generated frame: overlay repeats it over the whole video. With a cut the fragments
+// are cut and joined first (segmentsGraph), and the joined picture is what is scaled.
 func burnGraph(data *BurnSubtitlesData) (string, error) {
+	input, cut := "[0:v]", ""
+
+	if data.Cut != nil {
+		if len(data.Cut.Segments) == 0 {
+			return "", fmt.Errorf("failed to cut: %w", errNoSegments)
+		}
+
+		input = "[" + cutVideoLabel + "]"
+		cut = segmentsGraph(data.Cut.Segments, data.Cut.Options, cutVideoLabel, cutAudioLabel) + ";"
+	}
+
+	frame, err := frameGraph(data, input)
+	if err != nil {
+		return "", err
+	}
+
+	return cut + frame, nil
+}
+
+// frameGraph brings the picture of the input label to the output frame and draws the subtitles on it.
+func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 	if !safeNameRe.MatchString(data.SubtitlesName) || !safeNameRe.MatchString(data.FontsName) {
 		return "", fmt.Errorf("subtitles %q, fonts %q: %w", data.SubtitlesName, data.FontsName, ErrUnsafeName)
 	}
@@ -174,7 +249,7 @@ func burnGraph(data *BurnSubtitlesData) (string, error) {
 	subtitles := "ass=filename=" + data.SubtitlesName + ":fontsdir=" + data.FontsName + "[" + videoLabel + "]"
 
 	if data.Shade == nil {
-		return "[0:v]" + fit + ",setsar=1," + subtitles, nil
+		return input + fit + ",setsar=1," + subtitles, nil
 	}
 
 	shade, y, err := shadeSource(data.Shade, data.Width, data.Height)
@@ -182,7 +257,7 @@ func burnGraph(data *BurnSubtitlesData) (string, error) {
 		return "", err
 	}
 
-	return "[0:v]" + fit + ",setsar=1[base];" + shade + "[shade];" +
+	return input + fit + ",setsar=1[base];" + shade + "[shade];" +
 		"[base][shade]overlay=x=0:y=" + y + "," + subtitles, nil
 }
 

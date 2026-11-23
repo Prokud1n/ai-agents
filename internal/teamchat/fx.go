@@ -19,8 +19,8 @@ import (
 // The decoration is outside fx.Module on purpose: a decorator applies to its own scope and the scopes below it,
 // so only at the level of the application options does it reach gateway.Module.
 //
-// Videos are stored with media.Module (needed too); mediaStore is provided outside fx.Private, so a test can
-// replace it with fx.Decorate.
+// Videos are stored with media.Module (needed too), and the editor's reels are taken from it for the drafts;
+// mediaStore is provided outside fx.Private, so a test can replace it with fx.Decorate.
 var Module = fx.Options(
 	fx.Module("teamchat",
 		fx.Provide(newHandler, newNotifier, asMediaStore),
@@ -32,6 +32,7 @@ type handlerParams struct {
 	fx.In
 
 	Lifecycle fx.Lifecycle
+	Config    *config.Telegram
 	Service   *tasks.Service
 	Sender    *gateway.Sender
 	Files     mediaStore
@@ -43,6 +44,8 @@ type handlerParams struct {
 // reaction starts while they are waited for.
 func newHandler(p handlerParams) *Handler {
 	h := NewHandler(p.Service, p.Sender, p.Files, p.Log)
+	h.productionTopicID = p.Config.ProductionTopicID
+	h.maxFileSize = p.Config.MaxFileSize
 	p.Lifecycle.Append(fx.Hook{OnStop: h.WaitBackground})
 
 	return h
@@ -52,12 +55,18 @@ func asMediaStore(s *media.Store) mediaStore {
 	return s
 }
 
-func newNotifier(cfg *config.Telegram, sender *gateway.Sender, log *slog.Logger) tasks.Notifier {
+func newNotifier(cfg *config.Telegram, sender *gateway.Sender, files mediaStore, log *slog.Logger) tasks.Notifier {
 	if !cfg.Enabled() {
 		return tasks.NewLogNotifier(log)
 	}
 
-	return NewNotifier(sender, log)
+	n := NewNotifier(sender, log)
+	n.videos = &videoDrafts{
+		sender: sender, files: files, outboxDir: cfg.OutboxDir, maxFileSize: cfg.MaxFileSize,
+		productionTopicID: cfg.ProductionTopicID,
+	}
+
+	return n
 }
 
 // useHandler replaces the gateway's default handler.

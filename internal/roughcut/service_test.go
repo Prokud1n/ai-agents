@@ -128,6 +128,10 @@ func TestServiceCut(t *testing.T) {
 			assert.Equal(t, "давайте приступим к разминке", joinWords(result.Transcript.Words))
 			assert.Len(t, result.Plan.Takes, 1)
 
+			assert.Len(t, result.Segments(), len(result.Plan.Keep), "the plan can be rendered by the caller")
+			assert.Positive(t, result.Render.FrameRate.Float())
+			assert.InDelta(t, junctionFade, result.Render.Fade, 1e-9)
+
 			if tt.planOnly {
 				assert.Empty(t, media.rendered)
 				assert.Empty(t, result.Files.Video)

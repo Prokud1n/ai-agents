@@ -175,12 +175,7 @@ func parseRational(s string) (Rational, error) {
 func renderSegmentsArgs(src, dst, graph string, ffmpegMajor int) []string {
 	args := append(commonArgs(), inputArgs(src)...)
 
-	if ffmpegMajor >= fileOptionMajor {
-		args = append(args, "-/filter_complex", graph)
-	} else {
-		args = append(args, "-filter_complex_script", graph)
-	}
-
+	args = append(args, filterFileArgs(graph, ffmpegMajor)...)
 	args = append(args,
 		mapFlag, "[v]", mapFlag, "[a]",
 		videoCodecFlag, videoCodec, "-preset", videoPreset, "-crf", videoCRF, "-pix_fmt", videoPixFmt,
@@ -190,6 +185,15 @@ func renderSegmentsArgs(src, dst, graph string, ffmpegMajor int) []string {
 	)
 
 	return append(args, dst)
+}
+
+// filterFileArgs read the filter graph from a file, with the option of the ffmpeg version.
+func filterFileArgs(graph string, ffmpegMajor int) []string {
+	if ffmpegMajor >= fileOptionMajor {
+		return []string{"-/filter_complex", graph}
+	}
+
+	return []string{"-filter_complex_script", graph}
 }
 
 // segmentsFilter builds a filter graph that decodes each stream once, splits it into one branch per
@@ -210,6 +214,11 @@ func renderSegmentsArgs(src, dst, graph string, ffmpegMajor int) []string {
 // as many frames as its audio lasts, with no rounding of timestamps in seconds.
 // Only numbers come from the caller, so nothing in the graph can be injected.
 func segmentsFilter(segments []Segment, opts RenderOptions) string {
+	return segmentsGraph(segments, opts, "v", "a")
+}
+
+// segmentsGraph is segmentsFilter with the given labels of the concatenated video and audio.
+func segmentsGraph(segments []Segment, opts RenderOptions, videoOut, audioOut string) string {
 	var b strings.Builder
 
 	n := strconv.Itoa(len(segments))
@@ -245,7 +254,7 @@ func segmentsFilter(segments []Segment, opts RenderOptions) string {
 		b.WriteString("[v" + k + "][a" + k + "]")
 	}
 
-	b.WriteString("concat=n=" + n + ":v=1:a=1[v][a]")
+	b.WriteString("concat=n=" + n + ":v=1:a=1[" + videoOut + "][" + audioOut + "]")
 
 	return b.String()
 }

@@ -247,6 +247,6 @@ func TestNewNotifierFollowsGateway(t *testing.T) {
 
 	log := slog.New(slog.DiscardHandler)
 
-	assert.IsType(t, &tasks.LogNotifier{}, newNotifier(&config.Telegram{}, nil, log), "no tokens: drafts go to the log")
-	assert.IsType(t, &Notifier{}, newNotifier(&config.Telegram{MarketerToken: "1:x"}, nil, log))
+	assert.IsType(t, &tasks.LogNotifier{}, newNotifier(&config.Telegram{}, nil, nil, log), "no tokens: drafts go to the log")
+	assert.IsType(t, &Notifier{}, newNotifier(&config.Telegram{MarketerToken: "1:x"}, nil, nil, log))
 }

@@ -150,6 +150,11 @@ func TestRunUpdaters(t *testing.T) {
 		{name: "retry", input: running, updater: UpdateToRetry(testRunID, "boom", runAfter, testNow), expected: QueuedStatus},
 		{name: "give up a revision", input: running, updater: UpdateToRunFailed(testRunID, "boom", "Причина.", testNow), expected: AwaitingApprovalStatus},
 		{name: "interrupt", input: running, updater: UpdateToInterrupted(testRunID, testNow), expected: QueuedStatus},
+		{name: "defer", input: running, updater: UpdateToDeferred(testRunID, runAfter, testNow), expected: QueuedStatus},
+		{
+			name: "another run defers", input: running, expectedErr: ErrConflict,
+			updater: UpdateToDeferred("run-0", runAfter, testNow),
+		},
 		{
 			name: "another run took over", input: running, expectedErr: ErrConflict,
 			updater: UpdateToAwaitingApproval("run-0", "draft", testNow),
@@ -189,6 +194,102 @@ func TestUpdateToAwaitingApprovalAddsVersion(t *testing.T) {
 	assert.Empty(t, change.Task.LastError)
 	require.NotNil(t, change.Version)
 	assert.Equal(t, Version{TaskID: 7, Version: 2, Content: "v2", CreatedAt: testNow}, *change.Version)
+}
+
+func TestUpdateToNewVersionKeepsVideo(t *testing.T) {
+	t.Parallel()
+
+	change, err := UpdateToNewVersion(testRunID, Output{Text: "описание", MediaKey: "edits/-100/1/u-v1-reel.mp4"}, testNow)(
+		Task{ID: 7, Status: RunningStatus, RunID: testRunID})
+
+	require.NoError(t, err)
+	require.NotNil(t, change.Version)
+	assert.Equal(t, Version{
+		TaskID: 7, Version: 1, Content: "описание", MediaKey: "edits/-100/1/u-v1-reel.mp4", CreatedAt: testNow,
+	}, *change.Version)
+}
+
+func TestUpdateToDeferredDoesNotCountAttempt(t *testing.T) {
+	t.Parallel()
+
+	runAfter := testNow.Add(time.Minute)
+
+	change, err := UpdateToDeferred(testRunID, runAfter, testNow)(
+		Task{ID: 1, Status: RunningStatus, Attempts: 1, RunID: testRunID, StartedAt: &testNow, LastError: "old"})
+	require.NoError(t, err)
+	assert.Equal(t, QueuedStatus, change.Task.Status)
+	assert.Equal(t, 0, change.Task.Attempts, "waiting for the worker is not an attempt")
+	assert.Equal(t, runAfter, change.Task.RunAfter)
+	assert.Equal(t, testNow, change.Task.EnqueuedAt)
+	assert.Nil(t, change.Task.StartedAt)
+}
+
+func TestUpdateToWoken(t *testing.T) {
+	t.Parallel()
+
+	later := testNow.Add(time.Minute)
+	earlier := testNow.Add(-time.Minute)
+
+	tests := []struct {
+		name        string
+		input       Task
+		expected    time.Time
+		expectedErr error
+	}{
+		{name: "deferred task becomes due", input: Task{ID: 1, Status: QueuedStatus, RunAfter: later}, expected: testNow},
+		{name: "a due task stays due", input: Task{ID: 1, Status: QueuedStatus, RunAfter: earlier}, expected: earlier},
+		{name: "running", input: Task{ID: 1, Status: RunningStatus}, expectedErr: ErrConflict},
+		{name: "decided", input: Task{ID: 1, Status: ApprovedStatus}, expectedErr: ErrConflict},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			change, err := UpdateToWoken(testNow)(tt.input)
+			if tt.expectedErr != nil {
+				require.ErrorIs(t, err, tt.expectedErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, change.Task.RunAfter)
+			assert.Equal(t, QueuedStatus, change.Task.Status)
+		})
+	}
+}
+
+// routeExecutor answers with its name.
+type routeExecutor string
+
+func (e routeExecutor) Execute(context.Context, *ExecuteData) (Output, error) {
+	return Output{Text: string(e)}, nil
+}
+
+func TestRoutingExecutor(t *testing.T) {
+	t.Parallel()
+
+	executor := NewRoutingExecutor(routeExecutor("agents"), map[string]Executor{"editor": routeExecutor("worker")})
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "routed agent", input: "editor", expected: "worker"},
+		{name: "any other agent", input: "copywriter", expected: "agents"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := executor.Execute(t.Context(), &ExecuteData{Agent: tt.input})
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, out.Text)
+		})
+	}
 }
 
 func TestRetryAndInterruptAttempts(t *testing.T) {
@@ -556,6 +657,11 @@ func TestFailureReason(t *testing.T) {
 			name: "temporary", input: errors.New("anthropic api error: status 529, request_id req_123"),
 			expected: "Сервис ИИ временно недоступен: попыток было 3. Попробуйте позже.",
 		},
+		{
+			name:     "temporary with its own message",
+			input:    &TemporaryError{Message: "Монтаж не удался.", Err: errors.New("ffmpeg: req_123")},
+			expected: "Монтаж не удался.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -587,6 +693,7 @@ func TestUserMessage(t *testing.T) {
 		{name: "unknown version", input: fmt.Errorf("x: %w", ErrUnknownVersion), expected: "Такой версии черновика нет."},
 		{name: "invalid callback", input: fmt.Errorf("x: %w", ErrInvalidCallback), expected: "Кнопка устарела или повреждена."},
 		{name: "empty task", input: ErrEmptyTask, expected: "В задаче нет ни текста, ни вложений."},
+		{name: "video revision", input: fmt.Errorf("x: %w", ErrVideoRevision), expected: VideoRevisionText},
 		{name: "other validation", input: fmt.Errorf("x: %w", ErrValidation), expected: "Не хватает данных для задачи."},
 		{name: "other", input: errors.New("db down"), expected: "Не получилось, попробуйте ещё раз."},
 	}

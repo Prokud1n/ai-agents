@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,8 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 
 	base := BurnSubtitlesData{SubtitlesName: "subtitles.ass", FontsName: "fonts", Width: 1080, Height: 1920, Fit: PadFitMode}
 	encode := []string{
-		videoCodecFlag, "libx264", "-preset", "medium", "-crf", "20", "-profile:v", "high", "-pix_fmt", "yuv420p",
+		videoCodecFlag, "libx264", "-preset", "medium", "-crf", "20", "-maxrate", "10M", "-bufsize", "20M",
+		"-profile:v", "high", "-pix_fmt", "yuv420p",
 		audioCodecFlag, "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", formatFlag, "mp4",
 	}
 	head := []string{
@@ -140,7 +142,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 
 			data := tt.input(base)
 
-			got, err := burnSubtitlesArgs(testVideo, testOutput, &data)
+			got, _, err := burnSubtitlesArgs(testVideo, testOutput, &data, unknownMajor)
 			if tt.expectedErr != nil {
 				require.ErrorIs(t, err, tt.expectedErr)
 
@@ -151,6 +153,56 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+// TestBurnSubtitlesArgsWithCut: the rough cut goes into the same graph; the graph is read from a file in Dir,
+// the audio is the joined one.
+func TestBurnSubtitlesArgsWithCut(t *testing.T) {
+	t.Parallel()
+
+	data := BurnSubtitlesData{
+		SubtitlesName: "subtitles.ass", FontsName: "fonts", Width: 1080, Height: 1920, Fit: PadFitMode, Dir: "/tmp/job",
+		Cut: &Cut{
+			Segments: []Segment{{Start: 1, End: 2}, {Start: 3, End: 4}},
+			Options:  RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		major    int
+		expected []string
+	}{
+		{name: "ffmpeg 8", major: 8, expected: []string{"-/filter_complex", "graph.txt", mapFlag, "[v]", mapFlag, "[a]"}},
+		{name: "ffmpeg 6", major: 6, expected: []string{"-filter_complex_script", "graph.txt", mapFlag, "[v]", mapFlag, "[a]"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			args, graph, err := burnSubtitlesArgs(testVideo, testOutput, &data, tt.major)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.expected, args[10:16])
+			assert.Equal(t, testOutput, args[len(args)-1])
+
+			cut := segmentsGraph(data.Cut.Segments, data.Cut.Options, "cut", "a")
+			assert.Equal(t, cut+";[cut]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,"+
+				"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts[v]", graph)
+			assert.True(t, strings.HasSuffix(cut, "concat=n=2:v=1:a=1[cut][a]"))
+		})
+	}
+
+	empty := data
+	empty.Cut = &Cut{}
+	_, _, err := burnSubtitlesArgs(testVideo, testOutput, &empty, 8)
+	require.ErrorIs(t, err, errNoSegments)
+
+	noDir := data
+	noDir.Dir = ""
+	_, _, err = burnSubtitlesArgs(testVideo, testOutput, &noDir, 8)
+	require.ErrorIs(t, err, ErrNoWorkDir)
 }
 
 func TestParseFontSelections(t *testing.T) {

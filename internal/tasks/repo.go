@@ -137,9 +137,9 @@ func writeChange(ctx context.Context, tx pgx.Tx, change *Change) error {
 
 	if v := change.Version; v != nil {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO task_versions (task_id, version, content, delivery_after, created_at)
-			VALUES ($1, $2, $3, $4, $4)`,
-			v.TaskID, v.Version, v.Content, v.CreatedAt); err != nil {
+			INSERT INTO task_versions (task_id, version, content, media_key, delivery_after, created_at)
+			VALUES ($1, $2, $3, $4, $5, $5)`,
+			v.TaskID, v.Version, v.Content, v.MediaKey, v.CreatedAt); err != nil {
 			return fmt.Errorf("failed to insert task version: %w", err)
 		}
 	}
@@ -173,10 +173,10 @@ func (r *repo) GetVersion(ctx context.Context, taskID int64, version int) (Versi
 	var v Version
 
 	err := r.db.GetReadConnection().QueryRow(ctx, `
-		SELECT task_id, version, content, draft_message_id, created_at
+		SELECT task_id, version, content, media_key, draft_message_id, created_at
 		FROM task_versions
 		WHERE task_id = $1 AND version = $2`, taskID, version,
-	).Scan(&v.TaskID, &v.Version, &v.Content, &v.DraftMessageID, &v.CreatedAt)
+	).Scan(&v.TaskID, &v.Version, &v.Content, &v.MediaKey, &v.DraftMessageID, &v.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Version{}, fmt.Errorf("task %d version %d: %w", taskID, version, ErrNotFound)
 	}
@@ -234,36 +234,39 @@ func (r *repo) FindByDraftMessage(ctx context.Context, chatID, messageID int64) 
 
 // delivery is a claimed draft delivery: everything needed to send the draft.
 type delivery struct {
-	Task    Task
-	Version int
-	Content string
-	Note    string
-	Attempt int // this attempt, from 1
+	Task     Task
+	Version  int
+	Content  string
+	MediaKey string
+	Note     string
+	Attempt  int // this attempt, from 1
 }
 
 // ClaimDelivery claims the delivery of the latest draft of a task awaiting approval: only one sender
-// (a worker or the sweeper) gets it. The claim counts the attempt and holds the draft for the lease;
-// false when the draft is sent, not due, or not the latest one.
+// (a worker or the sweeper) gets it. The claim counts the attempt and holds the draft for the lease (videoLease for
+// a video draft, whose upload is longer); false when the draft is sent, not due, or not the latest one.
 func (r *repo) ClaimDelivery(
 	ctx context.Context,
 	taskID int64,
 	version int,
 	now time.Time,
 	lease time.Duration,
+	videoLease time.Duration,
 ) (delivery, bool, error) {
 	const claim = `
 		UPDATE task_versions v
-		SET delivery_attempts = v.delivery_attempts + 1, delivery_after = $4
+		SET delivery_attempts = v.delivery_attempts + 1,
+		    delivery_after = CASE WHEN v.media_key = '' THEN $4 ELSE $5 END
 		FROM tasks t
 		WHERE v.task_id = $1 AND v.version = $2 AND t.id = v.task_id
 		  AND t.status = 'awaiting_approval' AND t.version = v.version
 		  AND v.draft_message_id IS NULL AND v.delivery_after <= $3
-		RETURNING v.content, v.delivery_note, v.delivery_attempts`
+		RETURNING v.content, v.media_key, v.delivery_note, v.delivery_attempts`
 
 	d := delivery{Version: version}
 
-	err := r.db.GetWriteConnection().QueryRow(ctx, claim, taskID, version, now, now.Add(lease)).
-		Scan(&d.Content, &d.Note, &d.Attempt)
+	err := r.db.GetWriteConnection().QueryRow(ctx, claim, taskID, version, now, now.Add(lease), now.Add(videoLease)).
+		Scan(&d.Content, &d.MediaKey, &d.Note, &d.Attempt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return delivery{}, false, nil
 	}

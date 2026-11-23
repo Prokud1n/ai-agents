@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 )
@@ -44,13 +45,13 @@ func (s *Service) Run(ctx context.Context, taskID int64) error {
 	s.log.InfoContext(ctx, "tasks: running task",
 		"task_id", task.ID, "agent", task.Agent, "version", task.Version, "attempt", task.Attempts)
 
-	text, runErr := s.runAgent(ctx, &task)
+	output, runErr := s.runAgent(ctx, &task)
 
 	finalCtx, cancel := finalContext(ctx)
 	defer cancel()
 
 	if runErr == nil {
-		err = s.completeRun(finalCtx, &task, text)
+		err = s.completeRun(ctx, finalCtx, &task, output)
 	} else {
 		err = s.handleRunError(ctx, finalCtx, &task, runErr)
 	}
@@ -63,10 +64,10 @@ func (s *Service) Run(ctx context.Context, taskID int64) error {
 }
 
 // runAgent loads the revision context and runs the executor; a panic in the executor is an error.
-func (s *Service) runAgent(ctx context.Context, task *Task) (string, error) {
+func (s *Service) runAgent(ctx context.Context, task *Task) (Output, error) {
 	rev, err := s.loadRevision(ctx, task)
 	if err != nil {
-		return "", err
+		return Output{}, err
 	}
 
 	return s.execute(ctx, task, rev)
@@ -92,7 +93,7 @@ func (s *Service) loadRevision(ctx context.Context, task *Task) (revision, error
 	return revision{previous: &previous, feedback: &feedback}, nil
 }
 
-func (s *Service) execute(ctx context.Context, task *Task, rev revision) (text string, err error) {
+func (s *Service) execute(ctx context.Context, task *Task, rev revision) (output Output, err error) {
 	runCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 
@@ -101,31 +102,37 @@ func (s *Service) execute(ctx context.Context, task *Task, rev revision) (text s
 			s.log.ErrorContext(ctx, "tasks: executor panicked",
 				"task_id", task.ID, "agent", task.Agent, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
 
-			text, err = "", fmt.Errorf("failed to run agent %q: %w: %v", task.Agent, errExecutorPanic, r)
+			output, err = Output{}, fmt.Errorf("failed to run agent %q: %w: %v", task.Agent, errExecutorPanic, r)
 		}
 	}()
 
-	text, err = s.executor.Execute(runCtx, &ExecuteData{
-		TaskID: task.ID,
-		Agent:  task.Agent,
-		Prompt: BuildPrompt(task, rev.previous, rev.feedback),
+	output, err = s.executor.Execute(runCtx, &ExecuteData{
+		TaskID:  task.ID,
+		Agent:   task.Agent,
+		Kind:    task.Kind,
+		Input:   task.Input,
+		Media:   slices.Clone(task.Media),
+		Source:  task.Source,
+		Version: task.Version + 1,
+		Prompt:  BuildPrompt(task, rev.previous, rev.feedback),
 	})
 	if err != nil {
-		return "", err
+		return Output{}, err
 	}
 
-	if strings.TrimSpace(text) == "" {
-		return "", fmt.Errorf("failed to run agent %q: empty answer", task.Agent)
+	if strings.TrimSpace(output.Text) == "" {
+		return Output{}, fmt.Errorf("failed to run agent %q: empty answer", task.Agent)
 	}
 
-	return text, nil
+	return output, nil
 }
 
-// completeRun stores the new version and sends its draft.
-func (s *Service) completeRun(ctx context.Context, task *Task, text string) error {
-	updated, err := s.repo.Update(ctx, task.ID, UpdateToAwaitingApproval(task.RunID, text, s.now()))
+// completeRun stores the new version (writes with finalCtx) and sends its draft. A video draft is sent with the run's
+// context: its upload may take minutes and is interrupted by stop (the sweeper sends it after the restart).
+func (s *Service) completeRun(ctx, finalCtx context.Context, task *Task, output Output) error {
+	updated, err := s.repo.Update(finalCtx, task.ID, UpdateToNewVersion(task.RunID, output, s.now()))
 	if errors.Is(err, ErrConflict) {
-		s.log.WarnContext(ctx, "tasks: run is no longer current, result dropped", "task_id", task.ID, "error", err)
+		s.log.WarnContext(finalCtx, "tasks: run is no longer current, result dropped", "task_id", task.ID, "error", err)
 
 		return nil
 	}
@@ -134,7 +141,8 @@ func (s *Service) completeRun(ctx context.Context, task *Task, text string) erro
 		return err
 	}
 
-	s.log.InfoContext(ctx, "tasks: draft ready", "task_id", updated.ID, "version", updated.Version)
+	s.log.InfoContext(finalCtx, "tasks: draft ready", "task_id", updated.ID, "version", updated.Version,
+		"video", output.MediaKey != "")
 	s.deliver(ctx, updated.ID, updated.Version)
 
 	return nil
@@ -146,6 +154,11 @@ func (s *Service) completeRun(ctx context.Context, task *Task, text string) erro
 func (s *Service) handleRunError(ctx, finalCtx context.Context, task *Task, runErr error) error {
 	if ctx.Err() != nil {
 		return s.interrupt(finalCtx, task)
+	}
+
+	var deferred *DeferredError
+	if errors.As(runErr, &deferred) {
+		return s.deferRun(finalCtx, task, deferred.After)
 	}
 
 	var permanent *PermanentError
@@ -168,6 +181,45 @@ func (s *Service) handleRunError(ctx, finalCtx context.Context, task *Task, runE
 	s.log.WarnContext(finalCtx, "tasks: run failed, will retry",
 		"error", runErr, "task_id", task.ID, "attempt", task.Attempts, "run_after", runAfter)
 	s.schedule(finalCtx, task.ID, runAfter)
+
+	return nil
+}
+
+// deferRun puts the task back to the queue while its work goes on elsewhere; the attempt is not counted.
+func (s *Service) deferRun(ctx context.Context, task *Task, after time.Duration) error {
+	now := s.now()
+	runAfter := now.Add(max(after, 0))
+
+	_, err := s.repo.Update(ctx, task.ID, UpdateToDeferred(task.RunID, runAfter, now))
+	if errors.Is(err, ErrConflict) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	s.log.DebugContext(ctx, "tasks: run deferred", "task_id", task.ID, "run_after", runAfter)
+	s.schedule(ctx, task.ID, runAfter)
+
+	return nil
+}
+
+// Wake runs a deferred task now: its work elsewhere has finished. A task that is not waiting in the queue (running,
+// decided, unknown) is left alone.
+func (s *Service) Wake(ctx context.Context, taskID int64) error {
+	now := s.now()
+
+	_, err := s.repo.Update(ctx, taskID, UpdateToWoken(now))
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	s.schedule(ctx, taskID, now)
 
 	return nil
 }

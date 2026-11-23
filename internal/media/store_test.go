@@ -81,12 +81,15 @@ func (f *fakeStorage) GetObject(_ context.Context, key string) (io.ReadCloser, e
 func newTestStore(t *testing.T, storage *fakeStorage) *Store {
 	t.Helper()
 
-	store, err := NewStore(storage, &config.Media{KeyPrefix: testPrefix, UploadTimeout: time.Minute},
+	store, err := NewStore(storage,
+		&config.Media{KeyPrefix: testPrefix, ResultPrefix: testResultPrefix, UploadTimeout: time.Minute},
 		slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	return store
 }
+
+const testResultPrefix = "edits"
 
 func TestNewStoreRejectsInvalidConfig(t *testing.T) {
 	t.Parallel()
@@ -97,6 +100,8 @@ func TestNewStoreRejectsInvalidConfig(t *testing.T) {
 	}{
 		{name: "prefix with dots", input: config.Media{KeyPrefix: "../x", UploadTimeout: time.Minute}},
 		{name: "no upload timeout", input: config.Media{KeyPrefix: testPrefix}},
+		{name: "result prefix with dots", input: config.Media{KeyPrefix: testPrefix, ResultPrefix: "a/../b", UploadTimeout: time.Minute}},
+		{name: "result prefix is the key prefix", input: config.Media{KeyPrefix: testPrefix, ResultPrefix: testPrefix, UploadTimeout: time.Minute}},
 	}
 
 	for _, tt := range tests {
@@ -236,4 +241,39 @@ func TestStoreDownloadErrors(t *testing.T) {
 			assert.Empty(t, entries, "no local file is left")
 		})
 	}
+}
+
+// TestStoreResults: a result key is made next to the source, stored and downloaded back; keys of other prefixes and
+// sources are refused.
+func TestStoreResults(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	store := newTestStore(t, storage)
+	ctx := t.Context()
+
+	key, err := store.ResultKey("incoming/-100/7/uniq.mov", "uniq-v1-reel", ".mp4")
+	require.NoError(t, err)
+	assert.Equal(t, "edits/-100/7/uniq-v1-reel.mp4", key)
+
+	require.NoError(t, store.PutResult(ctx, key, strings.NewReader(testContent), "video/mp4"))
+	assert.Equal(t, "video/mp4", storage.objects[key].contentType)
+
+	local, err := store.Download(ctx, key, t.TempDir(), int64(len(testContent)))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, local.Remove()) })
+	assert.Equal(t, ".mp4", filepath.Ext(local.Path))
+
+	_, err = store.ResultKey("other/-100/7/uniq.mov", "uniq-v1-reel", ".mp4")
+	require.ErrorIs(t, err, ErrInvalidKey, "a source outside the incoming prefix")
+
+	err = store.PutResult(ctx, "incoming/-100/7/uniq.mp4", strings.NewReader(testContent), "video/mp4")
+	require.ErrorIs(t, err, ErrInvalidKey, "an incoming file is never overwritten by a result")
+
+	noResults, err := NewStore(storage, &config.Media{KeyPrefix: testPrefix, UploadTimeout: time.Minute},
+		slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+
+	_, err = noResults.ResultKey("incoming/-100/7/uniq.mov", "uniq-v1-reel", ".mp4")
+	require.ErrorIs(t, err, ErrInvalidConfig)
 }

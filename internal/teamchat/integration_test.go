@@ -56,7 +56,7 @@ type scriptedExecutor struct {
 	prompts []string
 }
 
-func (e *scriptedExecutor) Execute(_ context.Context, data *tasks.ExecuteData) (string, error) {
+func (e *scriptedExecutor) Execute(_ context.Context, data *tasks.ExecuteData) (tasks.Output, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -67,7 +67,7 @@ func (e *scriptedExecutor) Execute(_ context.Context, data *tasks.ExecuteData) (
 		e.answers = e.answers[1:]
 	}
 
-	return answer, nil
+	return tasks.Output{Text: answer}, nil
 }
 
 func (e *scriptedExecutor) Prompts() []string {
@@ -161,9 +161,9 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 }
 
 // TestIntegrationVideoIntake runs a video through the real gateway against the fake Bot API: a video in
-// «Исходники» is downloaded (getFile, a file in TELEGRAM_FILES_DIR), stored and answered by the editor's bot; the
-// same message delivered again is skipped by the gateway's mark in Redis (one copy, one answer); a voice message
-// is answered without a download.
+// «Исходники» is downloaded (getFile, a file in TELEGRAM_FILES_DIR), stored, becomes the editor's task and is
+// answered by the editor's bot; the same message delivered again is skipped by the gateway's mark in Redis (one copy,
+// one task, one answer); a voice message is answered without a download.
 func TestIntegrationVideoIntake(t *testing.T) {
 	t.Parallel()
 
@@ -187,7 +187,7 @@ func TestIntegrationVideoIntake(t *testing.T) {
 	api.queue(env.marketer, telegram.Update{UpdateID: 1, Message: video}, telegram.Update{UpdateID: 2, Message: video})
 
 	require.Eventually(t, func() bool {
-		return hasText(api, videoStoredText)
+		return hasText(api, videoAcceptedHereText)
 	}, integrationWait, integrationTick, "the video is stored and answered")
 
 	voice := topicMessage(env.groupID, voiceMessageID, "")
@@ -199,10 +199,21 @@ func TestIntegrationVideoIntake(t *testing.T) {
 	}, integrationWait, integrationTick, "the voice message is answered")
 
 	assert.Never(t, func() bool {
-		return countText(api, videoStoredText) > 1 || len(env.store.Files()) > 1
+		return countText(api, videoAcceptedHereText) > 1 || len(env.store.Files()) > 1
 	}, neverWait, integrationTick, "a redelivered video is stored and answered once")
 
 	assert.Len(t, api.callsOf("getFile"), 1, "only the video is downloaded")
+
+	// Create finds the task of the same source message: one task for the redelivered video.
+	task, created, err := env.service.Create(t.Context(), &tasks.CreateTaskData{
+		Agent: string(gateway.EditorRole), Input: "lookup", Source: tasks.Source{ChatID: env.groupID, MessageID: videoMessageID},
+	})
+	require.NoError(t, err)
+	assert.False(t, created, "the video already has its task")
+	assert.Equal(t, string(gateway.EditorRole), task.Agent)
+	assert.Equal(t, ReelsEditTaskKind, task.Kind)
+	assert.Equal(t, []string{"incoming/" + strconv.FormatInt(env.groupID, 10) + "/" +
+		strconv.FormatInt(videoMessageID, 10) + "/" + testFileUniqueID + ".mp4"}, task.Media)
 	assert.Equal(t, [][]byte{[]byte(testVideoContent)}, env.store.Saved())
 	assert.Equal(t, []media.File{{
 		ChatID: env.groupID, MessageID: videoMessageID, FileUniqueID: testFileUniqueID, MIMEType: "video/mp4",
@@ -212,7 +223,7 @@ func TestIntegrationVideoIntake(t *testing.T) {
 		var params telegram.SendMessageParams
 		require.NoError(t, json.Unmarshal(c.body, &params))
 
-		if params.Text == videoStoredText {
+		if params.Text == videoAcceptedHereText {
 			assert.Equal(t, env.editor, c.token, "the editor's bot answers the video")
 			assert.Equal(t, testSourcesTopicID, params.MessageThreadID)
 		}

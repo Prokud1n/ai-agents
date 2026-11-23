@@ -11,7 +11,7 @@
 //	           │                │
 //	           │                ├→ queued (revision: the next run makes version + 1)
 //	           │                └→ failed (the draft could not be delivered)
-//	           ├→ queued (temporary error: retry with backoff)
+//	           ├→ queued (temporary error: retry with backoff; deferred: the work goes on elsewhere, not counted)
 //	           ├→ failed (no version yet: attempts exhausted or a permanent error)
 //	           └→ awaiting_approval of the previous version (a revision run failed: the draft is sent again)
 //
@@ -105,7 +105,10 @@ type Task struct {
 type Version struct {
 	TaskID  int64
 	Version int
+	// Content is the draft text; for a video draft, the description of the video.
 	Content string
+	// MediaKey is the S3 key of the draft's video; empty for a text draft.
+	MediaKey string
 	// DraftMessageID is the Telegram message of the sent draft: nil until it is sent,
 	// 0 when the notifier does not send messages.
 	DraftMessageID *int64

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
@@ -25,6 +26,8 @@ var (
 	ErrUnknownVersion  = fmt.Errorf("no such draft version: %w", ErrValidation)
 	ErrInvalidCallback = fmt.Errorf("invalid task callback data: %w", ErrValidation)
 	ErrEmptyTask       = fmt.Errorf("task has neither text nor media: %w", ErrValidation)
+	// ErrVideoRevision: a revision of a video draft by text is the next step (T3.4c).
+	ErrVideoRevision = fmt.Errorf("a video draft cannot be revised by text yet: %w", ErrValidation)
 
 	// errExecutorPanic marks a run whose executor panicked; it is retried like a temporary error.
 	errExecutorPanic = errors.New("executor panicked")
@@ -42,6 +45,31 @@ func (e *PermanentError) Error() string {
 }
 
 func (e *PermanentError) Unwrap() error {
+	return e.Err
+}
+
+// DeferredError is a run that is not finished but goes on elsewhere (the media worker edits the video): the task
+// goes back to the queue, runs again after After or when woken (Service.Wake), and the attempt is not counted.
+type DeferredError struct {
+	After time.Duration
+}
+
+func (e *DeferredError) Error() string {
+	return fmt.Sprintf("run deferred for %s", e.After)
+}
+
+// TemporaryError is retried like any error; when the attempts run out, Message is shown to the trainer instead of
+// the general text about an unavailable AI service.
+type TemporaryError struct {
+	Message string
+	Err     error
+}
+
+func (e *TemporaryError) Error() string {
+	return fmt.Sprintf("%s: %v", e.Message, e.Err)
+}
+
+func (e *TemporaryError) Unwrap() error {
 	return e.Err
 }
 
@@ -69,6 +97,8 @@ func UserMessage(err error) string {
 		return "Кнопка устарела или повреждена."
 	case errors.Is(err, ErrEmptyTask):
 		return "В задаче нет ни текста, ни вложений."
+	case errors.Is(err, ErrVideoRevision):
+		return VideoRevisionText
 	case errors.Is(err, ErrValidation):
 		return "Не хватает данных для задачи."
 	default:
@@ -79,11 +109,16 @@ func UserMessage(err error) string {
 // failureReason is the trainer-facing reason of a given-up run, a sentence: the class of the error, never
 // its text (the details go to the log and last_error).
 func failureReason(err error, attempts int) string {
-	var permanent *PermanentError
+	var (
+		permanent *PermanentError
+		temporary *TemporaryError
+	)
 
 	switch {
 	case errors.As(err, &permanent):
 		return permanent.Message
+	case errors.As(err, &temporary):
+		return temporary.Message
 	case errors.Is(err, context.DeadlineExceeded):
 		return "Агент не уложился в отведённое время."
 	case errors.Is(err, errExecutorPanic):
@@ -92,6 +127,10 @@ func failureReason(err error, attempts int) string {
 		return fmt.Sprintf("Сервис ИИ временно недоступен: попыток было %d. Попробуйте позже.", attempts)
 	}
 }
+
+// VideoRevisionText answers a revision of a video draft («Правки» or a reply to it): by text it is the next step.
+const VideoRevisionText = "Правки текстом к видео появятся на следующем шаге. Пока можно отклонить черновик и " +
+	"прислать исходник заново."
 
 // failedTaskMessage tells the trainer that a task without a draft failed.
 func failedTaskMessage(reason string) string {

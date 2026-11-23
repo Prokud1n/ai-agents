@@ -64,8 +64,13 @@ func UpdateToRunning(now time.Time, staleAfter time.Duration, maxAttempts int, r
 // staleRunReason is the trainer-facing reason when every attempt died without finishing.
 const staleRunReason = "Агент не уложился в отведённое время."
 
-// UpdateToAwaitingApproval finishes the run with a new draft version.
+// UpdateToAwaitingApproval finishes the run with a new text draft version.
 func UpdateToAwaitingApproval(runID, content string, now time.Time) UpdaterFn {
+	return UpdateToNewVersion(runID, Output{Text: content}, now)
+}
+
+// UpdateToNewVersion finishes the run with a new draft version: a text, or a video with its description.
+func UpdateToNewVersion(runID string, output Output, now time.Time) UpdaterFn {
 	return func(t Task) (Change, error) {
 		if err := checkRun(&t, runID, AwaitingApprovalStatus); err != nil {
 			return Change{}, err
@@ -78,9 +83,48 @@ func UpdateToAwaitingApproval(runID, content string, now time.Time) UpdaterFn {
 		t.UpdatedAt = now
 
 		return Change{
-			Task:    t,
-			Version: &Version{TaskID: t.ID, Version: t.Version, Content: content, CreatedAt: now},
+			Task: t,
+			Version: &Version{
+				TaskID: t.ID, Version: t.Version, Content: output.Text, MediaKey: output.MediaKey, CreatedAt: now,
+			},
 		}, nil
+	}
+}
+
+// UpdateToDeferred puts the task back to the queue while its work goes on elsewhere (DeferredError): it runs again
+// after runAfter or when woken; the attempt is not counted.
+func UpdateToDeferred(runID string, runAfter, now time.Time) UpdaterFn {
+	return func(t Task) (Change, error) {
+		if err := checkRun(&t, runID, QueuedStatus); err != nil {
+			return Change{}, err
+		}
+
+		t.Status = QueuedStatus
+		t.Attempts = max(t.Attempts-1, 0)
+		t.RunAfter = runAfter
+		t.EnqueuedAt = now
+		t.StartedAt = nil
+		t.UpdatedAt = now
+
+		return Change{Task: t}, nil
+	}
+}
+
+// UpdateToWoken makes a queued task due now: its work elsewhere has finished. Any other status is ErrConflict.
+func UpdateToWoken(now time.Time) UpdaterFn {
+	return func(t Task) (Change, error) {
+		if t.Status != QueuedStatus {
+			return Change{}, fmt.Errorf("task %d is %s, not waiting: %w", t.ID, t.Status, ErrConflict)
+		}
+
+		if t.RunAfter.After(now) {
+			t.RunAfter = now
+		}
+
+		t.EnqueuedAt = now
+		t.UpdatedAt = now
+
+		return Change{Task: t}, nil
 	}
 }
 

@@ -17,17 +17,20 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-run ./cmd/agent-run && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kb ./cmd/kb
 
-# Tools that need ffmpeg (transcribe, roughcut, subtitles) are built separately, so the app image below stays unchanged.
+# Tools that need ffmpeg (transcribe, roughcut, subtitles, media-worker) are built separately, so the app image below
+# stays unchanged.
 FROM build AS build-media
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/transcribe ./cmd/transcribe && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/roughcut ./cmd/roughcut && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/subtitles ./cmd/subtitles
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/subtitles ./cmd/subtitles && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out-media/media-worker ./cmd/media-worker
 
-# Media image: ffmpeg (with libass) + transcribe + roughcut + subtitles. Build with `docker build --target media .`
-# The entrypoint is transcribe; roughcut and subtitles run with `--entrypoint /app/roughcut` / `/app/subtitles`.
+# Media image: ffmpeg (with libass) + transcribe + roughcut + subtitles + media-worker. Build with
+# `docker build --target media .` The entrypoint is transcribe; the others run with `--entrypoint /app/<name>`;
+# the media-worker service of docker compose runs /app/media-worker on this image.
 # alpine:3.24
 FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS media
 

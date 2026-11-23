@@ -34,9 +34,11 @@ type draftSender interface {
 }
 
 // Notifier is tasks.Notifier over the gateway: drafts, decisions and failures go to the topic of the task from
-// the bot of its agent. Texts are plain: Sender sends them without a parse mode.
+// the bot of its agent. Texts are plain: Sender sends them without a parse mode. A video draft (the editor's reel) is
+// sent as a video to «Продакшн» when the topic is configured (see videoDrafts).
 type Notifier struct {
 	sender draftSender
+	videos *videoDrafts
 	log    *slog.Logger
 }
 
@@ -50,6 +52,10 @@ func NewNotifier(sender draftSender, log *slog.Logger) *Notifier {
 // PartIDs with the error (a reply to them gets «reply to the latest draft»), and the next delivery attempt
 // sends every part again.
 func (n *Notifier) SendDraft(ctx context.Context, draft *tasks.Draft) (tasks.SentDraft, error) {
+	if draft.MediaKey != "" {
+		return n.sendVideoDraft(ctx, draft)
+	}
+
 	ids, err := n.sender.SendTextParts(ctx, roleOf(draft.Agent), &gateway.OutgoingMessage{
 		TopicID: draft.TopicID,
 		ReplyTo: draft.ReplyToMessageID,
@@ -91,8 +97,13 @@ func (n *Notifier) CloseDraft(ctx context.Context, data *tasks.CloseDraftData) e
 		return errors.Join(errs...)
 	}
 
+	topicID := data.TopicID
+	if data.Video {
+		topicID = n.videos.topic(data.TopicID)
+	}
+
 	if _, err := n.sender.SendText(ctx, role, &gateway.OutgoingMessage{
-		TopicID: data.TopicID,
+		TopicID: topicID,
 		ReplyTo: data.MessageID,
 		Text:    text,
 	}); err != nil {

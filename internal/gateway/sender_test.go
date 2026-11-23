@@ -403,6 +403,26 @@ func TestSenderSendTextPartsFailure(t *testing.T) {
 	assert.Equal(t, []int64{api.lastMessageID()}, ids, "the first part was sent")
 }
 
+func TestSenderSendsVideoSize(t *testing.T) {
+	t.Parallel()
+
+	sender, api := newTestSender(t)
+	path := outboxFile(t, sender, "reel.mp4", "video")
+
+	_, err := sender.SendMedia(t.Context(), EditorRole, &OutgoingMedia{
+		Type: VideoMediaType, Path: path, Caption: "Черновик", Width: 1080, Height: 1920,
+	})
+	require.NoError(t, err)
+
+	videos := api.callsOf("sendVideo")
+	require.Len(t, videos, 1)
+
+	body := string(videos[0].body)
+	for _, field := range []string{"name=\"width\"", "name=\"height\"", "name=\"supports_streaming\""} {
+		assert.Contains(t, body, field)
+	}
+}
+
 func TestSenderMovesLongCaptionToText(t *testing.T) {
 	t.Parallel()
 

@@ -23,6 +23,10 @@ const (
 	deliveryLease = 2 * time.Minute
 	// sendDraftTimeout bounds one SendDraft call, well within the lease.
 	sendDraftTimeout = 30 * time.Second
+	// sendVideoTimeout bounds sending a video draft (a download from S3 and an upload to Telegram of up to
+	// hundreds of megabytes), within videoDeliveryLease.
+	sendVideoTimeout   = 15 * time.Minute
+	videoDeliveryLease = 20 * time.Minute
 	// storeMessageAttempts: storing the id of a sent draft is retried, so a short database hiccup does not
 	// make the draft look unsent (it would be sent again after the lease).
 	storeMessageAttempts = 3
@@ -271,8 +275,18 @@ func (s *Service) Reject(ctx context.Context, data *RejectTaskData) (Task, error
 }
 
 // RequestRevision stores the revision and queues the task in one transaction: the next run makes a new
-// version from the previous one and the revision text.
+// version from the previous one and the revision text. A video draft cannot be revised by text yet
+// (ErrVideoRevision).
 func (s *Service) RequestRevision(ctx context.Context, data *RequestRevisionData) (Task, error) {
+	v, err := s.repo.GetVersion(ctx, data.TaskID, data.Version)
+	if err != nil && !errors.Is(err, ErrNotFound) { // an unknown version is refused by the updater
+		return Task{}, err
+	}
+
+	if v.MediaKey != "" {
+		return Task{}, fmt.Errorf("task %d version %d: %w", data.TaskID, data.Version, ErrVideoRevision)
+	}
+
 	text := strings.TrimSpace(data.Text)
 	updater := WithFeedbackSource(UpdateToRevisionQueued(data.Version, data.UserID, text, s.now()), data.SourceMessageID)
 
@@ -403,7 +417,7 @@ func (s *Service) closeDraftData(
 
 	return &CloseDraftData{
 		TaskID: task.ID, Version: version, Agent: task.Agent, ChatID: task.Source.ChatID,
-		TopicID: task.Source.TopicID, MessageID: *v.DraftMessageID, Decision: decision,
+		TopicID: task.Source.TopicID, MessageID: *v.DraftMessageID, Decision: decision, Video: v.MediaKey != "",
 	}, true
 }
 
@@ -459,7 +473,7 @@ func (s *Service) deliver(ctx context.Context, taskID int64, version int) {
 	claimCtx, cancel := finalContext(ctx)
 	defer cancel()
 
-	d, claimed, err := s.repo.ClaimDelivery(claimCtx, taskID, version, s.now(), deliveryLease)
+	d, claimed, err := s.repo.ClaimDelivery(claimCtx, taskID, version, s.now(), deliveryLease, videoDeliveryLease)
 	if err != nil {
 		s.log.ErrorContext(claimCtx, "tasks: failed to claim draft delivery", "error", err, "task_id", taskID)
 
@@ -500,9 +514,11 @@ func (s *Service) rememberUnfinishedParts(ctx context.Context, d *delivery, part
 }
 
 // sendDraft sends all messages of the draft. A failed part fails the send: the retry sends every part
-// again. The parts sent before the failure come back in PartIDs of the result (with the error).
+// again. The parts sent before the failure come back in PartIDs of the result (with the error). A text draft is
+// sent even when ctx is cancelled (a few seconds at most); a video draft is interrupted by ctx (stop): its upload
+// may take minutes, and it is sent again later.
 func (s *Service) sendDraft(ctx context.Context, d *delivery) (SentDraft, error) {
-	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendDraftTimeout)
+	sendCtx, cancel := sendContext(ctx, d.MediaKey != "")
 	defer cancel()
 
 	sent, err := s.notifier.SendDraft(sendCtx, &Draft{
@@ -513,6 +529,7 @@ func (s *Service) sendDraft(ctx context.Context, d *delivery) (SentDraft, error)
 		TopicID:          d.Task.Source.TopicID,
 		ReplyToMessageID: d.Task.Source.MessageID,
 		Text:             d.Content,
+		MediaKey:         d.MediaKey,
 		Note:             d.Note,
 		Buttons:          DraftButtons(d.Task.ID, d.Version),
 	})
@@ -521,6 +538,15 @@ func (s *Service) sendDraft(ctx context.Context, d *delivery) (SentDraft, error)
 	}
 
 	return sent, nil
+}
+
+// sendContext bounds a draft send: see sendDraft.
+func sendContext(ctx context.Context, video bool) (context.Context, context.CancelFunc) {
+	if video {
+		return context.WithTimeout(ctx, sendVideoTimeout)
+	}
+
+	return context.WithTimeout(context.WithoutCancel(ctx), sendDraftTimeout)
 }
 
 // storeDraftMessage stores the ids of the sent messages, with retries. If another sender stored its
@@ -573,7 +599,7 @@ func (s *Service) closeDuplicate(ctx context.Context, d *delivery, sent *SentDra
 
 	err := s.notifier.CloseDraft(ctx, &CloseDraftData{
 		TaskID: d.Task.ID, Version: d.Version, Agent: d.Task.Agent, ChatID: d.Task.Source.ChatID,
-		TopicID: d.Task.Source.TopicID, MessageID: messageID, Duplicate: true,
+		TopicID: d.Task.Source.TopicID, MessageID: messageID, Duplicate: true, Video: d.MediaKey != "",
 	})
 	if err != nil {
 		s.log.ErrorContext(ctx, "tasks: failed to close duplicate draft", "error", err, "task_id", d.Task.ID)

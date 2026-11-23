@@ -23,6 +23,9 @@ type BurnSubtitlesData struct {
 	OutputPath string // MP4, H.264 + AAC, 1080×1920
 	// Fit brings a video of another size to 1080×1920; empty means pad (nothing is cut off).
 	Fit ffmpeg.FitMode
+	// Cut, if set, renders only its fragments of the video in the same pass (the rough cut and the subtitles are
+	// one encode); the transcript must then be on the cut's timeline.
+	Cut *ffmpeg.Cut
 }
 
 // Subtitles is a rendered ASS document.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
 const (
@@ -56,8 +57,8 @@ func inTopic(event *gateway.Event, topic gateway.Topic) *gateway.Event {
 	return event
 }
 
-// TestHandlerAnswersStoredVideoOnStop: the copy ends after the gateway's context is cancelled (stop), the
-// trainer still gets the answer.
+// TestHandlerAnswersStoredVideoOnStop: the copy ends after the gateway's context is cancelled (stop), the task is
+// created and the trainer still gets the answer.
 func TestHandlerAnswersStoredVideoOnStop(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +70,7 @@ func TestHandlerAnswersStoredVideoOnStop(t *testing.T) {
 	cancel()
 
 	require.NoError(t, h.HandleEvent(ctx, mediaEvent("", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir))))
-	assert.Equal(t, []string{videoStoredText}, sender.sent)
+	assert.Equal(t, []string{videoAcceptedHereText}, sender.sent)
 }
 
 // ctxSender fails a send with a cancelled context, like the real Bot API client.
@@ -147,24 +148,59 @@ func TestHandlerMedia(t *testing.T) {
 		MIMEType: "video/quicktime", FileName: testVideoFileName,
 	}
 
+	editTask := func(caption string) []tasks.CreateTaskData {
+		return []tasks.CreateTaskData{{
+			Agent: string(gateway.EditorRole), Kind: ReelsEditTaskKind, Input: caption,
+			Media: []string{"incoming/-1001000/100/" + testFileUniqueID + ".mov"}, Source: source(), AuthorID: testUserID,
+		}}
+	}
+
 	tests := []struct {
 		name          string
 		store         *fakeStore
+		service       *fakeService
+		production    int64
 		event         *gateway.Event
 		expectedFiles []media.File
+		expectedTasks []tasks.CreateTaskData
 		expectedTexts []sentText
 	}{
 		{
-			name:          "video in «Исходники» is stored and answered by the editor",
+			name:          "video in «Исходники» becomes the editor's task, the draft comes here",
 			event:         mediaEvent("", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir)),
 			expectedFiles: []media.File{savedFile},
-			expectedTexts: []sentText{reply(gateway.EditorRole, videoStoredText)},
+			expectedTasks: editTask(""),
+			expectedTexts: []sentText{reply(gateway.EditorRole, videoAcceptedHereText)},
 		},
 		{
-			name:          "video with a caption: the caption is not kept, the trainer is told",
-			event:         mediaEvent("первые 3 секунды убрать", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir)),
+			name:          "with «Продакшн» configured the trainer is told the draft goes there",
+			production:    testTopicID + 1,
+			event:         mediaEvent("", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir)),
 			expectedFiles: []media.File{savedFile},
-			expectedTexts: []sentText{reply(gateway.EditorRole, videoStoredText+videoCaptionNote)},
+			expectedTasks: editTask(""),
+			expectedTexts: []sentText{reply(gateway.EditorRole, videoAcceptedText)},
+		},
+		{
+			name:          "video with a caption: the caption is kept as the task input",
+			event:         mediaEvent(" первые 3 секунды убрать ", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir)),
+			expectedFiles: []media.File{savedFile},
+			expectedTasks: editTask("первые 3 секунды убрать"),
+			expectedTexts: []sentText{reply(gateway.EditorRole, videoAcceptedHereText+videoCaptionNote)},
+		},
+		{
+			name:          "redelivered video: the task exists, no second answer",
+			service:       &fakeService{exists: true},
+			event:         mediaEvent("", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir)),
+			expectedFiles: []media.File{savedFile},
+			expectedTasks: editTask(""),
+		},
+		{
+			name:          "the task could not be created: the class of the error, no details",
+			service:       &fakeService{createErr: errDatabaseDown},
+			event:         mediaEvent("", gateway.EditorRole, videoMedia(gateway.VideoMediaType, dir)),
+			expectedFiles: []media.File{savedFile},
+			expectedTasks: editTask(""),
+			expectedTexts: []sentText{reply(gateway.EditorRole, internalErr)},
 		},
 		{
 			name:          "storage error: the trainer is asked to send again, without details",
@@ -179,9 +215,10 @@ func TestHandlerMedia(t *testing.T) {
 			expectedTexts: []sentText{reply(gateway.EditorRole, downloadFailedText)},
 		},
 		{
-			name:          "video above TELEGRAM_MAX_FILE_SIZE",
-			event:         mediaEvent("", gateway.EditorRole, tooLarge(videoMedia(gateway.VideoMediaType, ""))),
-			expectedTexts: []sentText{reply(gateway.EditorRole, fileTooLargeText(3<<30))},
+			name:  "video above TELEGRAM_MAX_FILE_SIZE",
+			event: mediaEvent("", gateway.EditorRole, tooLarge(videoMedia(gateway.VideoMediaType, ""))),
+			expectedTexts: []sentText{reply(gateway.EditorRole, "Файл больше лимита 2 ГБ: такие я скачать не могу. "+
+				"Сожмите видео или разрежьте его на части.")},
 		},
 		{
 			name:          "video in «Исходники» addressed to the copywriter: remove the mention",
@@ -219,13 +256,19 @@ func TestHandlerMedia(t *testing.T) {
 				store = &fakeStore{}
 			}
 
-			service, sender := &fakeService{}, &fakeSender{}
+			service := tt.service
+			if service == nil {
+				service = &fakeService{}
+			}
+
+			sender := &fakeSender{}
 			h := NewHandler(service, sender, store, slog.New(slog.DiscardHandler))
+			h.productionTopicID, h.maxFileSize = tt.production, 2<<30
 
 			require.NoError(t, h.HandleEvent(t.Context(), tt.event))
 			assert.Equal(t, tt.expectedFiles, store.Files())
 			assert.Equal(t, tt.expectedTexts, sender.texts)
-			assert.Empty(t, service.created, "no task is created for a file")
+			assert.Equal(t, tt.expectedTasks, service.created, "only a stored video becomes a task")
 		})
 	}
 }
@@ -256,4 +299,29 @@ func TestHandlerVideoRedelivery(t *testing.T) {
 	assert.Equal(t, first, second)
 	assert.Equal(t, testKeyPrefix+"/"+"-1001000/100/"+testFileUniqueID+".mov", first)
 	assert.Equal(t, [][]byte{[]byte(testVideoContent), []byte(testVideoContent)}, store.Saved())
+}
+
+func TestFileTooLargeText(t *testing.T) {
+	t.Parallel()
+
+	const rest = ": такие я скачать не могу. Сожмите видео или разрежьте его на части."
+
+	tests := []struct {
+		name     string
+		input    int64
+		expected string
+	}{
+		{name: "the default 2 GiB", input: 2 << 30, expected: "Файл больше лимита 2 ГБ" + rest},
+		{name: "a decimal with a comma", input: 3 << 29, expected: "Файл больше лимита 1,5 ГБ" + rest},
+		{name: "below a gigabyte", input: 500 << 20, expected: "Файл больше лимита 500 МБ" + rest},
+		{name: "unknown limit", input: 0, expected: "Файл слишком большой" + rest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, fileTooLargeText(tt.input))
+		})
+	}
 }

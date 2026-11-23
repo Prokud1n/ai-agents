@@ -20,4 +20,5 @@ type App struct {
 	Agents     *Agents     `env:",init"`
 	Tasks      *Tasks      `env:",init"`
 	Media      *Media      `env:",init"`
+	Editor     *Editor     `env:",init"`
 }

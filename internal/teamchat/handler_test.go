@@ -143,9 +143,34 @@ func TestHandlerMessages(t *testing.T) {
 			},
 		},
 		{
-			name:     "editor is not connected: a fixed answer, no task",
+			name:     "text to the editor: send a video to «Исходники», no task",
 			event:    withTarget(messageEvent("смонтируй рилс"), gateway.EditorRole),
-			expected: handlerCalls{texts: []sentText{reply(gateway.EditorRole, stubTexts[gateway.EditorRole])}},
+			expected: handlerCalls{texts: []sentText{reply(gateway.EditorRole, editorHintText)}},
+		},
+		{
+			name:    "reply to the editor's video draft: revisions by text come later",
+			service: &fakeService{reviseErr: fmt.Errorf("task 5: %w", tasks.ErrVideoRevision)},
+			event: repliedRole(withTarget(replyTo(messageEvent("убери первые 3 секунды"), testDraftID), gateway.EditorRole),
+				gateway.EditorRole),
+			expected: handlerCalls{
+				revisions: []tasks.RequestRevisionByReplyData{{
+					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, TopicID: testTopicID,
+					Agent: string(gateway.EditorRole), UserID: testUserID, Text: "убери первые 3 секунды",
+				}},
+				texts: []sentText{reply(gateway.EditorRole, tasks.VideoRevisionText)},
+			},
+		},
+		{
+			name:    "reply to another message of the editor: the hint, no task",
+			service: &fakeService{reviseErr: tasks.ErrNotFound},
+			event:   withTarget(replyTo(messageEvent("а когда?"), 55), gateway.EditorRole),
+			expected: handlerCalls{
+				revisions: []tasks.RequestRevisionByReplyData{{
+					ChatID: testChatID, ReplyToMessageID: 55, MessageID: testMessageID, TopicID: testTopicID,
+					UserID: testUserID, Text: "а когда?",
+				}},
+				texts: []sentText{reply(gateway.EditorRole, editorHintText)},
+			},
 		},
 		{
 			name:     "designer is not connected: a fixed answer, no task",
@@ -396,6 +421,12 @@ func TestHandlerCallbacks(t *testing.T) {
 			name:     "revise asks for a reply",
 			event:    callbackEvent(gateway.CopywriterRole, revise),
 			expected: handlerCalls{answers: answer(gateway.CopywriterRole, reviseHint)},
+		},
+		{
+			name:     "revise under a video draft: revisions by text come later",
+			service:  &fakeService{draftMediaKey: "edits/-1001000/100/u-v2-reel.mp4"},
+			event:    callbackEvent(gateway.EditorRole, revise),
+			expected: handlerCalls{answers: answer(gateway.EditorRole, tasks.VideoRevisionText)},
 		},
 		{
 			name:    "repeated press",

@@ -200,8 +200,32 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The pipeline of the media worker (TestIntegrationPipeline) renders with the runner's ffmpeg and libass; it runs
+      # against the ffmpeg of the media image too (job media-image).
+      - name: Install ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          fi
+          ffmpeg -hide_banner -version | sed -n 1p
+
       - name: Integration tests
         run: make test-integration
+
+      # The media worker runs apart from the app: without its secrets, as the image's nonroot user, healthy.
+      - name: Check the media worker container
+        run: |
+          docker compose ps media-worker
+          [[ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q media-worker)")" == healthy ]] \
+            || { echo "::error::media-worker is not healthy"; exit 1; }
+          [[ "$(docker compose exec -T media-worker id -u)" == 65532 ]] || { echo "::error::media-worker must run as nonroot"; exit 1; }
+          if docker compose exec -T media-worker env | grep -E '^(TELEGRAM_|ANTHROPIC_|POSTGRES_)'; then
+            echo "::error::media-worker must not get the app's secrets"
+            exit 1
+          fi
+          docker compose logs --no-log-prefix media-worker | grep -q '"msg":"mediaworker: started"'
+          echo "media-worker: healthy, nonroot, no app secrets"
 
       - name: Check that only app and postgres are published, on 127.0.0.1
         run: |
@@ -211,7 +235,7 @@ jobs:
             echo "::error::ports must be published on 127.0.0.1 only"
             exit 1
           fi
-          if grep -E '^(redis|s3|telegram-bot-api) .*->' ports.txt; then
+          if grep -E '^(redis|s3|telegram-bot-api|media-worker) .*->' ports.txt; then
             echo "::error::internal services must not be published"
             exit 1
           fi
@@ -409,6 +433,10 @@ jobs:
           docker run --rm --entrypoint /app/roughcut ai-agents-media:ci -h
           docker run --rm --entrypoint id ai-agents-media:ci
           docker run --rm --entrypoint sh ai-agents-media:ci -c 'pwd && touch probe && echo "workdir is writable"'
+          # Without a heartbeat the worker is unhealthy (the compose healthcheck).
+          if docker run --rm -e MEDIA_WORKER_DIR=/work --entrypoint /app/media-worker ai-agents-media:ci healthcheck; then
+            echo "::error::media-worker healthcheck must fail without a heartbeat"; exit 1
+          fi
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -484,6 +512,17 @@ jobs:
           CGO_ENABLED=0 go test -c -o subtitles.test ./internal/subtitles
           docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/subtitles.test:/app/subtitles.test:ro" \
             --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestBurnSubtitlesWithFFmpeg'
+
+      # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with
+      # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export.
+      - name: Run the media worker pipeline inside the media image
+        run: |
+          CGO_ENABLED=0 go test -c -o mediaworker.test ./internal/mediaworker
+          docker run --rm -e INTEGRATION=1 -v "$PWD/mediaworker.test:/app/mediaworker.test:ro" \
+            --entrypoint /app/mediaworker.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestIntegrationPipeline' \
+            | tee pipeline.txt
+          grep -q -- '--- PASS: TestIntegrationPipeline' pipeline.txt
+          if grep -q -- '--- SKIP' pipeline.txt; then echo "::error::the pipeline test was skipped"; exit 1; fi
 
       - name: Burn subtitles into a generated clip with the CLI
         run: |

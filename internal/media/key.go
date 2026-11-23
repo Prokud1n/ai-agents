@@ -157,6 +157,8 @@ type KeyInfo struct {
 	Prefix    string
 	ChatID    int64
 	MessageID int64
+	// Name is the file name without the extension: the file unique id of an incoming file.
+	Name      string
 	Extension string
 }
 
@@ -177,7 +179,27 @@ func ParseKey(key string) (KeyInfo, error) {
 		return KeyInfo{}, fmt.Errorf("message id: %w", ErrInvalidKey)
 	}
 
-	return KeyInfo{Prefix: m[1], ChatID: chatID, MessageID: messageID, Extension: m[5]}, nil
+	return KeyInfo{Prefix: m[1], ChatID: chatID, MessageID: messageID, Name: m[4], Extension: m[5]}, nil
+}
+
+// ResultKey is the key of a file made from the incoming file of the source key: <result prefix>/<chat id>/<message
+// id>/<name><ext>, next to the source by its message. name is letters, digits, "-" and "_" (at most 64), ext a dot and
+// 1-5 lower-case letters or digits, so the key parses with ParseKey.
+func ResultKey(resultPrefix string, source KeyInfo, name, ext string) (string, error) {
+	if err := validatePrefix(resultPrefix); err != nil {
+		return "", err
+	}
+
+	key := strings.Join([]string{
+		resultPrefix, strconv.FormatInt(source.ChatID, 10), strconv.FormatInt(source.MessageID, 10), name + ext,
+	}, keySeparator)
+
+	info, err := ParseKey(key)
+	if err != nil || info.Prefix != resultPrefix || info.Name != name || info.Extension != ext {
+		return "", fmt.Errorf("result file %q%q: %w", name, ext, ErrInvalidFile)
+	}
+
+	return key, nil
 }
 
 func validatePrefix(prefix string) error {

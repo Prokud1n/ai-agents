@@ -55,6 +55,9 @@ type OutgoingMedia struct {
 	ReplyTo int64
 	Caption string
 	Buttons [][]Button
+	// Width and Height of a video (0: unknown); a video is sent as streamable (MP4 with the index at the start).
+	Width  int
+	Height int
 }
 
 // Sender sends messages to the team group on behalf of a role. Messages go only to the configured group,
@@ -185,6 +188,10 @@ func (s *Sender) SendMedia(ctx context.Context, role Role, media *OutgoingMedia)
 	if !longCaption {
 		params.Caption = media.Caption
 		params.ReplyMarkup = markup
+	}
+
+	if media.Type == VideoMediaType {
+		params.Width, params.Height, params.SupportsStreaming = media.Width, media.Height, true
 	}
 
 	sent, err := sendFile(ctx, client, media.Type, params)

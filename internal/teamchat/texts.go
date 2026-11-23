@@ -2,7 +2,9 @@ package teamchat
 
 import (
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +20,9 @@ const (
 	nanoPerCent    = 10_000_000
 	centsPerDollar = 100
 	bytesInMB      = 1 << 20
+	bytesInGB      = 1 << 30
+	sizeDecimals   = 10 // one decimal in sizes
+	float64Bits    = 64
 
 	forwardedTag   = "forwarded_message"
 	paragraphBreak = "\n\n"
@@ -42,15 +47,21 @@ const (
 	captionNote = " Подпись к файлу я тоже не взял в работу — пришлите её отдельным сообщением."
 
 	// voiceText: voice messages and video notes are not processed on purpose; the trainer dictates text.
-	voiceText = "Голосовые не обрабатываю — продиктуйте текст (диктовка на клавиатуре телефона) и отправьте " +
-		"его сообщением."
+	voiceText = "Голосовые и кружки не обрабатываю — продиктуйте текст (диктовка на клавиатуре телефона) и " +
+		"отправьте его сообщением."
 	videoToEditorText = "Видео монтирует Монтажёр: пришлите его в топик «Исходники»."
 	// videoMentionText: a video in «Исходники» addressed to another bot (a mention or a reply).
-	videoMentionText   = "Уберите упоминание другого бота — видео монтирует Монтажёр."
-	videoStoredText    = "Исходник получил и сохранил. Монтаж скоро появится — пока я только храню видео."
-	videoCaptionNote   = " Подпись к видео пока не сохраняю."
-	downloadFailedText = "Не смог скачать файл — отправьте его ещё раз."
-	fileSaveFailedText = "Не смог сохранить файл — отправьте его ещё раз чуть позже."
+	videoMentionText = "Уберите упоминание другого бота — видео монтирует Монтажёр."
+	// videoAcceptedText and videoAcceptedHereText: the video became the editor's task; the draft goes to «Продакшн»
+	// when the topic is configured, otherwise to the topic of the video.
+	videoAcceptedText     = "Исходник получил, начинаю монтаж. Пришлю черновик в «Продакшн», обычно это занимает до 30 минут."
+	videoAcceptedHereText = "Исходник получил, начинаю монтаж. Пришлю черновик сюда, обычно это занимает до 30 минут."
+	videoCaptionNote      = " Подпись к видео сохранил: она будет в описании черновика."
+	downloadFailedText    = "Не смог скачать файл — отправьте его ещё раз."
+	fileSaveFailedText    = "Не смог сохранить файл — отправьте его ещё раз чуть позже."
+	// editorHintText answers a text message to the editor: it works with videos.
+	editorHintText = "Я Монтажёр: монтирую видео. Пришлите исходник в топик «Исходники» — смонтирую черновик рилс " +
+		"с субтитрами. Сценарии и подписи пишет Копирайтер, планы и идеи — к Маркетологу."
 
 	busyRevisionText = "Уже готовлю новую версию — дождитесь её и ответьте на неё."
 )
@@ -67,8 +78,6 @@ var forwardedClose = regexp.MustCompile(`(?i)</\s*` + forwardedTag + `\s*>`)
 // stubTexts answer for the roles that are not connected yet: a fixed text, without an agent run, a draft or
 // buttons (so nothing of it reaches the knowledge base as a correction).
 var stubTexts = map[gateway.Role]string{
-	gateway.EditorRole: "Я Монтажёр. Монтаж пока не подключён: он появится вместе с приёмом видео. Сценарии рилс и " +
-		"подписи пишет Копирайтер — упомяните его бота, планы и идеи — к Маркетологу.",
 	gateway.DesignerRole: "Я Дизайнер. Обложки пока не подключены: они появятся позже. Сценарии рилс и подписи пишет " +
 		"Копирайтер — упомяните его бота, планы и идеи — к Маркетологу.",
 }
@@ -149,10 +158,28 @@ func withCaptionNote(text, caption string) string {
 	return text
 }
 
-// fileTooLargeText answers a file above TELEGRAM_MAX_FILE_SIZE.
-func fileTooLargeText(size int64) string {
-	return fmt.Sprintf("Файл слишком большой (%.1f МБ): такие я скачать не могу. Сожмите видео или разрежьте его "+
-		"на части.", float64(size)/bytesInMB)
+// fileTooLargeText answers a file above TELEGRAM_MAX_FILE_SIZE: «Файл больше лимита 2 ГБ: …».
+func fileTooLargeText(limit int64) string {
+	const rest = ": такие я скачать не могу. Сожмите видео или разрежьте его на части."
+
+	if limit <= 0 {
+		return "Файл слишком большой" + rest
+	}
+
+	return "Файл больше лимита " + formatSize(limit) + rest
+}
+
+// formatSize renders a size in ГБ from a gigabyte, otherwise in МБ, with at most one decimal and a Russian comma:
+// «2 ГБ», «1,5 ГБ», «500 МБ».
+func formatSize(size int64) string {
+	value, unit := float64(size)/bytesInMB, "МБ"
+	if size >= bytesInGB {
+		value, unit = float64(size)/bytesInGB, "ГБ"
+	}
+
+	text := strconv.FormatFloat(math.Round(value*sizeDecimals)/sizeDecimals, 'f', -1, float64Bits)
+
+	return strings.Replace(text, ".", ",", 1) + " " + unit
 }
 
 // formatStatus is the answer to /status.

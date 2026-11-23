@@ -8,6 +8,8 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
+	"github.com/Prokud1n/ai-agents/internal/editjob"
+	"github.com/Prokud1n/ai-agents/internal/editor"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/health"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
@@ -51,6 +53,9 @@ func DeclareApplicationOptions() []fx.Option {
 		tasks.Module,
 		// Gateway ⇄ tasks: group events become tasks, drafts go to the group (to the log without bot tokens)
 		teamchat.Module,
+		// The editor's tasks go to the media worker (cmd/media-worker) through Redis: the app runs no ffmpeg
+		editjob.Module,
+		editor.Module,
 
 		// HTTP server goes last: it starts accepting requests once dependencies are connected
 		server.Module,

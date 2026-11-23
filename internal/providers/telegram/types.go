@@ -232,6 +232,10 @@ type SendFileParams struct {
 	ParseMode       string
 	ReplyParameters *ReplyParameters
 	ReplyMarkup     *InlineKeyboardMarkup
+	// Width, Height and SupportsStreaming are of sendVideo only; zero values are not sent.
+	Width             int
+	Height            int
+	SupportsStreaming bool
 }
 
 type getFileParams struct {
