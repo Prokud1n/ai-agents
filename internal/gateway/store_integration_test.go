@@ -2,8 +2,9 @@ package gateway
 
 import (
 	"context"
-	"strings"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,10 @@ const (
 	testBotID      = int64(1001)
 	otherTestBotID = int64(1002)
 	testEventKey   = "message:-100:42"
+	// ttlTolerance covers the time between MarkSeen and the TTL check.
+	ttlTolerance = time.Minute
+	// shortenedTTL is set by hand to see that a repeated MarkSeen does not reset the TTL back to seenTTL.
+	shortenedTTL = time.Hour
 )
 
 // newTestStore returns a store on the test Redis whose keys live under a prefix unique to the test.
@@ -192,17 +197,20 @@ func TestIntegrationRedisStoreTTL(t *testing.T) {
 
 	seenTTLLeft, err := s.rdb.TTL(ctx, s.markKey(testEventKey)).Result()
 	require.NoError(t, err)
-	assert.Positive(t, seenTTLLeft, "the mark expires")
+	assert.Greater(t, seenTTLLeft, seenTTL-ttlTolerance, "the mark lives about seenTTL")
 	assert.LessOrEqual(t, seenTTLLeft, seenTTL)
 
-	// A repeated mark does not prolong the mark.
+	// A repeated mark does not prolong the mark: shorten the TTL by hand and mark again.
+	require.NoError(t, s.rdb.Expire(ctx, s.markKey(testEventKey), shortenedTTL).Err())
+
 	isNew, err = s.MarkSeen(ctx, testEventKey)
 	require.NoError(t, err)
 	require.False(t, isNew)
 
 	repeatedTTLLeft, err := s.rdb.TTL(ctx, s.markKey(testEventKey)).Result()
 	require.NoError(t, err)
-	assert.LessOrEqual(t, repeatedTTLLeft, seenTTLLeft)
+	assert.Positive(t, repeatedTTLLeft)
+	assert.LessOrEqual(t, repeatedTTLLeft, shortenedTTL)
 
 	// TTL reports -1 (as a duration of -1ns in go-redis) for a key without expiry.
 	offsetTTL, err := s.rdb.TTL(ctx, s.offsetKey(testBotID)).Result()
@@ -229,12 +237,15 @@ func TestIntegrationRedisStoreKeysUnderPrefix(t *testing.T) {
 	keys, err := s.rdb.Keys(ctx, s.prefix+"*").Result()
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
-		s.prefix + offsetKeyPrefix + "1001",
+		s.prefix + offsetKeyPrefix + strconv.FormatInt(testBotID, 10),
 		s.prefix + seenKeyPrefix + testEventKey,
 	}, keys)
 
 	// Nothing is written under the production keys.
-	exists, err := s.rdb.Exists(ctx, offsetKeyPrefix+"1001", seenKeyPrefix+testEventKey).Result()
+	exists, err := s.rdb.Exists(ctx,
+		offsetKeyPrefix+strconv.FormatInt(testBotID, 10),
+		seenKeyPrefix+testEventKey,
+	).Result()
 	require.NoError(t, err)
 	assert.Zero(t, exists)
 
@@ -248,8 +259,4 @@ func TestIntegrationRedisStoreKeysUnderPrefix(t *testing.T) {
 	isNew, err := other.MarkSeen(ctx, testEventKey)
 	require.NoError(t, err)
 	assert.True(t, isNew)
-
-	for _, key := range keys {
-		assert.True(t, strings.HasPrefix(key, s.prefix), key)
-	}
 }
