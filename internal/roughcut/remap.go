@@ -49,7 +49,7 @@ func remapTranscript(src *transcription.Result, keep []Interval, hidden []bool) 
 
 	for i, w := range src.Words {
 		k, ok := findInterval(keep, (w.Start+w.End)/2)
-		if !ok || (hidden != nil && hidden[i]) {
+		if !ok || (i < len(hidden) && hidden[i]) {
 			continue
 		}
 

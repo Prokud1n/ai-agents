@@ -19,6 +19,8 @@ const (
 	titleLength  = "от 1 до 40 символов"
 	squatsName   = "Приседания"
 	bridgeTitle  = "Мост"
+	// outsideTranscript is the check failure of word indices past the transcript.
+	outsideTranscript = "вне расшифровки"
 )
 
 const (
@@ -202,7 +204,7 @@ func TestApplyRejectsInvalidWorkoutEdit(t *testing.T) {
 		{
 			name:     "hidden words past the transcript",
 			input:    Input{Hide: []roughcut.WordRange{{From: 10, To: 11}}},
-			expected: "вне расшифровки",
+			expected: outsideTranscript,
 		},
 		{
 			name:     "a title that ends before it starts",

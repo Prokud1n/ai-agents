@@ -58,12 +58,12 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 		{
 			name: "a word past the transcript", version: 2,
 			input:    edit(func(in *Input) { in.Remove = []roughcut.WordRange{{From: 10, To: 11}} }),
-			expected: "вне расшифровки",
+			expected: outsideTranscript,
 		},
 		{
 			name: "a reversed range", version: 2,
 			input:    edit(func(in *Input) { in.Restore = []roughcut.WordRange{{From: 4, To: 3}} }),
-			expected: "вне расшифровки",
+			expected: outsideTranscript,
 		},
 		{
 			name: "an unknown candidate", version: 1,
