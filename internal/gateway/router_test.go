@@ -235,6 +235,29 @@ func TestRouterMessages(t *testing.T) {
 			},
 		},
 		{
+			name:  "idea backlog command",
+			input: groupMessage("/ideas", withEntities(command(6))),
+			expected: routed{
+				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: IdeasCommand, IsCommand: true,
+			},
+		},
+		{
+			name:  "idea done command with the number",
+			input: groupMessage("/idea_done 12", inTopic(sourcesTopic), withEntities(command(10))),
+			expected: routed{
+				Type: CommandEventType, Target: MarketerRole, Topic: SourcesTopic, TopicID: sourcesTopic,
+				Command: IdeaDoneCommand, Text: "12", IsCommand: true,
+			},
+		},
+		{
+			name:  "idea drop command with the bot name",
+			input: groupMessage("/idea_drop@Marketer_Bot 3", withEntities(command(23))),
+			expected: routed{
+				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: IdeaDropCommand, Text: "3",
+				IsCommand: true,
+			},
+		},
+		{
 			name:  "unknown command is a plain message",
 			input: groupMessage("/start", withEntities(command(6))),
 			expected: routed{

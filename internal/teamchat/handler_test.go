@@ -332,20 +332,10 @@ func TestHandlerCommands(t *testing.T) {
 			},
 		},
 		{
-			name:  "idea with text",
-			event: commandEvent(gateway.IdeaCommand, "челлендж на 7 дней"),
+			name:  "idea with text: the trainer's words are the input (the idea executor wraps them as data)",
+			event: commandEvent(gateway.IdeaCommand, "  челлендж на 7 дней "),
 			expected: handlerCalls{
-				created: []tasks.CreateTaskData{taskData(gateway.MarketerRole, IdeaTaskKind,
-					ideaTask+"\n\nТренер пишет: челлендж на 7 дней")},
-				reactions: taken(),
-			},
-		},
-		{
-			name:  "forwarded idea is data",
-			event: forwarded(commandEvent(gateway.IdeaCommand, "чужая идея")),
-			expected: handlerCalls{
-				created: []tasks.CreateTaskData{taskData(gateway.MarketerRole, IdeaTaskKind,
-					ideaTask+paragraphBreak+forwardedInput("чужая идея"))},
+				created:   []tasks.CreateTaskData{taskData(gateway.MarketerRole, IdeaTaskKind, "челлендж на 7 дней")},
 				reactions: taken(),
 			},
 		},

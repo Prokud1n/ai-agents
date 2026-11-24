@@ -182,7 +182,7 @@ func (r *router) messageEvent(
 		event.Command = cmd
 		event.Text = args
 
-		// Team commands (plan, ideas, status, pause) belong to the marketer unless addressed to a bot.
+		// Team commands (plan, idea, ideas, idea_done, idea_drop, status, pause) belong to the marketer unless addressed to a bot.
 		if event.Target == "" {
 			event.Target = MarketerRole
 		}
@@ -408,7 +408,7 @@ func parseCommand(
 
 func isTeamCommand(cmd Command) bool {
 	switch cmd {
-	case PlanCommand, IdeaCommand, StatusCommand, PauseCommand:
+	case PlanCommand, IdeaCommand, StatusCommand, PauseCommand, IdeasCommand, IdeaDoneCommand, IdeaDropCommand:
 		return true
 	default:
 		return false

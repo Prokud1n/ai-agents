@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Idea backlog (T2.4, `internal/ideas`, migration 007). `/idea <text>` makes an idea card instead of a brief: the
+  marketer answers with the final `submit_idea` tool (title, what the reel is about in 1–3 sentences, format — talk,
+  workout, carousel or other with a note — and the hook); the card is checked (lengths, known format, no control or
+  invisible characters; an invalid card goes back to the model once) and kept by fields per version (`idea_cards`), the
+  draft text is made from the fields. «Одобрить» under a card is «В бэклог»: the approved card becomes an idea with a
+  short number (`ideas`, one per task: a repeated press or a redelivery makes no duplicate), the marketer answers «Идея №N
+  в бэклоге…» instead of «Одобрено.»; a revision by a reply makes a new card version, a rejection saves nothing
+  («Отклонено: в бэклог идея не попала.»). New commands of the marketer, answered at once without a task or the model:
+  `/ideas` (new ideas, the newest first, 15 lines and «…и ещё N»), `/idea_done N` and `/idea_drop N` (honest answers to
+  an unknown number or an idea closed before). Statuses `new` → `planned` → `done` / `dropped`; for `/plan` (T2.2) the
+  service has `ListForPlan` and `MarkPlanned`. An approved idea whose save failed is restored by the next list. Ideas in
+  plain messages without `/idea` are not recognized on purpose.
 - Workout editing (T3.10). A cut has a mode, kept in `plan.json` (`Edit.Mode`, `Plan.Mode`) and carried over the
   versions: `talk` (as before: pauses, fillers and failed takes are cut) or `workout` — the video stays whole, only what
   the editor cut explicitly goes (words, `Edit.CutTime` fragments by time, trims by time, accepted repeats). The model
@@ -330,6 +342,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Executor routes are a value group: a module provides `tasks.Route{Agent, Kind, Executor}` with
+  `tasks.RoutesGroup` instead of decorating `tasks.Executor` (the editor moved to it); a route of an agent and a kind
+  wins over a route of the agent. `tasks.Draft` and `tasks.CloseDraftData` carry the task kind.
 - `agents.Runtime` marks the end of the first user message with `cache_control` for every agent: runs with several
   turns read the task from the cache, single-turn runs pay the cache write.
 

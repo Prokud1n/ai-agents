@@ -10,6 +10,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/editor"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/mediaworker"
 	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
@@ -52,6 +53,7 @@ func TestApplicationWiresGatewayToTasks(t *testing.T) {
 		fx.Invoke(func(gateway.Handler, tasks.Notifier, *teamchat.Handler) {}),
 		fx.Invoke(func(*media.Store) {}),
 		fx.Invoke(func(tasks.Executor, *editor.Executor, *editplan.Decider) {}),
+		fx.Invoke(func(*ideas.Service) {}),
 	)...)
 
 	require.NoError(t, err)

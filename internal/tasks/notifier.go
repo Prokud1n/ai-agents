@@ -24,6 +24,8 @@ type Draft struct {
 	TaskID  int64
 	Version int
 	Agent   string // the agent's bot sends the draft
+	// Kind is the task kind: the notifier may label the buttons of a kind its own way (an idea goes «В бэклог»).
+	Kind    string
 	ChatID  int64
 	TopicID int64
 	// ReplyToMessageID is the source message of the task.
@@ -50,7 +52,9 @@ type CloseDraftData struct {
 	TaskID  int64
 	Version int
 	Agent   string
-	ChatID  int64
+	// Kind is the task kind, as in Draft.
+	Kind   string
+	ChatID int64
 	// TopicID is the topic of the draft (the task's source topic), for a message about the decision.
 	TopicID   int64
 	MessageID int64

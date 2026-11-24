@@ -11,6 +11,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/knowledge/kbtool"
 )
 
@@ -21,7 +22,9 @@ func TestEveryRoleHasAgent(t *testing.T) {
 	t.Parallel()
 
 	root := filepath.Join("..", "..")
-	tools := []agents.Tool{kbtool.NewSearchTool(nil, nil, slog.New(slog.DiscardHandler)), editplan.NewSubmitTool()}
+	tools := []agents.Tool{
+		kbtool.NewSearchTool(nil, nil, slog.New(slog.DiscardHandler)), editplan.NewSubmitTool(), ideas.NewSubmitTool(),
+	}
 
 	registry, err := agents.LoadRegistry(filepath.Join(root, "agents"), filepath.Join(root, "skills"), tools)
 	require.NoError(t, err)

@@ -29,6 +29,13 @@ func draftButtons(version int) [][]gateway.Button {
 	}}
 }
 
+func ideaButtons(version int) [][]gateway.Button {
+	rows := draftButtons(version)
+	rows[0][0].Text = "В бэклог"
+
+	return rows
+}
+
 func TestNotifierSendDraft(t *testing.T) {
 	t.Parallel()
 
@@ -74,6 +81,18 @@ func TestNotifierSendDraft(t *testing.T) {
 			expected: sentText{Role: gateway.MarketerRole, Msg: gateway.OutgoingMessage{
 				TopicID: testTopicID, ReplyTo: testMessageID,
 				Text: "Версия 3\n\nНе получилось применить правку.\n\n" + draftBody, Buttons: draftButtons(3),
+			}},
+			expectedSent: tasks.SentDraft{MessageID: testDraftID},
+		},
+		{
+			name: "idea card: «Одобрить» is «В бэклог»",
+			draft: tasks.Draft{
+				TaskID: testTaskID, Version: 1, Agent: string(gateway.MarketerRole), Kind: IdeaTaskKind,
+				ChatID: testChatID, TopicID: testTopicID, ReplyToMessageID: testMessageID, Text: draftBody,
+				Buttons: tasks.DraftButtons(testTaskID, 1),
+			},
+			expected: sentText{Role: gateway.MarketerRole, Msg: gateway.OutgoingMessage{
+				TopicID: testTopicID, ReplyTo: testMessageID, Text: draftBody, Buttons: ideaButtons(1),
 			}},
 			expectedSent: tasks.SentDraft{MessageID: testDraftID},
 		},
@@ -135,6 +154,7 @@ func TestNotifierCloseDraft(t *testing.T) {
 	tests := []struct {
 		name          string
 		decision      tasks.Action
+		kind          string
 		duplicate     bool
 		editErr       error
 		expectedTexts []sentText
@@ -144,6 +164,11 @@ func TestNotifierCloseDraft(t *testing.T) {
 		{name: "rejected", decision: tasks.RejectAction, expectedTexts: decision(rejectedText)},
 		{name: "sent for revision", decision: tasks.ReviseAction, expectedTexts: decision("Принял правку, готовлю версию 3.")},
 		{name: "duplicate only loses its buttons", duplicate: true},
+		{name: "approved idea: the handler tells its number", decision: tasks.ApproveAction, kind: IdeaTaskKind},
+		{
+			name: "rejected idea", decision: tasks.RejectAction, kind: IdeaTaskKind,
+			expectedTexts: decision("Отклонено: в бэклог идея не попала."),
+		},
 		{
 			name: "buttons already removed", decision: tasks.ApproveAction, editErr: notModifiedErr,
 			expectedTexts: decision(approvedText),
@@ -161,7 +186,7 @@ func TestNotifierCloseDraft(t *testing.T) {
 			sender := &fakeSender{editErr: tt.editErr}
 
 			err := NewNotifier(sender, slog.New(slog.DiscardHandler)).CloseDraft(t.Context(), &tasks.CloseDraftData{
-				TaskID: testTaskID, Version: 2, Agent: string(gateway.CopywriterRole), ChatID: testChatID,
+				TaskID: testTaskID, Version: 2, Agent: string(gateway.CopywriterRole), Kind: tt.kind, ChatID: testChatID,
 				TopicID: testTopicID, MessageID: testDraftID, Decision: tt.decision, Duplicate: tt.duplicate,
 			})
 

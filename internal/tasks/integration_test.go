@@ -249,7 +249,7 @@ func TestIntegrationFailedRevisionReturnsPreviousVersion(t *testing.T) {
 
 	env := newTestEnv(t, pgtest.Connect(t),
 		fakeResult{text: testVersion1},
-		fakeResult{err: classifyAgentError(errors.Join(errors.New("stop_reason refusal, request_id req_9"), agents.ErrRefusal))},
+		fakeResult{err: ClassifyAgentError(errors.Join(errors.New("stop_reason refusal, request_id req_9"), agents.ErrRefusal))},
 		fakeResult{text: testVersion2},
 	)
 	ctx := context.Background()
@@ -394,7 +394,7 @@ func TestIntegrationRetriesThenFailed(t *testing.T) {
 func TestIntegrationPermanentErrorFailsAtOnce(t *testing.T) {
 	t.Parallel()
 
-	refusal := classifyAgentError(agents.ErrRefusal)
+	refusal := ClassifyAgentError(agents.ErrRefusal)
 	env := newTestEnv(t, pgtest.Connect(t), fakeResult{err: refusal})
 	ctx := context.Background()
 

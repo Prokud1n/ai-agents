@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -23,6 +24,8 @@ const (
 	bytesInGB      = 1 << 30
 	sizeDecimals   = 10 // one decimal in sizes
 	float64Bits    = 64
+	decimalBase    = 10
+	int64Bits      = 64
 
 	forwardedTag   = "forwarded_message"
 	paragraphBreak = "\n\n"
@@ -40,8 +43,9 @@ const (
 
 	emptyIdeaText      = "Напишите идею после команды: /idea <текст>."
 	pauseText          = "Пауза пока не поддерживается: задачи в очереди выполнятся как обычно. Ненужный черновик можно отклонить."
-	unknownCommandText = "Такой команды нет. Команды: /plan [пожелания] — контент-план, /idea <текст> — идея в работу, " +
-		"/status — задачи и расход, /pause — пауза (пока не поддерживается). Задачу можно написать и обычным сообщением."
+	unknownCommandText = "Такой команды нет. Команды: /plan [пожелания] — контент-план, /idea <текст> — идея в бэклог, " +
+		"/ideas — бэклог идей, /idea_done N и /idea_drop N — идея сделана или не нужна, /status — задачи и расход, " +
+		"/pause — пауза (пока не поддерживается). Задачу можно написать и обычным сообщением."
 
 	photoText = "Фото и картинки пока не обрабатываю: приём появится вместе с обложками. Опишите задачу текстом."
 	audioText = "Аудиофайлы не обрабатываю. Напишите задачу текстом — можно продиктовать её диктовкой на клавиатуре " +
@@ -68,10 +72,23 @@ const (
 	busyRevisionText = "Уже готовлю новую версию — дождитесь её и ответьте на неё."
 )
 
-// Task inputs of the commands; the trainer's words follow them.
+// Task input of /plan; the trainer's words follow it.
+const planTask = "Тренер просит контент-план (команда /plan)."
+
+// The idea backlog.
 const (
-	planTask = "Тренер просит контент-план (команда /plan)."
-	ideaTask = "Тренер прислал идею (команда /idea): разбери её и предложи, как превратить в контент."
+	// ideasListLimit is the number of ideas /ideas shows; the rest are counted.
+	ideasListLimit = 15
+	ideaDateLayout = "02.01"
+	ideaNumberSign = "№"
+
+	// ideaSaveFailedAnswer: the card is approved, its save failed (a button answer: at most 200 characters).
+	ideaSaveFailedAnswer = "Одобрено, но в бэклог сохранить не получилось. Идея появится в /ideas, как только база ответит."
+	ideasEmptyText       = "Бэклог идей пуст. Пришлите идею командой /idea <текст>."
+	ideasHeader          = "Идеи в бэклоге (новые сверху):"
+	ideasFooter          = "Отметить: /idea_done N — сделана, /idea_drop N — не нужна."
+	ideasListFailedText  = "Не получилось прочитать бэклог идей. Попробуйте чуть позже."
+	ideaCloseFailedText  = "Не получилось обновить бэклог идей. Попробуйте чуть позже."
 )
 
 // forwardedClose matches a closing tag of the forwarded block in any case and with any spaces.
@@ -217,4 +234,82 @@ func formatDollars(nano int64) string {
 	}
 
 	return fmt.Sprintf("%d.%02d", cents/centsPerDollar, cents%centsPerDollar)
+}
+
+// ideaSavedText tells the number of an idea put into the backlog, in the topic of its card.
+func ideaSavedText(id int64) string {
+	return fmt.Sprintf("Идея №%d в бэклоге. Список — /ideas, отметить сделанной — /idea_done %d, убрать — /idea_drop %d.",
+		id, id, id)
+}
+
+// ideaSavedAnswer answers «В бэклог».
+func ideaSavedAnswer(id int64) string {
+	return fmt.Sprintf("Идея №%d в бэклоге", id)
+}
+
+// formatIdeas is the answer to /ideas: the ideas shown (the newest first) out of total.
+func formatIdeas(list []ideas.Idea, total int) string {
+	if len(list) == 0 {
+		return ideasEmptyText
+	}
+
+	var b strings.Builder
+
+	b.WriteString(ideasHeader + "\n")
+
+	for i := range list {
+		fmt.Fprintf(&b, "№%d — %s, %s\n", list[i].ID, list[i].Card.Title, list[i].CreatedAt.UTC().Format(ideaDateLayout))
+	}
+
+	if rest := total - len(list); rest > 0 {
+		fmt.Fprintf(&b, "…и ещё %d.\n", rest)
+	}
+
+	b.WriteString("\n" + ideasFooter)
+
+	return b.String()
+}
+
+// parseIdeaNumber reads the number of /idea_done and /idea_drop: «5», «№5», «#5».
+func parseIdeaNumber(args string) (int64, bool) {
+	fields := strings.Fields(args)
+	if len(fields) != 1 {
+		return 0, false
+	}
+
+	number := strings.TrimPrefix(strings.TrimPrefix(fields[0], ideaNumberSign), "#")
+
+	id, err := strconv.ParseInt(number, decimalBase, int64Bits)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+
+	return id, true
+}
+
+// ideaNumberHint answers /idea_done or /idea_drop without a valid number.
+func ideaNumberHint(command gateway.Command) string {
+	return fmt.Sprintf("Укажите номер идеи: /%s 5. Номера — в /ideas.", command)
+}
+
+func ideaNotFoundText(id int64) string {
+	return fmt.Sprintf("Идеи №%d нет. Номера — в /ideas.", id)
+}
+
+// ideaClosedText answers a closed idea.
+func ideaClosedText(idea *ideas.Idea) string {
+	if idea.Status == ideas.DoneStatus {
+		return fmt.Sprintf("Идея №%d «%s» отмечена сделанной.", idea.ID, idea.Card.Title)
+	}
+
+	return fmt.Sprintf("Идея №%d «%s» убрана из бэклога.", idea.ID, idea.Card.Title)
+}
+
+// ideaAlreadyClosedText answers an idea that was closed before.
+func ideaAlreadyClosedText(idea *ideas.Idea) string {
+	if idea.Status == ideas.DoneStatus {
+		return fmt.Sprintf("Идея №%d уже отмечена сделанной.", idea.ID)
+	}
+
+	return fmt.Sprintf("Идея №%d уже убрана из бэклога.", idea.ID)
 }

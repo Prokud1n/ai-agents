@@ -43,6 +43,10 @@ const (
 	IdeaCommand   Command = "idea"
 	StatusCommand Command = "status"
 	PauseCommand  Command = "pause"
+	// IdeasCommand lists the idea backlog; IdeaDoneCommand and IdeaDropCommand close an idea by its number.
+	IdeasCommand    Command = "ideas"
+	IdeaDoneCommand Command = "idea_done"
+	IdeaDropCommand Command = "idea_drop"
 )
 
 // Topic is a named forum topic of the team group.
