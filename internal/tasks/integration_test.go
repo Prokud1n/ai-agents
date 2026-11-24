@@ -124,6 +124,7 @@ func checkFirstVersion(t *testing.T, env *testEnv, taskID int64) {
 	assert.Equal(t, testVersion1, drafts[0].Text)
 	assert.Empty(t, drafts[0].Note)
 	assert.Equal(t, testAgent, drafts[0].Agent)
+	assert.Equal(t, testTaskKind, drafts[0].Kind, "the notifier may label the buttons by the kind")
 	assert.Equal(t, int64(7), drafts[0].TopicID)
 	assert.Equal(t, int64(10), drafts[0].ReplyToMessageID)
 	assert.Equal(t, DraftButtons(taskID, 1), drafts[0].Buttons)
@@ -218,14 +219,14 @@ func checkApproval(t *testing.T, env *testEnv, taskID int64) {
 	closed := env.notifier.Closed()
 	require.Len(t, closed, 2)
 	assert.Equal(t, CloseDraftData{
-		TaskID: taskID, Version: 2, Agent: testAgent, ChatID: task.Source.ChatID, TopicID: task.Source.TopicID,
-		MessageID: 1002, Decision: ApproveAction,
+		TaskID: taskID, Version: 2, Agent: testAgent, Kind: testTaskKind, ChatID: task.Source.ChatID,
+		TopicID: task.Source.TopicID, MessageID: 1002, Decision: ApproveAction,
 	}, closed[1])
 
 	saved := env.corrections.Saved()
 	require.Len(t, saved, 1)
 	assert.Equal(t, testAgent, saved[0].Agent)
-	assert.Equal(t, "reels-script", saved[0].TaskKind)
+	assert.Equal(t, testTaskKind, saved[0].TaskKind)
 	assert.Equal(t, testVersion1, saved[0].Original)
 	assert.Equal(t, testVersion2, saved[0].Corrected)
 	assert.Equal(t, "Сделай хук короче", saved[0].Comment)
@@ -700,8 +701,8 @@ func TestIntegrationDuplicateDraftIsClosed(t *testing.T) {
 	closed := env.notifier.Closed()
 	require.Len(t, closed, 1)
 	assert.Equal(t, CloseDraftData{
-		TaskID: task.ID, Version: 1, Agent: testAgent, ChatID: task.Source.ChatID, TopicID: task.Source.TopicID,
-		MessageID: 1001, Duplicate: true,
+		TaskID: task.ID, Version: 1, Agent: testAgent, Kind: testTaskKind, ChatID: task.Source.ChatID,
+		TopicID: task.Source.TopicID, MessageID: 1001, Duplicate: true,
 	}, closed[0])
 
 	_, _, err = env.service.FindByDraftMessage(ctx, task.Source.ChatID, 1001)
