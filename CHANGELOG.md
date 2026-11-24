@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Onboarding in the chat (T4.3a). `/help` and `/start` explain what each role does, where to send what, the commands,
+  examples of revisions for the editor and how to give feedback; in a topic the part about that topic comes first. On
+  start the gateway sets the command menu of the group for the marketer's bot (`setMyCommands`: `/help`, `/idea`,
+  `/ideas`, `/idea_done`, `/idea_drop`, `/feedback`, `/status`) and removes the menus of the other three bots, so the
+  commands are listed once; a failure is only logged. The service command `/onboard` (`TELEGRAM_ADMIN_USER_IDS`, empty —
+  anyone of the allowlist) publishes short greetings in «Планёрка», «Исходники» (from the editor) and «Продакшн» and
+  pins them with the marketer's bot; a repeated `/onboard` edits them instead of posting duplicates
+  (`onboarding_messages`); without the right to pin the admin gets an honest answer and «Техничка» a note.
+- Pilot feedback and metrics (T4.5, `internal/pilot`, migration 008). `/feedback <text>` in any topic is saved
+  (`feedback`: author, text up to 2000 characters with a note when cut, topic, and the task and version when it replies
+  to a draft), copied to «Техничка» with a link and thanked with «Спасибо, передал команде.»; an empty one gets a
+  hint, a forwarded one is refused, a redelivered one is saved once. The metrics are counted from `tasks` and
+  `task_versions` (tasks created in the period, by agent): created, approved, approved at the first version (share),
+  average revisions before the approval, rejected, and for the editor the time from the task to the first draft
+  (median and maximum), plus the number of feedbacks. `/status` adds them for 7 days; a weekly report with the week's
+  feedback goes to «Техничка» at `PILOT_REPORT_WEEKDAY` / `PILOT_REPORT_TIME` (`TEAM_TIMEZONE`, empty — off), at most
+  once a week (`pilot_reports`), a missed one is sent on start within a day.
+
 - Idea backlog (T2.4, `internal/ideas`, migration 007). `/idea <text>` makes an idea card instead of a brief: the
   marketer answers with the final `submit_idea` tool (title, what the reel is about in 1–3 sentences, format — talk,
   workout, carousel or other with a note — and the hook); the card is checked (lengths, known format, no control or
@@ -348,6 +366,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dead ends point to `/help`: an unknown command answers «Такой команды нет. Команды — /help.» instead of listing
+  every command; the editor's answer to a text, the designer's stub and the answers to voice messages, video notes,
+  photos and audio files end with a pointer to `/help`. `/help`, `/start`, `/feedback` and `/onboard` are team commands
+  of the marketer now.
 - Executor routes are a value group: a module provides `tasks.Route{Agent, Kind, Executor}` with
   `tasks.RoutesGroup` instead of decorating `tasks.Executor` (the editor moved to it); a route of an agent and a kind
   wins over a route of the agent. `tasks.Draft` and `tasks.CloseDraftData` carry the task kind.

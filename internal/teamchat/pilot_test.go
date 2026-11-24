@@ -147,7 +147,7 @@ func TestHandlerFeedback(t *testing.T) {
 			expected: pilotCalls{
 				feedback: saved(0, 0, "Монтаж отличный", false),
 				texts:    []sentText{reply(gateway.MarketerRole, feedbackThanksText)},
-				reports:  []string{"Отзыв №1 от Анастасия, топик «Планёрка»:\nМонтаж отличный\nhttps://t.me/c/1000/100"},
+				reports:  []string{"Отзыв №1 от Анастасия, топик «Планёрка»:\nМонтаж отличный\nhttps://t.me/c/1000/7/100"},
 			},
 		},
 		{
@@ -157,7 +157,7 @@ func TestHandlerFeedback(t *testing.T) {
 				feedback: saved(testTaskID, 2, "Субтитры мелкие", false),
 				texts:    []sentText{reply(gateway.MarketerRole, feedbackThanksText)},
 				reports: []string{"Отзыв №1 от Анастасия, топик «Планёрка», к задаче 5 (версия 2):\nСубтитры мелкие\n" +
-					"https://t.me/c/1000/100"},
+					"https://t.me/c/1000/7/100"},
 			},
 		},
 		{
@@ -167,7 +167,7 @@ func TestHandlerFeedback(t *testing.T) {
 			expected: pilotCalls{
 				feedback: saved(0, 0, "Всё понятно", false),
 				texts:    []sentText{reply(gateway.MarketerRole, feedbackThanksText)},
-				reports:  []string{"Отзыв №1 от Анастасия, топик «Планёрка»:\nВсё понятно\nhttps://t.me/c/1000/100"},
+				reports:  []string{"Отзыв №1 от Анастасия, топик «Планёрка»:\nВсё понятно\nhttps://t.me/c/1000/7/100"},
 			},
 		},
 		{
@@ -177,7 +177,7 @@ func TestHandlerFeedback(t *testing.T) {
 				feedback: saved(0, 0, strings.Repeat("а", maxFeedbackLength), true),
 				texts:    []sentText{reply(gateway.MarketerRole, feedbackThanksText+feedbackTruncatedNote)},
 				reports: []string{"Отзыв №1 от Анастасия, топик «Планёрка»:\n" + strings.Repeat("а", maxFeedbackLength) +
-					"\n(обрезан до 2000 символов)\nhttps://t.me/c/1000/100"},
+					"\n(обрезан до 2000 символов)\nhttps://t.me/c/1000/7/100"},
 			},
 		},
 		{
@@ -502,28 +502,6 @@ func TestFormatAgentMetrics(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.expected, formatAgentMetrics(&tt.input))
-		})
-	}
-}
-
-func TestMessageLink(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		chatID   int64
-		expected string
-	}{
-		{name: "supergroup", chatID: -1001234567890, expected: "https://t.me/c/1234567890/7"},
-		{name: "basic group: no link", chatID: -12345, expected: ""},
-		{name: "private chat: no link", chatID: 12345, expected: ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.expected, messageLink(tt.chatID, 7))
 		})
 	}
 }

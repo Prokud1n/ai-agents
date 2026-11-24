@@ -488,7 +488,6 @@ const (
 	forwardedFeedbackText = "Пересланные сообщения как отзыв не принимаю. Напишите отзыв сами: /feedback и текст."
 	feedbackThanksText    = "Спасибо, передал команде."
 	feedbackFailedText    = "Не получилось сохранить отзыв. Попробуйте чуть позже."
-	tmeChatPrefix         = "100" // a supergroup ID is -100<ID of t.me/c links>
 )
 
 // feedbackTruncatedNote follows the thanks when the feedback was cut.
@@ -531,7 +530,7 @@ func feedbackTechText(fb *pilot.Feedback) string {
 		fmt.Fprintf(&b, "\n(обрезан до %d символов)", maxFeedbackLength)
 	}
 
-	if link := messageLink(fb.ChatID, fb.MessageID); link != "" {
+	if link := messageLink(fb.ChatID, fb.TopicID, fb.MessageID); link != "" {
 		b.WriteString("\n" + link)
 	}
 
@@ -545,16 +544,6 @@ func topicPlace(topic gateway.Topic) string {
 	}
 
 	return "вне топиков"
-}
-
-// messageLink is the t.me link to a message of a supergroup; "" for another chat.
-func messageLink(chatID, messageID int64) string {
-	id := strconv.FormatInt(-chatID, decimalBase)
-	if chatID >= 0 || !strings.HasPrefix(id, tmeChatPrefix) || len(id) == len(tmeChatPrefix) {
-		return ""
-	}
-
-	return "https://t.me/c/" + strings.TrimPrefix(id, tmeChatPrefix) + "/" + strconv.FormatInt(messageID, decimalBase)
 }
 
 // Metrics of the pilot (/status and the weekly report to «Техничка»).
