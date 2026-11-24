@@ -27,6 +27,7 @@ import (
 const (
 	testTaskID    = int64(17)
 	testJobID     = "task-17-v1"
+	testJob2ID    = "task-17-v2"
 	testSourceKey = "incoming/-1001234567890/42/uniq.mov"
 	testReelKey   = "edits/-1001234567890/42/uniq-v1-reel.mp4"
 	testReel2Key  = "edits/-1001234567890/42/uniq-v2-reel.mp4"
@@ -616,7 +617,7 @@ func TestExecutorRevision(t *testing.T) {
 
 	require.Len(t, b.submitted, 1)
 	job := b.submitted[0]
-	assert.Equal(t, "task-17-v2", job.ID)
+	assert.Equal(t, testJob2ID, job.ID)
 	assert.Equal(t, editjob.RenderStage, job.Stage, "the worker renders from the stored transcript")
 	assert.Equal(t, &editOutcome().Edit, job.Edit)
 	assert.Equal(t, &testPlan().Settings, job.Settings)
@@ -771,7 +772,7 @@ func TestExecutorRetriesRender(t *testing.T) {
 	t.Parallel()
 
 	render := pendingJob(2 * time.Hour)
-	render.ID, render.Version, render.Stage = "task-17-v2", 2, editjob.RenderStage
+	render.ID, render.Version, render.Stage = testJob2ID, 2, editjob.RenderStage
 	render.Settings, render.Edit = &testPlan().Settings, &editOutcome().Edit
 	render.RevisionHash = editjob.TextHash(testRevision)
 	b := &fakeBoard{
@@ -806,7 +807,7 @@ func TestExecutorLastAttemptForgetsRender(t *testing.T) {
 	t.Parallel()
 
 	render := pendingJob(time.Hour)
-	render.ID, render.Version, render.Stage = "task-17-v2", 2, editjob.RenderStage
+	render.ID, render.Version, render.Stage = testJob2ID, 2, editjob.RenderStage
 	render.Settings, render.RevisionHash = &testPlan().Settings, editjob.TextHash(testRevision)
 	b := &fakeBoard{
 		job:    render,
@@ -829,7 +830,7 @@ func TestExecutorStaleRevision(t *testing.T) {
 	t.Parallel()
 
 	old := pendingJob(time.Hour)
-	old.ID, old.Version, old.Stage = "task-17-v2", 2, editjob.RenderStage
+	old.ID, old.Version, old.Stage = testJob2ID, 2, editjob.RenderStage
 	old.Settings, old.RevisionHash = &testPlan().Settings, editjob.TextHash("оставь второй дубль")
 	done := &editjob.Result{JobID: old.ID, Status: editjob.DoneStatus, SourceDuration: 60, Duration: 30}
 
