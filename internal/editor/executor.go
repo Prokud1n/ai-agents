@@ -1,7 +1,16 @@
-// Package editor is the editor (Монтажёр) on the app's side: its tasks are not run by a model but by the media
-// worker (cmd/media-worker), which edits the source video in a container of its own. Executor gives the job to the
-// worker through the board (internal/editjob) and turns its result into a video draft; Waker runs the task as soon as
-// the worker announces the result.
+// Package editor is the editor (Монтажёр) on the app's side. The video is edited by the media worker
+// (cmd/media-worker) in a container of its own; what to cut is decided here, by the editor's agent (agents/editor,
+// internal/editplan), from the transcript and the plan the worker stored in S3. Executor gives the jobs to the worker
+// through the board (internal/editjob) and turns its result into a video draft; Waker runs the task as soon as the
+// worker announces a result.
+//
+// The first version is one auto job: the worker transcribes and plans; with nothing to decide (no caption of the
+// trainer, no disputed repeats) it renders at once, otherwise it stops with a planned result, the model decides here,
+// and the job is replaced by its render stage (the transcript is not made again). A revision («Правки» or a reply to
+// the video draft) is a new version: the model decides on the previous version's plan and the revision text, and the
+// worker renders the new version from the stored transcript under the keys of that version, so the earlier drafts
+// stay. The model's decision is checked (editplan.Apply) before any job carries it; the trainer's text never reaches
+// the worker.
 //
 // Executor never waits for the worker: a run that finds no result yet is deferred (tasks.DeferredError), so the task
 // goes back to the queue, no task worker is held for the minutes of the edit, the app stops at once, and the task is
@@ -16,34 +25,49 @@ package editor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editjob"
+	"github.com/Prokud1n/ai-agents/internal/editplan"
+	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
+	"github.com/Prokud1n/ai-agents/internal/roughcut"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
+	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
 // AgentName is the editor's agent: the tasks of the editor's bot (gateway.EditorRole).
-const AgentName = "editor"
+const AgentName = editplan.AgentName
 
 const (
 	// startGrace: the worker reports a job that ran out of time itself; the app fails it only this much later.
 	startGrace = time.Minute
+	// maxArtifactSize of the transcript or the plan read from S3.
+	maxArtifactSize = 32 << 20
 	// Codes of the app's own technical failures (the worker's are editjob.FailureCode).
 	workerUnavailableCode = "worker_unavailable"
 	resultKeysCode        = "result_keys"
+	modelUnavailableCode  = "model_unavailable"
 )
 
 var (
 	errNoSource          = errors.New("the task has no source video")
 	errWorkerUnavailable = errors.New("no media worker is running")
+	errArtifactMissing   = errors.New("the transcript or the plan of the edit is missing")
+	errEmptyRevision     = errors.New("the revision has no text")
+	errRevisionRefused   = errors.New("the editor did not apply the revision")
 )
 
 type board interface {
 	Submit(ctx context.Context, job *editjob.Job) (bool, error)
+	Replace(ctx context.Context, job *editjob.Job) (bool, error)
 	Job(ctx context.Context, id string) (editjob.Job, bool, error)
 	Result(ctx context.Context, id string) (editjob.Result, bool, error)
 	Forget(ctx context.Context, id string) error
@@ -52,8 +76,14 @@ type board interface {
 	WorkerAlive(ctx context.Context) (bool, error)
 }
 
-type resultKeys interface {
+// store computes the keys of the result files and reads the transcript and the plans.
+type store interface {
 	ResultKey(sourceKey, name, ext string) (string, error)
+	Read(ctx context.Context, key string, maxSize int64) ([]byte, error)
+}
+
+type decider interface {
+	Decide(ctx context.Context, req *editplan.Request) (*editplan.Outcome, error)
 }
 
 type techReporter interface {
@@ -63,7 +93,8 @@ type techReporter interface {
 // Executor is the tasks.Executor of the editor's tasks; see the package description.
 type Executor struct {
 	board        board
-	keys         resultKeys
+	store        store
+	decider      decider
 	tech         techReporter
 	jobTimeout   time.Duration
 	queueTimeout time.Duration
@@ -73,15 +104,16 @@ type Executor struct {
 	now          func() time.Time
 }
 
-func NewExecutor(b board, keys resultKeys, tech techReporter, cfg *config.Editor, log *slog.Logger) *Executor {
+func NewExecutor(b board, s store, d decider, tech techReporter, cfg *config.Editor, log *slog.Logger) *Executor {
 	return &Executor{
-		board: b, keys: keys, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
+		board: b, store: s, decider: d, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
 		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, log: log, now: time.Now,
 	}
 }
 
 // Execute returns the video draft when the worker has finished, a permanent or temporary error when it failed, and
-// a tasks.DeferredError while the job is waiting or running. The job is submitted by the first run.
+// a tasks.DeferredError while the job is waiting or running. The job is submitted by the first run; a planned job is
+// decided and replaced by its render by the run that finds it.
 //
 // A result stored right after the check below is not lost: the worker's announcement may come while this run is still
 // going (Wake leaves a running task alone), and then the next poll finds the result.
@@ -90,15 +122,15 @@ func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.
 		return tasks.Output{}, &tasks.PermanentError{Message: noSourceText, Err: errNoSource}
 	}
 
-	if data.Version > 1 { // a revision by text is refused before it is queued; this is a safety net
-		return tasks.Output{}, &tasks.PermanentError{Message: tasks.VideoRevisionText, Err: tasks.ErrVideoRevision}
-	}
-
 	id := editjob.JobID(data.TaskID, data.Version)
 
 	result, found, err := e.board.Result(ctx, id)
 	if err != nil {
 		return tasks.Output{}, err
+	}
+
+	if found && result.Status == editjob.PlannedStatus {
+		return tasks.Output{}, e.decidePlanned(ctx, data, &result)
 	}
 
 	if found {
@@ -110,11 +142,199 @@ func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.
 		return tasks.Output{}, err
 	}
 
-	if !found {
-		return tasks.Output{}, e.submit(ctx, data, id)
+	switch {
+	case found:
+		return tasks.Output{}, e.wait(ctx, data, &job)
+	case data.Version > 1:
+		return tasks.Output{}, e.revise(ctx, data)
+	default:
+		return tasks.Output{}, e.submit(ctx, e.autoJob(data))
+	}
+}
+
+// newJob is a job of the version of the task, due by the configured limits from now.
+func (e *Executor) newJob(data *tasks.ExecuteData) *editjob.Job {
+	now := e.now()
+
+	return &editjob.Job{
+		ID: editjob.JobID(data.TaskID, data.Version), TaskID: data.TaskID, Version: data.Version,
+		SourceKey: data.Media[0], CreatedAt: now, QueueDeadline: now.Add(e.queueTimeout), Timeout: e.jobTimeout,
+	}
+}
+
+// autoJob is the first edit: the worker stops after the plan when the caption is to be applied or a repeat decided.
+func (e *Executor) autoJob(data *tasks.ExecuteData) *editjob.Job {
+	job := e.newJob(data)
+	job.Stage = editjob.AutoStage
+	job.Decide = strings.TrimSpace(data.Input) != ""
+
+	return job
+}
+
+// decidePlanned decides on the plan of a stopped first edit (the caption, the disputed repeats) and replaces the job
+// with its render. The first version is made even when the caption cannot be applied: the automatic cut is rendered
+// and the description says why the caption was not applied.
+func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, result *editjob.Result) error {
+	files, err := editjob.Files(e.store, data.Media[0], data.Version)
+	if err != nil {
+		return e.technical(ctx, data, resultKeysCode, err)
 	}
 
-	return tasks.Output{}, e.wait(ctx, data, &job)
+	req, err := e.loadRequest(ctx, data, files.Transcript, files.Plan)
+	if err != nil {
+		// Without its files the planned job is of no use: a retry of the task starts over.
+		var permanent *tasks.PermanentError
+		if errors.As(err, &permanent) {
+			e.forget(ctx, result.JobID)
+		}
+
+		return err
+	}
+
+	req.Caption = data.Input
+
+	outcome, err := e.decide(ctx, data, req)
+	if err != nil {
+		return err
+	}
+
+	job := e.newJob(data)
+	job.Stage = editjob.RenderStage
+	job.Settings = new(req.Plan.Settings)
+	job.Summary = firstSummary(req, outcome)
+
+	if outcome.Kind == editplan.EditOutcome {
+		job.Edit = new(outcome.Edit)
+	}
+
+	replaced, err := e.board.Replace(ctx, job)
+	if err != nil {
+		return fmt.Errorf("failed to replace the planned edit job: %w", err)
+	}
+
+	if replaced {
+		e.log.InfoContext(ctx, "editor: decided, render submitted", "job_id", job.ID, "task_id", data.TaskID,
+			"decision", outcome.Kind, "changes", len(outcome.Changes), "cut", outcome.Cut, "kept", outcome.Kept)
+	}
+
+	return &tasks.DeferredError{After: e.pollInterval}
+}
+
+// revise decides on the revision of the previous version and submits the render of the new one. A revision the editor
+// cannot do or did not understand fails with a text for the trainer; the previous draft stays.
+func (e *Executor) revise(ctx context.Context, data *tasks.ExecuteData) error {
+	revision := strings.TrimSpace(data.Revision)
+	if revision == "" {
+		return &tasks.PermanentError{Message: unclearRevisionText, Err: errEmptyRevision}
+	}
+
+	previous, err := editjob.Files(e.store, data.Media[0], data.Version-1)
+	if err != nil {
+		return e.technical(ctx, data, resultKeysCode, err)
+	}
+
+	req, err := e.loadRequest(ctx, data, previous.Transcript, previous.Plan)
+	if err != nil {
+		return err
+	}
+
+	req.Revision = revision
+
+	outcome, err := e.decide(ctx, data, req)
+	if err != nil {
+		return err
+	}
+
+	switch outcome.Kind {
+	case editplan.EditOutcome:
+	case editplan.CannotOutcome:
+		return &tasks.PermanentError{Message: cannotRevisionText, Err: refusal(outcome)}
+	default:
+		return &tasks.PermanentError{Message: unclearRevisionText, Err: refusal(outcome)}
+	}
+
+	job := e.newJob(data)
+	job.Stage = editjob.RenderStage
+	job.Settings = new(req.Plan.Settings)
+	job.Edit = new(outcome.Edit)
+	job.Summary = &editjob.Summary{Changes: outcome.Changes, PreviousDuration: req.Plan.Duration}
+
+	return e.submit(ctx, job)
+}
+
+func refusal(outcome *editplan.Outcome) error {
+	return fmt.Errorf("%w: %s: %s", errRevisionRefused, outcome.Kind, outcome.Reason)
+}
+
+// decide asks the model. A model that refused, ran out of tokens or steps is an outcome without an edit; the API
+// that refuses the key or the request is a technical failure («Техничка»); anything else (the network, 429, 5xx) is
+// retried by the task.
+func (e *Executor) decide(ctx context.Context, data *tasks.ExecuteData, req *editplan.Request) (*editplan.Outcome, error) {
+	outcome, err := e.decider.Decide(ctx, req)
+	if err == nil {
+		return outcome, nil
+	}
+
+	var apiErr *anthropic.APIError
+
+	switch {
+	case errors.Is(err, agents.ErrRefusal) || errors.Is(err, agents.ErrMaxTokens) ||
+		errors.Is(err, agents.ErrIterationLimit) || errors.Is(err, agents.ErrInvalidResponse):
+		e.log.WarnContext(ctx, "editor: the model did not decide", "task_id", data.TaskID, "error", err)
+
+		return &editplan.Outcome{Kind: editplan.NoAnswerOutcome, Reason: err.Error()}, nil
+	case errors.Is(err, anthropic.ErrAPIKeyMissing) || errors.Is(err, agents.ErrAgentNotFound) ||
+		errors.Is(err, editplan.ErrInvalidRequest) || (errors.As(err, &apiErr) && !apiErr.Retryable()):
+		return nil, e.technical(ctx, data, modelUnavailableCode, err)
+	default:
+		return nil, &tasks.TemporaryError{Message: modelFailedText, Err: err}
+	}
+}
+
+// loadRequest reads the transcript of the source and the plan the decision starts from. A missing file cannot be
+// fixed by a retry: the trainer sends the source again.
+func (e *Executor) loadRequest(
+	ctx context.Context,
+	data *tasks.ExecuteData,
+	transcriptKey, planKey string,
+) (*editplan.Request, error) {
+	var (
+		transcript transcription.Result
+		plan       roughcut.Plan
+	)
+
+	for _, f := range []struct {
+		key string
+		v   any
+	}{{key: transcriptKey, v: &transcript}, {key: planKey, v: &plan}} {
+		if err := e.readJSON(ctx, f.key, f.v); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(transcript.Words) == 0 || len(plan.Keep) == 0 {
+		return nil, &tasks.PermanentError{Message: artifactsMissingText,
+			Err: fmt.Errorf("task %d: empty transcript or plan: %w", data.TaskID, errArtifactMissing)}
+	}
+
+	return &editplan.Request{TaskID: data.TaskID, Version: data.Version, Transcript: &transcript, Plan: &plan}, nil
+}
+
+func (e *Executor) readJSON(ctx context.Context, key string, v any) error {
+	raw, err := e.store.Read(ctx, key, maxArtifactSize)
+
+	switch {
+	case errors.Is(err, media.ErrFileNotFound) || errors.Is(err, media.ErrInvalidKey) || errors.Is(err, media.ErrFileTooLarge):
+		return &tasks.PermanentError{Message: artifactsMissingText, Err: fmt.Errorf("%s: %w: %w", key, errArtifactMissing, err)}
+	case err != nil:
+		return fmt.Errorf("failed to read %s: %w", key, err)
+	}
+
+	if err := json.Unmarshal(raw, v); err != nil {
+		return &tasks.PermanentError{Message: artifactsMissingText, Err: fmt.Errorf("failed to decode %s: %w", key, err)}
+	}
+
+	return nil
 }
 
 // wait defers the run of a submitted job, or fails it: it ran out of time since a worker took it, it waited in the
@@ -179,20 +399,14 @@ func timeoutError(id, phase string) error {
 }
 
 // submit gives the job to the worker and defers the run.
-func (e *Executor) submit(ctx context.Context, data *tasks.ExecuteData, id string) error {
-	now := e.now()
-	job := &editjob.Job{
-		ID: id, TaskID: data.TaskID, Version: data.Version, SourceKey: data.Media[0],
-		CreatedAt: now, QueueDeadline: now.Add(e.queueTimeout), Timeout: e.jobTimeout,
-	}
-
+func (e *Executor) submit(ctx context.Context, job *editjob.Job) error {
 	submitted, err := e.board.Submit(ctx, job)
 	if err != nil {
 		return fmt.Errorf("failed to submit edit job: %w", err)
 	}
 
 	if submitted {
-		e.log.InfoContext(ctx, "editor: job submitted", "job_id", id, "task_id", data.TaskID,
+		e.log.InfoContext(ctx, "editor: job submitted", "job_id", job.ID, "task_id", job.TaskID, "stage", job.Stage,
 			"queue_deadline", job.QueueDeadline)
 	}
 
@@ -203,15 +417,21 @@ func (e *Executor) submit(ctx context.Context, data *tasks.ExecuteData, id strin
 // submits it again; a finished one is kept (a repeated run of the task finds the same result).
 func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *editjob.Result) (tasks.Output, error) {
 	if result.Status == editjob.DoneStatus {
-		files, err := editjob.Files(e.keys, data.Media[0], data.Version)
+		files, err := editjob.Files(e.store, data.Media[0], data.Version)
 		if err != nil {
 			return tasks.Output{}, e.technical(ctx, data, resultKeysCode, err)
+		}
+
+		// The summary of a decided version is kept in its job; a job forgotten by Redis leaves only the numbers.
+		var summary *editjob.Summary
+		if job, found, err := e.board.Job(ctx, result.JobID); err == nil && found {
+			summary = job.Summary
 		}
 
 		e.log.InfoContext(ctx, "editor: reel ready", "task_id", data.TaskID, "job_id", result.JobID, "key", files.Reel,
 			"source_duration", result.SourceDuration, "duration", result.Duration, "audio_seconds", result.AudioSeconds)
 
-		return tasks.Output{Text: Describe(result, data.Input), MediaKey: files.Reel}, nil
+		return tasks.Output{Text: Describe(result, data.Version, data.Input, summary), MediaKey: files.Reel}, nil
 	}
 
 	e.forget(ctx, result.JobID)

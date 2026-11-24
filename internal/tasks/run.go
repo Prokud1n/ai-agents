@@ -17,6 +17,15 @@ type revision struct {
 	feedback *Feedback
 }
 
+// text is the trainer's revision; empty for the first version.
+func (r revision) text() string {
+	if r.feedback == nil {
+		return ""
+	}
+
+	return r.feedback.Text
+}
+
 // Run runs the task once: starts it, runs the agent and stores the outcome (a new version awaiting
 // approval, a retry, or a given-up run). A message for a task that is not runnable (a duplicate,
 // a decided task) is skipped with nil. The outcome is stored even if ctx is cancelled after the agent
@@ -107,14 +116,15 @@ func (s *Service) execute(ctx context.Context, task *Task, rev revision) (output
 	}()
 
 	output, err = s.executor.Execute(runCtx, &ExecuteData{
-		TaskID:  task.ID,
-		Agent:   task.Agent,
-		Kind:    task.Kind,
-		Input:   task.Input,
-		Media:   slices.Clone(task.Media),
-		Source:  task.Source,
-		Version: task.Version + 1,
-		Prompt:  BuildPrompt(task, rev.previous, rev.feedback),
+		TaskID:   task.ID,
+		Agent:    task.Agent,
+		Kind:     task.Kind,
+		Input:    task.Input,
+		Media:    slices.Clone(task.Media),
+		Source:   task.Source,
+		Version:  task.Version + 1,
+		Prompt:   BuildPrompt(task, rev.previous, rev.feedback),
+		Revision: rev.text(),
 	})
 	if err != nil {
 		return Output{}, err

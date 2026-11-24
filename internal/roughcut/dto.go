@@ -11,6 +11,9 @@ type CutData struct {
 	Plan *Plan
 	// AcceptCandidates are IDs of Plan.Candidates of the same transcript and settings to cut as well.
 	AcceptCandidates []int
+	// Edit, if set, are the editor's changes on top of the automatic plan (see BuildPlanEdited); the plan keeps
+	// them (Plan.Edit) and its subtitles get the corrected words (Edit.Words).
+	Edit *Edit
 	// Settings for a new plan; nil means the configured defaults.
 	Settings *Settings
 	// OutDir receives plan.json, transcript.json, decisions.log and roughcut.mp4; it is created if missing.

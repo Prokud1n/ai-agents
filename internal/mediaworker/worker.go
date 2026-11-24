@@ -44,6 +44,7 @@ type workerBoard interface {
 	Fetch(ctx context.Context, consumer string) (*editjob.Delivery, error)
 	Ack(ctx context.Context, messageID string) error
 	HasResult(ctx context.Context, jobID string) (bool, error)
+	Job(ctx context.Context, id string) (editjob.Job, bool, error)
 	Lock(ctx context.Context, jobID, owner string) (bool, error)
 	Refresh(ctx context.Context, jobID, owner string) (bool, error)
 	Unlock(ctx context.Context, jobID, owner string) error
@@ -245,6 +246,20 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 	if finished {
 		w.log.InfoContext(ctx, "mediaworker: job already has a result", "job_id", job.ID)
 		w.board.NotifyDone(ctx, job)
+
+		return true, nil
+	}
+
+	// A planned job replaced by its render stage (editjob.Board.Replace) may still be delivered: the stored job
+	// tells which stage is current.
+	stored, found, err := w.board.Job(ctx, job.ID)
+	if err != nil {
+		return false, err
+	}
+
+	if found && stored.EffectiveStage() != job.EffectiveStage() {
+		w.log.InfoContext(ctx, "mediaworker: job stage was replaced, skipping the old one", "job_id", job.ID,
+			"stage", job.EffectiveStage(), "current_stage", stored.EffectiveStage())
 
 		return true, nil
 	}

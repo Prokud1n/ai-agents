@@ -3,9 +3,15 @@
 // access to S3, Redis and the speech recognition API only.
 //
 // One job is the deterministic pipeline: download the source from S3 → check it (a picture, sound, the duration
-// limit) → transcribe it → plan the rough cut (pauses, fillers, failed takes; disputed repeats are kept, the next
-// step decides them) → render the cut, the brand subtitles and the Instagram export in one ffmpeg pass → upload
-// the reel, the plan, the decisions log and the source transcript to S3. The job's directory is removed after it.
+// limit) → transcribe it → plan the rough cut (pauses, fillers, failed takes; disputed repeats are kept) → render
+// the cut, the brand subtitles and the Instagram export in one ffmpeg pass → upload the reel, the plan, the
+// decisions log and the source transcript to S3. The job's directory is removed after it.
+//
+// Two stages (editjob.Stage): an auto job with something to decide (the trainer's caption, disputed repeats) stops
+// after the plan with PlannedStatus and uploads only the transcript, the plan and the log; the app decides with the
+// model and replaces it with a render job. A render job (the decided first version or a revision) reads the stored
+// transcript instead of transcribing the source again and builds the plan with the editor's checked Edit. The worker
+// never sees the trainer's text or the model's answer: only word indices, candidate IDs and corrected words.
 package mediaworker
 
 import (
@@ -40,6 +46,8 @@ const (
 
 	insufficientQuota = "insufficient_quota"
 	timePrecision     = 1000 // durations in the result are rounded to milliseconds
+	// maxTranscriptSize of the stored transcript a render job reads: a 10-minute source has well under 1 MB.
+	maxTranscriptSize = 32 << 20
 )
 
 var (
@@ -52,9 +60,19 @@ var (
 	errNoWords      = errors.New("transcript has no words")
 )
 
+// resultFile is a local file of the job uploaded under its key.
+type resultFile struct{ key, path, contentType string }
+
+// step is one step of a job.
+type step struct {
+	name string
+	run  func(ctx context.Context, w *jobWork) error
+}
+
 type store interface {
 	Download(ctx context.Context, key, dir string, maxSize int64) (*media.LocalFile, error)
 	PutResult(ctx context.Context, key string, r io.ReadSeeker, contentType string) error
+	Read(ctx context.Context, key string, maxSize int64) ([]byte, error)
 	ResultKey(sourceKey, name, ext string) (string, error)
 }
 
@@ -158,10 +176,14 @@ func NewPipeline(p *PipelineParams) (*Pipeline, error) {
 // even with an error; the error's code (CodeOf) tells why the job failed.
 func (p *Pipeline) Run(ctx context.Context, job *editjob.Job) (*editjob.Result, error) {
 	result := &editjob.Result{JobID: job.ID}
+	render := job.EffectiveStage() == editjob.RenderStage
 
 	// Without the key nothing is worth downloading: the trainer is told at once that editing is not configured.
-	if err := p.keys.CheckAPIKey(); err != nil {
-		return result, fail(editjob.NotConfiguredCode, err)
+	// A render reads the stored transcript and needs no key.
+	if !render {
+		if err := p.keys.CheckAPIKey(); err != nil {
+			return result, fail(editjob.NotConfiguredCode, err)
+		}
 	}
 
 	files, err := editjob.Files(p.store, job.SourceKey, job.Version)
@@ -181,31 +203,42 @@ func (p *Pipeline) Run(ctx context.Context, job *editjob.Job) (*editjob.Result, 
 	}()
 
 	work := &jobWork{job: job, dir: dir, result: result, files: &files}
-	for _, step := range []struct {
-		name string
-		run  func(ctx context.Context, w *jobWork) error
-	}{
-		{name: "download", run: p.download},
-		{name: "probe", run: p.check},
-		{name: "transcribe", run: p.transcribe},
-		{name: "plan", run: p.cut},
-		{name: "render", run: p.render},
-		{name: "upload", run: p.upload},
-	} {
+	for _, s := range p.steps(render) {
 		started := p.now()
 
-		if err := step.run(ctx, work); err != nil {
-			return result, fmt.Errorf("failed to %s: %w", step.name, err)
+		if err := s.run(ctx, work); err != nil {
+			return result, fmt.Errorf("failed to %s: %w", s.name, err)
 		}
 
-		p.log.InfoContext(ctx, "mediaworker: step done", "job_id", job.ID, "step", step.name,
+		p.log.InfoContext(ctx, "mediaworker: step done", "job_id", job.ID, "step", s.name,
 			"seconds", roundTime(p.now().Sub(started).Seconds()))
 	}
 
 	result.Status = editjob.DoneStatus
+	if work.planned {
+		result.Status = editjob.PlannedStatus
+	}
+
 	result.FinishedAt = p.now()
 
 	return result, nil
+}
+
+// steps of a job: a render job loads the stored transcript instead of transcribing the source.
+func (p *Pipeline) steps(render bool) []step {
+	speech := step{name: "transcribe", run: p.transcribe}
+	if render {
+		speech = step{name: "load transcript", run: p.loadTranscript}
+	}
+
+	return []step{
+		{name: "download", run: p.download},
+		{name: "probe", run: p.check},
+		speech,
+		{name: "plan", run: p.cut},
+		{name: "render", run: p.render},
+		{name: "upload", run: p.upload},
+	}
 }
 
 // jobWork is what the steps of one job pass on.
@@ -220,6 +253,8 @@ type jobWork struct {
 	reel       string
 	// hdr: the source is HLG/PQ and is tone mapped to SDR bt709.
 	hdr bool
+	// planned: the job stops after the plan, the editor decides on it (no reel).
+	planned bool
 }
 
 func (p *Pipeline) download(ctx context.Context, w *jobWork) error {
@@ -288,6 +323,32 @@ func (p *Pipeline) transcribe(ctx context.Context, w *jobWork) error {
 	return nil
 }
 
+// loadTranscript reads the transcript the auto stage stored: a render job does not transcribe the source again.
+func (p *Pipeline) loadTranscript(ctx context.Context, w *jobWork) error {
+	data, err := p.store.Read(ctx, w.files.Transcript, maxTranscriptSize)
+
+	switch {
+	case errors.Is(err, media.ErrFileNotFound) || errors.Is(err, media.ErrInvalidKey) ||
+		errors.Is(err, media.ErrFileTooLarge):
+		return fail(editjob.SourceMissingCode, err)
+	case err != nil:
+		return err
+	}
+
+	var transcript transcription.Result
+	if err := json.Unmarshal(data, &transcript); err != nil {
+		return fail(editjob.SourceMissingCode, fmt.Errorf("failed to decode the stored transcript: %w", err))
+	}
+
+	if len(transcript.Words) == 0 {
+		return fail(editjob.NoSpeechCode, errNoWords)
+	}
+
+	w.transcript = &transcript
+
+	return nil
+}
+
 // classifyTranscription: a missing key is configuration, a refused key or account cannot be fixed by a retry,
 // anything else (the network, 5xx after the client's own retries) may pass.
 func classifyTranscription(err error) error {
@@ -304,10 +365,12 @@ func classifyTranscription(err error) error {
 	}
 }
 
-// cut plans the rough cut with the default settings; disputed repeats (Plan.Candidates) are kept.
+// cut plans the rough cut: an auto job with the default settings (disputed repeats are kept), a render job with the
+// settings and the edit the editor decided on. An auto job with something to decide stops after it.
 func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	cut, err := p.cutter.Cut(ctx, &roughcut.CutData{
 		Source: w.source, Transcript: w.transcript, OutDir: filepath.Join(w.dir, cutDir), PlanOnly: true,
+		Settings: w.job.Settings, Edit: w.job.Edit,
 	})
 
 	switch {
@@ -327,11 +390,23 @@ func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	w.result.Retakes = len(cut.Plan.Takes)
 	w.result.Candidates = len(cut.Plan.Candidates)
 
+	if w.job.EffectiveStage() == editjob.AutoStage && (w.job.Decide || len(cut.Plan.Candidates) > 0) {
+		w.planned = true
+
+		p.log.InfoContext(ctx, "mediaworker: plan ready, the editor decides before the render", "job_id", w.job.ID,
+			"candidates", len(cut.Plan.Candidates), "caption", w.job.Decide)
+	}
+
 	return nil
 }
 
 // render cuts, subtitles and exports in one ffmpeg pass: the source is decoded once and the reel encoded once.
+// A planned job is not rendered.
 func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
+	if w.planned {
+		return nil
+	}
+
 	w.reel = filepath.Join(w.dir, reelFile)
 
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
@@ -356,19 +431,32 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 	return nil
 }
 
-// upload stores the files of the job; the reel goes last, so a reel in S3 always has its plan next to it.
+// upload stores the files of the job; the reel goes last, so a reel in S3 always has its plan next to it. The
+// transcript is stored by the auto stage only (a render job read it); a planned job has no reel.
 func (p *Pipeline) upload(ctx context.Context, w *jobWork) error {
-	transcript := filepath.Join(w.dir, transcriptFile)
-	if err := writeJSON(transcript, w.transcript); err != nil {
-		return err
-	}
-
-	for _, f := range []struct{ key, path, contentType string }{
+	uploads := []resultFile{
 		{key: w.files.Plan, path: w.cut.Files.Plan, contentType: editjob.JSONContentType},
 		{key: w.files.Decisions, path: w.cut.Files.Log, contentType: editjob.LogContentType},
-		{key: w.files.Transcript, path: transcript, contentType: editjob.JSONContentType},
-		{key: w.files.Reel, path: w.reel, contentType: editjob.VideoContentType},
-	} {
+	}
+
+	if w.job.EffectiveStage() == editjob.AutoStage {
+		transcript := filepath.Join(w.dir, transcriptFile)
+		if err := writeJSON(transcript, w.transcript); err != nil {
+			return err
+		}
+
+		uploads = append(uploads, resultFile{
+			key: w.files.Transcript, path: transcript, contentType: editjob.JSONContentType,
+		})
+	}
+
+	if !w.planned {
+		uploads = append(uploads, resultFile{
+			key: w.files.Reel, path: w.reel, contentType: editjob.VideoContentType,
+		})
+	}
+
+	for _, f := range uploads {
 		if err := p.put(ctx, f.key, f.path, f.contentType); err != nil {
 			return err
 		}

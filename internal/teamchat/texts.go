@@ -33,6 +33,8 @@ const (
 	approvedAnswer = "Одобрено"
 	rejectedAnswer = "Отклонено"
 	reviseHint     = "Ответьте на черновик текстом правки"
+	// videoReviseHint: «Правки» under a video draft (a button answer: at most 200 characters).
+	videoReviseHint = "Ответьте на видео текстом правки, например: «убери первые 3 секунды» или «оставь второй дубль»"
 	// draftSavingAnswer: the button was pressed right after the draft came, before its messages were stored.
 	draftSavingAnswer = "Черновик ещё сохраняется, нажмите ещё раз"
 
@@ -56,7 +58,7 @@ const (
 	// when the topic is configured, otherwise to the topic of the video.
 	videoAcceptedText     = "Исходник получил, начинаю монтаж. Пришлю черновик в «Продакшн», обычно это занимает до 30 минут."
 	videoAcceptedHereText = "Исходник получил, начинаю монтаж. Пришлю черновик сюда, обычно это занимает до 30 минут."
-	videoCaptionNote      = " Подпись к видео сохранил: она будет в описании черновика."
+	videoCaptionNote      = " Подпись учту как пожелание к монтажу."
 	downloadFailedText    = "Не смог скачать файл — отправьте его ещё раз."
 	fileSaveFailedText    = "Не смог сохранить файл — отправьте его ещё раз чуть позже."
 	// editorHintText answers a text message to the editor: it works with videos.

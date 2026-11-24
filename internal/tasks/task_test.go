@@ -694,7 +694,6 @@ func TestUserMessage(t *testing.T) {
 		{name: "unknown version", input: fmt.Errorf("x: %w", ErrUnknownVersion), expected: "Такой версии черновика нет."},
 		{name: "invalid callback", input: fmt.Errorf("x: %w", ErrInvalidCallback), expected: "Кнопка устарела или повреждена."},
 		{name: "empty task", input: ErrEmptyTask, expected: "В задаче нет ни текста, ни вложений."},
-		{name: "video revision", input: fmt.Errorf("x: %w", ErrVideoRevision), expected: VideoRevisionText},
 		{name: "other validation", input: fmt.Errorf("x: %w", ErrValidation), expected: "Не хватает данных для задачи."},
 		{name: "other", input: errors.New("db down"), expected: "Не получилось, попробуйте ещё раз."},
 	}

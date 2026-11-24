@@ -185,6 +185,9 @@ func TestRegisterToolsValidNames(t *testing.T) {
 	assert.Len(t, byName, 2)
 }
 
+// submitEditTool is editplan.SubmitToolName.
+const submitEditTool = "submit_edit"
+
 // TestExampleAgent keeps the template in agents/_example valid with the real shared skills. Templates
 // ("_" prefix) are not loaded as agents, so the template is loaded directly. Its tool is the knowledge base
 // search (kbtool.Name): a fake with the same name stands for it, the agents package cannot import kbtool.
@@ -217,23 +220,25 @@ func TestExampleAgent(t *testing.T) {
 
 	assert.Equal(t, 1, overridden, "the template shows a shared skill with an override")
 
-	registry, err := LoadRegistry(agentsDir, skillsDir, []Tool{&fakeTool{name: knowledgeSearchTool}})
+	registry, err := LoadRegistry(agentsDir, skillsDir,
+		[]Tool{&fakeTool{name: knowledgeSearchTool}, &fakeTool{name: submitEditTool}})
 	require.NoError(t, err)
 	assert.NotContains(t, registry.Names(), exampleAgent, "templates are not loaded as agents")
 }
 
 // TestRepositoryAgents loads the real agents/ with the real shared skills. The team agents are named after
-// the gateway roles that run agents (the editor and the designer are not connected yet: teamchat answers
-// for them with a fixed text).
+// the gateway roles that run agents (the designer is not connected yet: teamchat answers for it with a fixed text).
+// The editor decides on the cut with editplan's submit_edit (a fake with the same name stands for it: the agents
+// package cannot import editplan) and its own skill.
 func TestRepositoryAgents(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := filepath.Join("..", "..")
 
 	registry, err := LoadRegistry(filepath.Join(repoRoot, agentsSubdir), filepath.Join(repoRoot, skillsDirName),
-		[]Tool{&fakeTool{name: knowledgeSearchTool}})
+		[]Tool{&fakeTool{name: knowledgeSearchTool}, &fakeTool{name: submitEditTool}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"copywriter", "marketer"}, registry.Names())
+	assert.Equal(t, []string{"copywriter", "editor", "marketer"}, registry.Names())
 
 	tests := []struct {
 		name          string
@@ -241,6 +246,7 @@ func TestRepositoryAgents(t *testing.T) {
 	}{
 		{name: "marketer", expectedTools: []string{knowledgeSearchTool}},
 		{name: "copywriter", expectedTools: []string{knowledgeSearchTool}},
+		{name: "editor", expectedTools: []string{submitEditTool}},
 	}
 
 	for _, tt := range tests {

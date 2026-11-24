@@ -149,7 +149,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	s.logPlan(ctx, &plan, data.Plan != nil)
 
 	result := &Result{
-		Plan: plan, Transcript: RemapTranscript(data.Transcript, plan.Keep), Log: DecisionsLog(&plan),
+		Plan: plan, Transcript: RemapTranscript(subtitleWords(data.Transcript, plan.Edit), plan.Keep), Log: DecisionsLog(&plan),
 		Render: ffmpeg.RenderOptions{Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info)},
 	}
 
@@ -300,12 +300,22 @@ func (s *Service) plan(data *CutData, duration float64) (Plan, error) {
 		return Plan{}, fmt.Errorf("failed to plan: %w", err)
 	}
 
-	plan, err := BuildPlanAccepting(data.Transcript, duration, settings, data.AcceptCandidates)
+	edit := &Edit{Accept: data.AcceptCandidates}
+	if data.Edit != nil {
+		edit = cloneEdit(data.Edit)
+		edit.Accept = append(edit.Accept, data.AcceptCandidates...)
+	}
+
+	plan, err := BuildPlanEdited(data.Transcript, duration, settings, edit)
 	if err != nil {
 		return Plan{}, err
 	}
 
 	plan.Source = filepath.Base(data.Source)
+
+	if data.Edit != nil {
+		plan.Edit = edit
+	}
 
 	if len(plan.Keep) == 0 {
 		return Plan{}, fmt.Errorf("failed to plan: no words to keep in the transcript: %w", ErrInvalidPlan)

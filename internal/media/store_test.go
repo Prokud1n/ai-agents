@@ -277,3 +277,46 @@ func TestStoreResults(t *testing.T) {
 	_, err = noResults.ResultKey("incoming/-100/7/uniq.mov", "uniq-v1-reel", ".mp4")
 	require.ErrorIs(t, err, ErrInvalidConfig)
 }
+
+func TestStoreRead(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	store := newTestStore(t, storage)
+	ctx := t.Context()
+
+	key, err := store.ResultKey("incoming/-100/7/uniq.mov", "uniq-v1-plan", ".json")
+	require.NoError(t, err)
+	require.NoError(t, store.PutResult(ctx, key, strings.NewReader(testContent), "application/json"))
+
+	tests := []struct {
+		name     string
+		key      string
+		limit    int64
+		expected string
+		err      error
+	}{
+		{name: "within the limit", key: key, limit: int64(len(testContent)), expected: testContent},
+		{name: "above the limit", key: key, limit: int64(len(testContent)) - 1, err: ErrFileTooLarge},
+		{name: "missing", key: "edits/-100/7/uniq-v2-plan.json", limit: 1, err: ErrFileNotFound},
+		{name: "outside the store", key: "other/-100/7/uniq-v1-plan.json", limit: 1, err: ErrInvalidKey},
+		{name: "no limit", key: key, limit: 0, err: ErrInvalidLimit},
+		{name: "unbounded limit", key: key, limit: math.MaxInt64, err: ErrInvalidLimit},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data, err := store.Read(t.Context(), tt.key, tt.limit)
+			if tt.err != nil {
+				require.ErrorIs(t, err, tt.err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, string(data))
+		})
+	}
+}

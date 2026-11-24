@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The editor (Монтажёр) takes revisions by text, applies the caption and decides disputed repeats (T3.4c). A reply to
+  the video draft (and «Правки» → reply) is a new version of the task: the editor's agent (`agents/editor`, Sonnet by
+  `LLM_DEFAULT_MODEL`, local skill `reels-editing`, calls counted in `llm_usage`) decides on the transcript and the
+  plan of the previous version and answers with the `submit_edit` tool — a structured edit (cut or bring back words,
+  trim the start or the end by seconds of the reel, keep the second take of a disputed repeat, correct a subtitle
+  word) or a refusal (`cannot` / `unclear`). `internal/editplan` checks the edit against the transcript and the plan
+  (indices, candidate IDs, text limits, at least 1 s left, the revision changes something), sends a failed check back
+  to the model once, and only a checked `roughcut.Edit` goes to the media worker; the trainer's text and the model's
+  answer never do. Revisions add up (`plan.json` keeps the edit, `Plan.Edit`); the new version is rendered from the
+  stored transcript of the source — **Whisper is not called again** — under its own keys (`…-v2-reel.mp4`), the
+  earlier versions stay. The first version: with the trainer's caption or disputed repeats the worker stops after
+  the plan (`planned`), the model decides, and the job is replaced by its render (`editjob.Board.Replace`, same job
+  ID); without them the reel is rendered at once without a model call. The decisions and their reasons are in
+  `decisions.log`. The draft of a new version says what changed («Новая версия рилс: было 0:45, стало 0:42.»,
+  «Обрезал начало: убрал первые 3 с.»); a revision the editor cannot do or did not understand gets «Такое я пока не
+  умею…» / «Не понял, что именно поменять…» above the previous draft; a caption that cannot be applied leaves the
+  automatic cut with a note. Claude API failures: a refused key is a technical failure («Техничка»), the network and
+  overload are retried by the task.
+
 - The editor (Монтажёр) in Telegram, a deterministic pipeline (T3.4b): a video in «Исходники» (stored by T3.4a)
   becomes the editor's task (`reels-edit`, the S3 key in `media`, the caption kept as the input and shown in the
   draft's description), the trainer gets «Исходник получил, начинаю монтаж. Пришлю черновик в «Продакшн»…». The video
@@ -276,6 +295,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
 
 ### Changed
+
+- A revision of a video draft is no longer refused (`tasks.ErrVideoRevision` and its text are removed): «Правки» under
+  a video draft asks to reply with the revision («Ответьте на видео текстом правки, например: …»), the caption of a
+  source is taken as a wish for the edit («Подпись учту как пожелание к монтажу.»), `tasks.ExecuteData.Revision` carries
+  the revision text to executors that do not use the prompt. The worker skips a delivery of a job stage that was
+  replaced; plan candidates have `later_words`.
 
 - The answer to a voice message or a video note: «Голосовые и кружки не обрабатываю — продиктуйте текст…»; to a video
   above `TELEGRAM_MAX_FILE_SIZE`: «Файл больше лимита 2 ГБ: …» (the limit in ГБ/МБ, with a comma).

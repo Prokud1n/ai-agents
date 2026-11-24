@@ -148,8 +148,8 @@ func TestHandlerMessages(t *testing.T) {
 			expected: handlerCalls{texts: []sentText{reply(gateway.EditorRole, editorHintText)}},
 		},
 		{
-			name:    "reply to the editor's video draft: revisions by text come later",
-			service: &fakeService{reviseErr: fmt.Errorf("task 5: %w", tasks.ErrVideoRevision)},
+			name:    "reply to the editor's video draft: a revision, the editor makes a new version",
+			service: &fakeService{},
 			event: repliedRole(withTarget(replyTo(messageEvent("убери первые 3 секунды"), testDraftID), gateway.EditorRole),
 				gateway.EditorRole),
 			expected: handlerCalls{
@@ -157,7 +157,6 @@ func TestHandlerMessages(t *testing.T) {
 					ChatID: testChatID, ReplyToMessageID: testDraftID, MessageID: testMessageID, TopicID: testTopicID,
 					Agent: string(gateway.EditorRole), UserID: testUserID, Text: "убери первые 3 секунды",
 				}},
-				texts: []sentText{reply(gateway.EditorRole, tasks.VideoRevisionText)},
 			},
 		},
 		{
@@ -423,10 +422,10 @@ func TestHandlerCallbacks(t *testing.T) {
 			expected: handlerCalls{answers: answer(gateway.CopywriterRole, reviseHint)},
 		},
 		{
-			name:     "revise under a video draft: revisions by text come later",
+			name:     "revise under a video draft: what the editor can change",
 			service:  &fakeService{draftMediaKey: "edits/-1001000/100/u-v2-reel.mp4"},
 			event:    callbackEvent(gateway.EditorRole, revise),
-			expected: handlerCalls{answers: answer(gateway.EditorRole, tasks.VideoRevisionText)},
+			expected: handlerCalls{answers: answer(gateway.EditorRole, videoReviseHint)},
 		},
 		{
 			name:    "repeated press",

@@ -10,6 +10,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editjob"
 	"github.com/Prokud1n/ai-agents/internal/editor"
+	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/health"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
@@ -44,6 +45,8 @@ func DeclareApplicationOptions() []fx.Option {
 		llmusage.Module,
 		knowledge.Module,
 		kbtool.Module,
+		// The editor's decisions: the submit_edit tool of agents/editor and the Decider
+		editplan.Module,
 		agents.Module,
 		// Incoming videos of the team chat in S3
 		media.Module,
@@ -63,7 +66,7 @@ func DeclareApplicationOptions() []fx.Option {
 }
 
 // DeclareAgentRunOptions builds the agent-run CLI: agents, the Claude API client, usage accounting and
-// the knowledge base tool, without the HTTP server and other dependencies.
+// the agents' tools (the knowledge base, the editor's submit_edit), without the HTTP server and other dependencies.
 func DeclareAgentRunOptions() []fx.Option {
 	return append(declareBaseOptions(),
 		postgres.Module,
@@ -72,6 +75,7 @@ func DeclareAgentRunOptions() []fx.Option {
 		llmusage.Module,
 		knowledge.Module,
 		kbtool.Module,
+		editplan.Module,
 		agents.Module,
 	)
 }

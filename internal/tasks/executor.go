@@ -29,6 +29,9 @@ type ExecuteData struct {
 	Version int
 	// Prompt is the agent's input: the task, and for a revision the previous version and the trainer's text.
 	Prompt string
+	// Revision is the trainer's text of the revision this run makes; empty for the first version. An executor that
+	// does not use Prompt (the editor) takes it from here.
+	Revision string
 }
 
 // Output is the draft a run made: its text and, for a video draft, the S3 key of the video (the text is then

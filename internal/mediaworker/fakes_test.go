@@ -89,6 +89,23 @@ func (s *localStore) PutResult(_ context.Context, key string, r io.ReadSeeker, c
 	return nil
 }
 
+// Read returns a stored result (the transcript of an earlier job).
+func (s *localStore) Read(_ context.Context, key string, maxSize int64) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, ok := s.results[key]
+	if !ok {
+		return nil, media.ErrFileNotFound
+	}
+
+	if int64(len(stored.data)) > maxSize {
+		return nil, media.ErrFileTooLarge
+	}
+
+	return stored.data, nil
+}
+
 func (*localStore) ResultKey(sourceKey, name, ext string) (string, error) {
 	info, err := media.ParseKey(sourceKey)
 	if err != nil {

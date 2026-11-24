@@ -27,6 +27,8 @@ type fakeBoard struct {
 	lockHeld  bool // another worker holds the lock
 	lost      bool // Refresh reports the lock lost
 	finishErr error
+	// stored is the job on the board (nil: none, as after Forget).
+	stored *editjob.Job
 
 	acked    []string
 	finished []editjob.Result
@@ -73,6 +75,14 @@ func (b *fakeBoard) Ack(_ context.Context, id string) error {
 }
 
 func (b *fakeBoard) HasResult(context.Context, string) (bool, error) { return b.hasResult, nil }
+
+func (b *fakeBoard) Job(context.Context, string) (editjob.Job, bool, error) {
+	if b.stored == nil {
+		return editjob.Job{}, false, nil
+	}
+
+	return *b.stored, true, nil
+}
 
 func (b *fakeBoard) Lock(context.Context, string, string) (bool, error) { return !b.lockHeld, nil }
 
@@ -211,6 +221,17 @@ func TestWorkerHandle(t *testing.T) {
 		{
 			name: "a locked job is left pending for a later claim", board: &fakeBoard{lockHeld: true},
 			runner: &fakeRunner{}, delivery: delivery(later),
+		},
+		{
+			name:  "a planned job replaced by its render stage is skipped",
+			board: &fakeBoard{stored: &editjob.Job{ID: "task-17-v1", Stage: editjob.RenderStage}}, runner: &fakeRunner{},
+			delivery: delivery(later), expectedAcks: 1,
+		},
+		{
+			name:   "the current stage is run",
+			board:  &fakeBoard{stored: &editjob.Job{ID: "task-17-v1", Stage: editjob.AutoStage}},
+			runner: &fakeRunner{result: done}, delivery: delivery(later),
+			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
 		},
 		{
 			name: "a malformed entry is acked", board: &fakeBoard{}, runner: &fakeRunner{},

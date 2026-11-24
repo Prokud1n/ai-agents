@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
 const testSourceKey = "incoming/-1001234567890/42/AgADuniq.mov"
@@ -43,6 +44,16 @@ func TestJobValidate(t *testing.T) {
 			name: "zero task", input: func(j Job) Job { j.TaskID, j.ID = 0, JobID(0, 1); return j },
 			expectedErr: ErrInvalidJob,
 		},
+		{name: "auto stage", input: func(j Job) Job { j.Stage = AutoStage; return j }},
+		{
+			name:  "render stage with settings",
+			input: func(j Job) Job { j.Stage, j.Settings = RenderStage, &roughcut.Settings{MaxPause: 1}; return j },
+		},
+		{
+			name: "render stage without settings", input: func(j Job) Job { j.Stage = RenderStage; return j },
+			expectedErr: ErrInvalidJob,
+		},
+		{name: "unknown stage", input: func(j Job) Job { j.Stage = "music"; return j }, expectedErr: ErrInvalidJob},
 	}
 
 	for _, tt := range tests {
@@ -93,6 +104,42 @@ func TestFiles(t *testing.T) {
 
 	_, err = Files(failingKeys{}, testSourceKey, 1)
 	require.ErrorIs(t, err, errNoKeys)
+}
+
+// TestFilesOfVersions: every version has its own reel, plan and log, so a revision never overwrites the draft before
+// it; the transcript of the source is shared, so a revision needs no new transcription.
+func TestFilesOfVersions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		version  int
+		expected string
+	}{
+		{name: "first", version: 1, expected: "edits/-1001234567890/42/AgADuniq-v1-reel.mp4"},
+		{name: "revision", version: 2, expected: "edits/-1001234567890/42/AgADuniq-v2-reel.mp4"},
+		{name: "tenth", version: 10, expected: "edits/-1001234567890/42/AgADuniq-v10-reel.mp4"},
+	}
+
+	first, err := Files(prefixKeys{}, testSourceKey, 1)
+	require.NoError(t, err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			files, err := Files(prefixKeys{}, testSourceKey, tt.version)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, files.Reel)
+			assert.Equal(t, first.Transcript, files.Transcript)
+
+			if tt.version != 1 {
+				assert.NotEqual(t, first.Reel, files.Reel)
+				assert.NotEqual(t, first.Plan, files.Plan)
+				assert.NotEqual(t, first.Decisions, files.Decisions)
+			}
+		})
+	}
 }
 
 var errNoKeys = errors.New("no result prefix")

@@ -52,8 +52,8 @@ type chatSender interface {
 // a repeated decision is refused by the task service.
 //
 //   - a text message creates a task for the target role (the topic of the message gets the draft);
-//     a forwarded text goes to the agent as data, not as an instruction; the editor and the designer are not
-//     connected yet and answer with a fixed text, without an agent run;
+//     a forwarded text goes to the agent as data, not as an instruction; the editor (it works with videos) and
+//     the designer (not connected yet) answer a text with a fixed text, without an agent run;
 //   - a reply to any part of the latest draft is a revision of it (once per reply message); a reply while the
 //     new version is being made, to an old or a decided draft gets an explanation; a reply to any other
 //     message is a new task;
@@ -62,8 +62,8 @@ type chatSender interface {
 //   - /status, /plan, /idea, /pause are the marketer's; any other command gets the list of commands;
 //   - a video for the editor (topic «Исходники» or a mention of the editor's bot) is stored in S3 and becomes the
 //     editor's task (the media worker edits it; the caption is kept as the task input), answered from the editor's
-//     bot. A text message to the editor gets a hint to send a video; a reply to its video draft (and «Правки» under
-//     it) gets an honest answer: revisions of a video by text are the next step. Voice messages and video notes
+//     bot. A text message to the editor gets a hint to send a video; a reply to its video draft is a revision (the
+//     editor makes a new version of the video), «Правки» under it asks for such a reply. Voice messages and video notes
 //     are not processed on purpose (the trainer dictates text instead), photos and audio files not yet, videos
 //     for other roles are sent to «Исходники»: all of them get an honest answer, and the gateway does not
 //     download them (WantsMedia).
@@ -341,8 +341,8 @@ func (h *Handler) draftNotStored(ctx context.Context, cb tasks.Callback) bool {
 	return err == nil && v.DraftMessageID == nil
 }
 
-// decide applies the pressed action and returns the answer to the press. «Правки» under a video draft answer that
-// revisions of a video by text are the next step.
+// decide applies the pressed action and returns the answer to the press. «Правки» asks for a reply with the
+// revision; under a video draft the hint says what the editor can change.
 func (h *Handler) decide(
 	ctx context.Context,
 	event *gateway.Event,
@@ -360,7 +360,7 @@ func (h *Handler) decide(
 		return rejectedAnswer, err
 	default: // tasks.ReviseAction: the revision comes as a reply to the draft
 		if draft.MediaKey != "" {
-			return tasks.VideoRevisionText, nil
+			return videoReviseHint, nil
 		}
 
 		return reviseHint, nil

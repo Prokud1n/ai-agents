@@ -14,6 +14,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/redistest"
+	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
 const (
@@ -284,4 +285,65 @@ func listen(t *testing.T, board *Board) *woken {
 	}, waitFor, tick)
 
 	return got
+}
+
+// TestIntegrationBoardReplace: a planned job is replaced by its render stage once: the new job is stored and queued,
+// the planned result and the start are gone; a job without a planned result is not replaced.
+func TestIntegrationBoardReplace(t *testing.T) {
+	t.Parallel()
+
+	board := newTestBoard(t)
+	ctx := context.Background()
+	job := testJob(9)
+	job.Decide = true
+
+	_, err := board.Submit(ctx, job)
+	require.NoError(t, err)
+
+	d, err := board.Fetch(ctx, testOwner)
+	require.NoError(t, err)
+	require.NotNil(t, d)
+
+	render := *job
+	render.Stage = RenderStage
+	render.Settings = &roughcut.Settings{MaxPause: 0.5, RetakeSimilarity: 0.7}
+	render.Edit = &roughcut.Edit{Accept: []int{0}, Notes: []string{"повтор 0 вырезан"}}
+
+	replaced, err := board.Replace(ctx, &render)
+	require.NoError(t, err)
+	assert.False(t, replaced, "a job without a result is not replaced")
+
+	_, err = board.MarkStarted(ctx, job.ID, testDeadline)
+	require.NoError(t, err)
+	require.NoError(t, board.Finish(ctx, job, &Result{JobID: job.ID, Status: PlannedStatus, Candidates: 1}))
+	require.NoError(t, board.Ack(ctx, d.MessageID))
+
+	replaced, err = board.Replace(ctx, &render)
+	require.NoError(t, err)
+	assert.True(t, replaced)
+
+	again, err := board.Replace(ctx, &render)
+	require.NoError(t, err)
+	assert.False(t, again, "replaced once")
+
+	_, found, err := board.Result(ctx, job.ID)
+	require.NoError(t, err)
+	assert.False(t, found, "the planned result is gone")
+
+	_, started, err := board.Started(ctx, job.ID)
+	require.NoError(t, err)
+	assert.False(t, started, "the render's timeout counts from its own start")
+
+	stored, found, err := board.Job(ctx, job.ID)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, RenderStage, stored.Stage)
+	assert.Equal(t, render.Edit, stored.Edit)
+
+	next, err := board.Fetch(ctx, testOwner)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.NotNil(t, next.Job)
+	assert.Equal(t, RenderStage, next.Job.Stage)
+	assert.Equal(t, render.Settings, next.Job.Settings)
 }

@@ -111,7 +111,23 @@ func requireIntegrationFFmpeg(t *testing.T) {
 	}
 }
 
-func realPipeline(t *testing.T, store *localStore) *Pipeline {
+func realPipeline(t *testing.T, files *localStore) *Pipeline {
+	t.Helper()
+
+	return realPipelineWith(t, files, &fakeTranscriber{result: clipTranscript()})
+}
+
+// clipTranscript is what the speech recognition would give for makeSpeechClip.
+func clipTranscript() *transcription.Result {
+	return &transcription.Result{
+		Language: "ru", Duration: clipDuration, Text: "Привет! эээ это тест", Words: clipWords,
+		Segments: []transcription.Segment{{Start: 0.5, End: 4.2, Text: "Привет! эээ это тест"}},
+	}
+}
+
+// realPipelineWith is the pipeline with the real ffmpeg, rough cut and subtitles over the store, with a fake speech
+// recognition.
+func realPipelineWith(t *testing.T, files store, speech transcriber) *Pipeline {
 	t.Helper()
 
 	log := slog.New(slog.DiscardHandler)
@@ -131,12 +147,7 @@ func realPipeline(t *testing.T, store *localStore) *Pipeline {
 	require.NoError(t, err)
 
 	p, err := NewPipeline(&PipelineParams{
-		Store: store, Prober: runner, Keys: fakeKeys{},
-		Transcriber: &fakeTranscriber{result: &transcription.Result{
-			Language: "ru", Duration: clipDuration, Text: "Привет! эээ это тест", Words: clipWords,
-			Segments: []transcription.Segment{{Start: 0.5, End: 4.2, Text: "Привет! эээ это тест"}},
-		}},
-		Cutter: cutter, Burner: burner,
+		Store: files, Prober: runner, Keys: fakeKeys{}, Transcriber: speech, Cutter: cutter, Burner: burner,
 		Config: &config.MediaWorker{
 			WorkDir: t.TempDir(), MaxSourceDuration: time.Minute, MaxSourceSize: 1 << 30, Fit: string(ffmpeg.PadFitMode),
 		},
