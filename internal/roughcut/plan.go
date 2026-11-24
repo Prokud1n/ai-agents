@@ -83,6 +83,10 @@ type Plan struct {
 	Edit *Edit `json:"edit,omitempty"`
 	// Mode the plan was built in (Edit.Mode); empty for a talking-head plan made before modes existed.
 	Mode Mode `json:"mode,omitempty"`
+	// SpeechShare is the share of the source (0..1) the automatic talking-head cut keeps — the speech with its short
+	// pauses — whatever the mode and the edit: the media worker plans a source with little speech as a workout by it,
+	// and the editor's model sees it.
+	SpeechShare float64 `json:"speech_share"`
 }
 
 // Edit is what the editor (the editing agent, by the trainer's caption or revision) changed on top of the

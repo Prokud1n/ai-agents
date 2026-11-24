@@ -335,3 +335,26 @@ func TestApplyNoSpeech(t *testing.T) {
 
 	assert.Contains(t, Prompt(req), "Речи в видео нет")
 }
+
+// TestApplyRefusesTooManyFragments: an edit the worker would refuse (more fragments than one render takes) goes back
+// to the model instead of failing in the worker as invalid_edit.
+func TestApplyRefusesTooManyFragments(t *testing.T) {
+	t.Parallel()
+
+	const (
+		cutLength = 0.005
+		cutStep   = 0.017
+	)
+
+	previous := workoutEdit()
+	for i := range roughcut.MaxSegments + 1 {
+		start := 0.1 + cutStep*float64(i)
+		previous.CutTime = append(previous.CutTime, roughcut.Interval{Start: start, End: start + cutLength})
+	}
+
+	_, err := Apply(testRequest(2, previous), &Input{Decision: EditDecision, Reason: testReason, Mute: new(true)})
+
+	var check *CheckError
+	require.ErrorAs(t, err, &check)
+	assert.Contains(t, check.Message, "не больше 500")
+}

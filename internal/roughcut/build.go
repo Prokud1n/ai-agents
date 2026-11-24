@@ -79,9 +79,12 @@ func BuildPlanEdited(
 		times: normalizeIntervals(edit.CutTime, duration)}
 
 	// A workout keeps the fillers and the failed takes: only what the editor chose is cut.
+	automatic := markRetakes(fillers, ph.tokens, retakes)
+	talkKeep, _ := buildIntervals(words, automatic, duration, settings)
+
 	removed, takes := make([]CutReason, len(words)), []Take{}
 	if mode == TalkMode {
-		removed, takes = markRetakes(fillers, ph.tokens, retakes), describeTakes(ph, retakes)
+		removed, takes = automatic, describeTakes(ph, retakes)
 	}
 
 	for i := range accepted {
@@ -111,7 +114,20 @@ func BuildPlanEdited(
 		Takes:          append(takes, describeAccepted(ph, accepted)...),
 		Candidates:     describeCandidates(ph, rest, cutFor),
 		Mode:           planMode(edit.Mode),
+		SpeechShare:    speechShare(talkKeep, duration),
 	}, nil
+}
+
+// speechShareDigits: the share is kept to thousandths.
+const speechShareDigits = 1000
+
+// speechShare is the share of the source the kept intervals cover, 0 for a source of unknown length.
+func speechShare(keep []Interval, duration float64) float64 {
+	if duration <= 0 {
+		return 0
+	}
+
+	return math.Round(min(totalDuration(keep)/duration, 1)*speechShareDigits) / speechShareDigits
 }
 
 // planMode is the mode written into the plan: empty for a talking-head plan without an explicit mode, so the

@@ -79,5 +79,5 @@ title:
   color: "#F2B94B" # the accent yellow
   position: ""
   margin: 460
-  box: "#00000099" # 60 % black
+  box: "#000000B3" # 70 % black
   box_padding: 14

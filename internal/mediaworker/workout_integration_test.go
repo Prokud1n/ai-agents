@@ -272,3 +272,53 @@ func maxVolume(t *testing.T, path string) float64 {
 
 	return volume
 }
+
+// TestIntegrationTalkRendersAtOnce: a dense talk (1.5 s of silence, then words with pauses of 0.2 s) keeps far more
+// than the default share of speech: with the check of little speech on it is rendered at once, as before — no planned
+// stage, no model.
+func TestIntegrationTalkRendersAtOnce(t *testing.T) {
+	t.Parallel()
+	requireIntegrationFFmpeg(t)
+
+	const (
+		talkDuration = 20
+		talkStart    = 1.5
+		wordLength   = 0.4
+		wordStep     = 0.6 // a 0.2 s pause after every word
+	)
+
+	texts := strings.Fields("сегодня мы делаем простую зарядку для спины и плеч она займёт всего десять минут " +
+		"встаньте прямо поставьте ноги на ширину плеч руки опустите вдоль тела и начнём вместе")
+	words := make([]transcription.Word, 0, len(texts))
+	spans := make([]roughcut.Interval, 0, len(texts))
+
+	for i, text := range texts {
+		start := talkStart + wordStep*float64(i)
+		words = append(words, transcription.Word{Word: text, Start: start, End: start + wordLength})
+		spans = append(spans, roughcut.Interval{Start: start, End: start + wordLength})
+	}
+
+	source := filepath.Join(t.TempDir(), "talk.mkv")
+	makeToneClip(t, source, talkDuration, spans)
+
+	last, sentence := words[len(words)-1], strings.Join(texts, " ")+"."
+	files := newLocalStore(map[string]string{testSourceKey: source})
+	p, burner := workoutPipeline(t, files, &fakeTranscriber{result: &transcription.Result{
+		Language: testLanguage, Duration: talkDuration, Text: sentence, Words: words,
+		Segments: []transcription.Segment{{Start: words[0].Start, End: last.End, Text: sentence}},
+	}})
+
+	result, err := p.Run(t.Context(), testJob())
+	require.NoError(t, err)
+
+	assert.Equal(t, editjob.DoneStatus, result.Status, "a talking head is rendered at once")
+	assert.Less(t, result.Duration, float64(talkDuration)-2, "the silence at the start and the end is cut")
+	assert.Greater(t, result.Duration, defaultSpeechShare*talkDuration)
+	require.NotNil(t, burner.last())
+
+	plan := storedPlan(t, files)
+	assert.Empty(t, plan.Mode, "the talking-head plan")
+	assert.GreaterOrEqual(t, plan.SpeechShare, defaultSpeechShare)
+
+	checkReel(t, storedReel(t, files), 30, result.Duration)
+}

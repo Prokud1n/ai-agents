@@ -19,8 +19,12 @@ const (
 	maxCaptionRunes = 300
 	// noCutSeconds: less than this cut is "nothing to cut".
 	noCutSeconds = 0.5
-	// maxTitleLines of the exercise titles listed in the description; the rest is counted.
-	maxTitleLines = 8
+	// maxTitleLines of the exercise titles listed in the description, maxUntimedNames of the exercises without a time:
+	// the rest is counted, so the description stays within the 1024 characters of a video caption.
+	maxTitleLines   = 5
+	maxUntimedNames = 5
+	// maxWorkoutCaptionRunes of the caption quoted in the description of a workout (its list of exercises is long).
+	maxWorkoutCaptionRunes = 120
 )
 
 // Texts for the trainer. A failure is shown after «Не получилось выполнить задачу.» (tasks).
@@ -137,60 +141,102 @@ func queueTimeoutText(timeout time.Duration) string {
 // Describe is the description of the video draft. The first version: the durations before and after, what the
 // editor changed by the caption and decided on the disputed repeats (summary), the trainer's caption. A revision: the
 // durations of the previous version and this one and what was changed. summary is nil for an automatic cut.
-func Describe(r *editjob.Result, version int, caption string, summary *editjob.Summary) string {
-	if version > 1 {
-		return describeRevision(r, summary)
-	}
-
-	if summary != nil && summary.Mode == roughcut.WorkoutMode {
-		return describeWorkout(r, caption, summary)
-	}
-
-	lines := make([]string, 0, 3)
-
-	removed := r.SourceDuration - r.Duration
-	if removed < noCutSeconds {
-		lines = append(lines, fmt.Sprintf("Черновик рилс готов: %s, вырезать было почти нечего.", clock(r.Duration)))
-	} else {
-		lines = append(lines, fmt.Sprintf("Черновик рилс готов: было %s, стало %s — вырезал %s (паузы, оговорки "+
-			"и неудачные дубли).", clock(r.SourceDuration), clock(r.Duration), clock(removed)))
-	}
+//
+// The description is the caption of the video, cut by Telegram at 1024 characters, so what must not be lost goes
+// right after the header: the notes (the length of the reel) and the summary's note; the lists and the quoted caption
+// go last.
+func Describe(r *editjob.Result, version int, caption string, summary *editjob.Summary, notes ...string) string {
+	var (
+		header string
+		body   []string
+		quote  string
+	)
 
 	switch {
-	case summary != nil:
-		lines = append(lines, summary.Changes...)
-	case r.Candidates > 0:
-		lines = append(lines, fmt.Sprintf("Спорные повторы оставил в ролике: %d.", r.Candidates))
+	case version > 1:
+		header, body = revisionHeader(r, summary), summaryChanges(summary)
+	case summary != nil && summary.Mode == roughcut.WorkoutMode:
+		header, body = workoutHeader(r), summary.Changes
+
+		if !summary.CaptionApplied {
+			quote = captionQuote(caption, maxWorkoutCaptionRunes)
+		}
+	default:
+		header, body, quote = talkHeader(r), talkBody(r, summary), captionQuote(caption, maxCaptionRunes)
 	}
 
-	if text := strings.TrimSpace(caption); text != "" {
-		lines = append(lines, "Ваша подпись к исходнику: «"+truncate(text, maxCaptionRunes)+"»")
-	}
-
+	lines := append([]string{header}, notes...)
 	if summary != nil && summary.Note != "" {
 		lines = append(lines, summary.Note)
+	}
+
+	lines = append(lines, body...)
+	if quote != "" {
+		lines = append(lines, quote)
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-// describeRevision: «Новая версия рилс: было 0:45, стало 0:42.» and what changed.
-func describeRevision(r *editjob.Result, summary *editjob.Summary) string {
+// talkHeader: «Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (…).»
+func talkHeader(r *editjob.Result) string {
+	removed := r.SourceDuration - r.Duration
+	if removed < noCutSeconds {
+		return fmt.Sprintf("Черновик рилс готов: %s, вырезать было почти нечего.", clock(r.Duration))
+	}
+
+	return fmt.Sprintf("Черновик рилс готов: было %s, стало %s — вырезал %s (паузы, оговорки и неудачные дубли).",
+		clock(r.SourceDuration), clock(r.Duration), clock(removed))
+}
+
+// talkBody is what the editor changed, or how many disputed repeats an automatic cut left.
+func talkBody(r *editjob.Result, summary *editjob.Summary) []string {
+	switch {
+	case summary != nil:
+		return summary.Changes
+	case r.Candidates > 0:
+		return []string{fmt.Sprintf("Спорные повторы оставил в ролике: %d.", r.Candidates)}
+	default:
+		return nil
+	}
+}
+
+// workoutHeader: the whole video, or what was cut of it.
+func workoutHeader(r *editjob.Result) string {
+	if removed := r.SourceDuration - r.Duration; removed >= noCutSeconds {
+		return fmt.Sprintf("Черновик тренировки готов: было %s, стало %s — паузы и молчаливые отрезки оставил, "+
+			"убрал только указанное (%s).", clock(r.SourceDuration), clock(r.Duration), clock(removed))
+	}
+
+	return fmt.Sprintf("Черновик тренировки готов: %s — ролик целиком, паузы и молчаливые отрезки не вырезал.",
+		clock(r.Duration))
+}
+
+// revisionHeader: «Новая версия рилс: было 0:45, стало 0:42.»
+func revisionHeader(r *editjob.Result, summary *editjob.Summary) string {
+	if summary != nil && summary.PreviousDuration > 0 {
+		return fmt.Sprintf("Новая версия рилс: было %s, стало %s.", clock(summary.PreviousDuration), clock(r.Duration))
+	}
+
+	return fmt.Sprintf("Новая версия рилс: %s.", clock(r.Duration))
+}
+
+func summaryChanges(summary *editjob.Summary) []string {
 	if summary == nil {
-		summary = &editjob.Summary{}
+		return nil
 	}
 
-	header := fmt.Sprintf("Новая версия рилс: %s.", clock(r.Duration))
-	if summary.PreviousDuration > 0 {
-		header = fmt.Sprintf("Новая версия рилс: было %s, стало %s.", clock(summary.PreviousDuration), clock(r.Duration))
+	return summary.Changes
+}
+
+// captionQuote: «Ваша подпись к исходнику: «…»», cut to limit; "" without a caption.
+func captionQuote(caption string, limit int) string {
+	text := strings.TrimSpace(caption)
+	if text == "" {
+		return ""
 	}
 
-	lines := append([]string{header}, summary.Changes...)
-	if summary.Note != "" {
-		lines = append(lines, summary.Note)
-	}
-
-	return strings.Join(lines, "\n")
+	return "Ваша подпись к исходнику: «" + truncate(text, limit) + "»"
 }
 
 // captionNotes say why the caption was not applied, by the decision.
@@ -246,6 +292,7 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 
 	if workout {
 		summary.Changes = append(summary.Changes, titleLines(outcome)...)
+		summary.CaptionApplied = len(outcome.Titles) > 0 && strings.TrimSpace(req.Caption) != ""
 	}
 
 	return summary
@@ -277,12 +324,7 @@ func titleLines(outcome *editplan.Outcome) []string {
 	}
 
 	if len(outcome.Untimed) > 0 {
-		names := make([]string, 0, len(outcome.Untimed))
-		for _, name := range outcome.Untimed {
-			names = append(names, "«"+name+"»")
-		}
-
-		return append(lines, untimedNote(names))
+		return append(lines, untimedNote(outcome.Untimed))
 	}
 
 	if len(outcome.Titles) == 0 {
@@ -292,40 +334,28 @@ func titleLines(outcome *editplan.Outcome) []string {
 	return lines
 }
 
-// untimedNote: «Не поставил подписи «Выпады», «Планка»: не понял, в какой момент их показать. …»
-func untimedNote(names []string) string {
-	return "Не поставил подписи " + strings.Join(names, ", ") + ": не понял, в какой момент их показать. " +
+// untimedNote: «Не поставил подписи «Выпады», «Планка»: не понял, в какой момент их показать. …»; at most
+// maxUntimedNames are named, the rest is counted («… и ещё 3»).
+func untimedNote(untimed []string) string {
+	names := make([]string, 0, min(len(untimed), maxUntimedNames))
+	for _, name := range untimed[:min(len(untimed), maxUntimedNames)] {
+		names = append(names, "«"+name+"»")
+	}
+
+	list := strings.Join(names, ", ")
+	if rest := len(untimed) - len(names); rest > 0 {
+		list += fmt.Sprintf(" и ещё %d", rest)
+	}
+
+	return "Не поставил подписи " + list + ": не понял, в какой момент их показать. " +
 		"Добавьте их правкой с временем, например: „подпиши выпады с 0:15 до 0:45“."
 }
 
-// describeWorkout is the description of the first version of a workout: the whole video or what was cut, the changes,
-// the titles, the caption and the note.
-func describeWorkout(r *editjob.Result, caption string, summary *editjob.Summary) string {
-	header := fmt.Sprintf("Черновик тренировки готов: %s — ролик целиком, паузы и молчаливые отрезки не вырезал.",
-		clock(r.Duration))
-
-	if removed := r.SourceDuration - r.Duration; removed >= noCutSeconds {
-		header = fmt.Sprintf("Черновик тренировки готов: было %s, стало %s — паузы и молчаливые отрезки оставил, "+
-			"убрал только указанное (%s).", clock(r.SourceDuration), clock(r.Duration), clock(removed))
-	}
-
-	lines := append([]string{header}, summary.Changes...)
-
-	if text := strings.TrimSpace(caption); text != "" {
-		lines = append(lines, "Ваша подпись к исходнику: «"+truncate(text, maxCaptionRunes)+"»")
-	}
-
-	if summary.Note != "" {
-		lines = append(lines, summary.Note)
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-// longReelNote: the draft is longer than Instagram publishes as a reel; it is not refused, the trainer decides.
+// longReelNote: the draft is longer than Instagram shows well as a reel; it is not refused, the trainer decides.
 func longReelNote(limit float64) string {
-	return fmt.Sprintf("Ролик длится дольше %s — Instagram может не опубликовать его как рилс. Если нужно короче, "+
-		"ответьте на черновик, например: „обрежь до %s“.", minutesText(limit), minutesText(limit))
+	return fmt.Sprintf("Ролик длится дольше %s — такие рилсы Instagram почти не показывает тем, кто на вас не "+
+		"подписан. Если нужно короче, ответьте на черновик, например: „обрежь до %s“.", minutesText(limit),
+		minutesText(limit))
 }
 
 // clock formats seconds as m:ss.

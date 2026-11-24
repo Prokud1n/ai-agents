@@ -49,7 +49,11 @@ func TestPrompt(t *testing.T) {
 
 				return req
 			},
-			expected: []string{"Секунды в подписи — по времени исходника.", "<trainer_caption>\nбез первой фразы\n</trainer_caption>"},
+			expected: []string{
+				"Секунды в подписи — по времени исходника.", "<trainer_caption>\nбез первой фразы\n</trainer_caption>",
+				"Режим монтажа сейчас: talk", "Речь с короткими паузами занимает 55% исходника",
+			},
+			absent: []string{"Речи мало"},
 		},
 		{
 			name: "first version planned as a workout, no caption",
@@ -57,7 +61,7 @@ func TestPrompt(t *testing.T) {
 			expected: []string{
 				"Подписи нет — выбери режим монтажа",
 				"Режим монтажа сейчас: workout",
-				"Речь занимает около 49% исходника",
+				"Речь с короткими паузами занимает 55% исходника", "Речи мало — возможно, это показ упражнений",
 				"6 | 0:05.7–0:06.1 | в ролике 0:05.7 | эээ",
 			},
 			absent: []string{"Изменения прошлых версий", "Вырезанные по времени"},
@@ -78,7 +82,7 @@ func TestPrompt(t *testing.T) {
 				"- 0: «Приседания», с 0:06.2 исходника (в ролике 0:04.2–0:07.0)",
 				"Звук исходника убран (mute)",
 			},
-			absent: []string{"Речь занимает"},
+			absent: []string{"Речь с короткими паузами"},
 		},
 		{
 			name: "a revision with the previous changes",

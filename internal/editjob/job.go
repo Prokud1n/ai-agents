@@ -136,6 +136,8 @@ type Summary struct {
 	PreviousDuration float64 `json:"previous_duration,omitempty"`
 	// Mode of the version when it is a workout (the description says so); empty for a talking head.
 	Mode roughcut.Mode `json:"mode,omitempty"`
+	// CaptionApplied: the exercise titles were placed by the caption, so the description does not quote it.
+	CaptionApplied bool `json:"caption_applied,omitempty"`
 }
 
 // EffectiveStage is the stage of the job; empty is AutoStage.

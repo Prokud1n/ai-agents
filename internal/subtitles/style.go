@@ -190,7 +190,7 @@ func DefaultStyle() Style {
 		Title: TitleStyle{
 			TextStyle:  TextStyle{Font: "Fira Sans Extra Condensed ExtraBold", Size: 72, Uppercase: true, Color: "#F2B94B"},
 			Margin:     460,
-			Box:        "#00000099",
+			Box:        "#000000B3",
 			BoxPadding: 14,
 		},
 	}

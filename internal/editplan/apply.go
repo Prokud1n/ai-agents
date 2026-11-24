@@ -125,7 +125,8 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	if err := mergeExtras(req, in, mode, &trimmed, &edit); err != nil {
+	news, err := mergeExtras(req, in, mode, &trimmed, &edit)
+	if err != nil {
 		return nil, err
 	}
 
@@ -150,7 +151,7 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	cut, kept := countCandidates(in.Candidates)
 
 	return &Outcome{
-		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, &trimmed, shown), Cut: cut, Kept: kept,
+		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}), Cut: cut, Kept: kept,
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
 	}, nil
 }
@@ -500,6 +501,9 @@ func buildPlan(req *Request, edit *roughcut.Edit) (roughcut.Plan, error) {
 		return roughcut.Plan{}, fmt.Errorf("failed to build the edited plan: %w", err)
 	case len(plan.Keep) == 0 || plan.Duration < minReelSeconds:
 		return roughcut.Plan{}, checkFailedf("после правки от ролика остаётся %.1f с: так вырезать нельзя", plan.Duration)
+	case len(plan.Keep) > roughcut.MaxSegments:
+		return roughcut.Plan{}, checkFailedf("после правки в ролике %d кусков, а монтаж принимает не больше %d: "+
+			"вырежи меньше отдельных отрезков или верни часть вырезанных", len(plan.Keep), roughcut.MaxSegments)
 	}
 
 	return plan, nil

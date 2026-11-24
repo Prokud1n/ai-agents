@@ -3,8 +3,10 @@ package editor
 import (
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Prokud1n/ai-agents/internal/editjob"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
@@ -54,7 +56,7 @@ func TestDescribe(t *testing.T) {
 			caption: "добавь музыку",
 			summary: &editjob.Summary{Note: captionCannotNote},
 			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы, оговорки и неудачные дубли).\n" +
-				"Ваша подпись к исходнику: «добавь музыку»\n" + captionCannotNote,
+				captionCannotNote + "\nВаша подпись к исходнику: «добавь музыку»",
 		},
 		{
 			name:    "a workout kept whole, with its titles",
@@ -195,7 +197,7 @@ func TestRevisionTexts(t *testing.T) {
 	for _, text := range []string{
 		cannotRevisionText, unclearRevisionText, modelFailedText, artifactsMissingText, captionCannotNote,
 		captionUnclearNote, captionFailedNote, modelFailedRevisionText, editFailedRevisionText, technicalRevisionText,
-		workoutFallbackNote, titlesHint, longReelNote(180), untimedNote([]string{"«Выпады»"}),
+		workoutFallbackNote, titlesHint, longReelNote(180), untimedNote([]string{"Мост"}),
 	} {
 		assert.NotContains(t, text, "S3")
 		assert.NotContains(t, text, "Claude")
@@ -237,4 +239,69 @@ func TestFailureText(t *testing.T) {
 	assert.Equal(t, "Очередь на монтаж была слишком длинной: за 3 ч до этого видео дело не дошло. "+
 		"Пришлите исходник ещё раз чуть позже.", queueTimeoutText(testQueue))
 	assert.NotContains(t, technicalText, "OPENAI")
+}
+
+// TestDescribeWorkoutFitsCaption: the description of a workout stays within the Telegram caption of a video (1024
+// UTF-16 units, with room for the link to the source) in the worst case — 20 titles, 20 exercises without a time, a
+// 300-character caption, a long reel, the fallback without the model — and the notes stand right after the header.
+func TestDescribeWorkoutFitsCaption(t *testing.T) {
+	t.Parallel()
+
+	const (
+		captionLimit = 1024
+		linkRoom     = 100 // «Исходник: https://t.me/c/…» after a blank line
+		titlesCount  = 20
+	)
+
+	name := strings.Repeat("я", 40)
+	caption := strings.Repeat("в", 300)
+	titles, untimed := make([]string, 0, titlesCount), make([]string, 0, titlesCount)
+
+	for range titlesCount {
+		titles = append(titles, "0:15 — «"+name+"»")
+		untimed = append(untimed, name)
+	}
+
+	workout := &roughcut.Plan{Edit: &roughcut.Edit{Mode: roughcut.WorkoutMode}}
+	result := &editjob.Result{SourceDuration: 400, Duration: 380}
+	long := longReelNote(testReelsMax.Seconds())
+
+	tests := []struct {
+		name    string
+		outcome editplan.Outcome
+		note    string
+	}{
+		{
+			name: "every title and exercise",
+			outcome: editplan.Outcome{
+				Kind: editplan.EditOutcome, Mode: roughcut.WorkoutMode, Titles: titles, Untimed: untimed,
+			},
+		},
+		{
+			name:    "without the model",
+			outcome: editplan.Outcome{Kind: editplan.FailedOutcome},
+			note:    workoutFallbackNote,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			summary := firstSummary(&editplan.Request{Version: 1, Caption: caption, Plan: workout}, &tt.outcome)
+			text := Describe(result, 1, caption, summary, long)
+
+			assert.LessOrEqual(t, len(utf16.Encode([]rune(text))), captionLimit-linkRoom, text)
+
+			lines := strings.Split(text, "\n")
+			require.GreaterOrEqual(t, len(lines), 2)
+			assert.Equal(t, long, lines[1], "the length note right after the header")
+
+			if tt.note != "" {
+				assert.Equal(t, tt.note, lines[2])
+			}
+
+			assert.NotContains(t, text, strings.Repeat("в", maxWorkoutCaptionRunes+1), "the caption is cut")
+		})
+	}
 }

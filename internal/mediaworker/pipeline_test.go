@@ -196,15 +196,21 @@ func TestPipelineLittleSpeech(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		duration float64
-		noWords  bool
-		status   editjob.Status
-		workout  bool
+		name    string
+		share   float64
+		noWords bool
+		talkErr error
+		status  editjob.Status
+		workout bool
 	}{
-		{name: "speech keeps 77 % of the source: rendered at once", duration: 141, status: editjob.DoneStatus},
-		{name: "speech keeps 16 % of the source: a workout plan to decide", duration: 30, status: editjob.PlannedStatus, workout: true},
-		{name: "no words: a workout plan to decide, not «no speech»", duration: 141, noWords: true, status: editjob.PlannedStatus, workout: true},
+		{name: "speech keeps 77 % of the source: rendered at once", share: 0.77, status: editjob.DoneStatus},
+		{name: "6 s of silence and 14 s of speech: rendered at once", share: 0.7, status: editjob.DoneStatus},
+		{name: "speech keeps 16 % of the source: a workout plan to decide", share: 0.16, status: editjob.PlannedStatus, workout: true},
+		{name: "no words: a workout plan to decide, not «no speech»", noWords: true, status: editjob.PlannedStatus, workout: true},
+		{
+			name:  "no talking-head cut (every word a filler, too many fragments): a workout plan, not «no speech»",
+			share: 0.9, talkErr: fmt.Errorf("talk plan: %w", roughcut.ErrInvalidPlan), status: editjob.PlannedStatus, workout: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -213,7 +219,8 @@ func TestPipelineLittleSpeech(t *testing.T) {
 
 			fakes := newPipelineFakes(t)
 			fakes.minSpeechShare = 0.6
-			fakes.cutter.result.Plan.SourceDuration, fakes.cutter.result.Plan.Duration = 182, tt.duration
+			fakes.cutter.result.Plan.SpeechShare = tt.share
+			fakes.cutter.talkErr = tt.talkErr
 
 			if tt.noWords {
 				fakes.transcriber.result.Words = nil

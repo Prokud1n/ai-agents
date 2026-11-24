@@ -26,7 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edge opposite the speech subtitles, clear of them and of the Instagram zones). `mute` removes the sound of the source
   (a silent track stays) and the speech subtitles. The draft of a workout says so («Черновик тренировки готов…»),
   lists the titles with their time and the notes. A draft longer than `EDITOR_REELS_MAX_DURATION` (3 min) gets a
-  note that Instagram may not publish it as a reel, not a refusal.
+  note right after the header (Instagram hardly shows such reels to non-followers), not a refusal; the description of
+  a workout stays within the 1024 characters of a video caption (at most 5 titles and 5 untimed exercises named, the
+  caption not quoted when the titles came from it). `plan.json` keeps `speech_share` — the share of the source the
+  automatic talking-head cut keeps — which the worker decides by and the model sees; a talking-head cut that cannot be
+  built (every word a filler, more than 500 fragments) also gives the workout plan instead of «no speech», and the
+  app refuses an edit of more than 500 fragments before it reaches the worker.
 
 - The editor (Монтажёр) takes revisions by text, applies the caption and decides disputed repeats (T3.4c). A reply to
   the video draft (and «Правки» → reply) is a new version of the task: the editor's agent (`agents/editor`, Sonnet by

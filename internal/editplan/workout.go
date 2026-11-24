@@ -200,9 +200,16 @@ func sourceTime(req *Request, t float64) float64 {
 	return roughcut.SourceTime(req.Plan.Keep, t)
 }
 
+// newTitles are the titles this decision added (in the order of add_titles) and changed (by their number in the
+// previous version), as the edit keeps them: for the description of the changes.
+type newTitles struct {
+	added   []roughcut.Title
+	changed map[int]roughcut.Title
+}
+
 // mergeExtras puts the mode, the cuts by time, the titles and the sound of this decision onto the edit of the new
 // version.
-func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edit *roughcut.Edit) error {
+func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edit *roughcut.Edit) (*newTitles, error) {
 	previous := previousEdit(req.Plan)
 
 	cuts := make([]roughcut.Interval, 0, len(previous.CutTime)+len(trimmed.cuts)+len(in.CutSeconds))
@@ -219,9 +226,9 @@ func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edi
 		cuts = append(cuts, sourceSpan(req, r.From, r.To)...)
 	}
 
-	titles, err := mergeTitles(req, in, previous.Titles)
+	titles, news, err := mergeTitles(req, in, previous.Titles)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	edit.Mode = storedMode(mode)
@@ -233,13 +240,14 @@ func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edi
 		edit.Mute = *in.Mute
 	}
 
-	return nil
+	return news, nil
 }
 
 // mergeTitles applies the changes, removals and additions to the titles of the previous version; the result is
 // ordered by time, nil without titles.
-func mergeTitles(req *Request, in *Input, previous []roughcut.Title) ([]roughcut.Title, error) {
+func mergeTitles(req *Request, in *Input, previous []roughcut.Title) ([]roughcut.Title, *newTitles, error) {
 	out := make([]roughcut.Title, 0, len(previous)+len(in.AddTitles))
+	news := &newTitles{changed: make(map[int]roughcut.Title, len(in.ChangeTitles))}
 
 	for i, t := range previous {
 		if slices.Contains(in.RemoveTitles, i) {
@@ -253,10 +261,11 @@ func mergeTitles(req *Request, in *Input, previous []roughcut.Title) ([]roughcut
 
 			changed, err := changeTitle(req, t, &c)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			t = changed
+			news.changed[i] = changed
 		}
 
 		out = append(out, t)
@@ -268,13 +277,19 @@ func mergeTitles(req *Request, in *Input, previous []roughcut.Title) ([]roughcut
 			End: in.AddTitles[i].End,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		out = append(out, t)
+		news.added = append(news.added, t)
 	}
 
-	return orderTitles(out)
+	titles, err := orderTitles(out)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return titles, news, nil
 }
 
 // changeTitle returns the title with the set fields of the change; a new title (Index -1) needs a text and a start.
@@ -283,7 +298,8 @@ func changeTitle(req *Request, t roughcut.Title, c *TitleChange) (roughcut.Title
 
 	switch {
 	case c.Word != nil && c.Start != nil:
-		return t, checkFailedf("подпись «%s»: укажи начало или словом (word), или секундами (start_seconds)", c.Text)
+		return t, checkFailedf("подпись «%s»: укажи начало или словом (word), или секундами (start_seconds)",
+			titleName(t, c))
 	case isNew && c.Word == nil && c.Start == nil:
 		return t, checkFailedf("подпись «%s»: нет начала — укажи word или start_seconds; если время неизвестно, "+
 			"перенеси её в untimed_titles", c.Text)
@@ -298,9 +314,18 @@ func changeTitle(req *Request, t roughcut.Title, c *TitleChange) (roughcut.Title
 	return retimeTitle(req, t, c)
 }
 
+// titleName names the title in a check failure: the new text, or the text it has.
+func titleName(t roughcut.Title, c *TitleChange) string {
+	if text := strings.TrimSpace(c.Text); text != "" {
+		return text
+	}
+
+	return t.Text
+}
+
 // retimeTitle sets the start and the end of the change on the title, on the source.
 func retimeTitle(req *Request, t roughcut.Title, c *TitleChange) (roughcut.Title, error) {
-	start, err := titleStart(req, c)
+	start, err := titleStart(req, c, t.Text)
 	if err != nil {
 		return t, err
 	}
@@ -325,19 +350,20 @@ func retimeTitle(req *Request, t roughcut.Title, c *TitleChange) (roughcut.Title
 	return t, nil
 }
 
-// titleStart is the start of the change on the source, or -1 when the change keeps it.
-func titleStart(req *Request, c *TitleChange) (float64, error) {
+// titleStart is the start of the change on the source, or -1 when the change keeps it; name is the title's text for
+// a check failure.
+func titleStart(req *Request, c *TitleChange, name string) (float64, error) {
 	switch {
 	case c.Word != nil:
 		if *c.Word < 0 || *c.Word >= len(req.Transcript.Words) {
-			return 0, checkFailedf("подпись «%s»: слова с индексом %d нет в расшифровке", c.Text, *c.Word)
+			return 0, checkFailedf("подпись «%s»: слова с индексом %d нет в расшифровке", name, *c.Word)
 		}
 
 		return roundSeconds(req.Transcript.Words[*c.Word].Start), nil
 	case c.Start != nil:
 		total := timelineDuration(req)
 		if !validSeconds(*c.Start) || *c.Start >= total {
-			return 0, checkFailedf("подпись «%s»: start_seconds от 0 до %.1f с", c.Text, total)
+			return 0, checkFailedf("подпись «%s»: start_seconds от 0 до %.1f с", name, total)
 		}
 
 		return roundSeconds(sourceTime(req, *c.Start)), nil

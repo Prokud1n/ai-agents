@@ -540,14 +540,19 @@ jobs:
             --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestBurnSubtitlesWithFFmpeg'
 
       # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with
-      # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export.
+      # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export,
+      # the workout plan with the exercise title (the Title style on its box), the muted reel and a dense talk.
       - name: Run the media worker pipeline inside the media image
         run: |
           CGO_ENABLED=0 go test -c -o mediaworker.test ./internal/mediaworker
           docker run --rm -e INTEGRATION=1 -v "$PWD/mediaworker.test:/app/mediaworker.test:ro" \
-            --entrypoint /app/mediaworker.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestIntegrationPipeline' \
+            --entrypoint /app/mediaworker.test ai-agents-media:ci -test.v -test.count=1 \
+            -test.run 'TestIntegrationPipeline|TestIntegrationWorkout|TestIntegrationNoSpeech|TestIntegrationTalkRendersAtOnce' \
             | tee pipeline.txt
-          grep -q -- '--- PASS: TestIntegrationPipeline' pipeline.txt
+          for test in TestIntegrationPipeline TestIntegrationWorkoutKeepsPauses TestIntegrationNoSpeechIsPlanned \
+            TestIntegrationTalkRendersAtOnce; do
+            grep -q -- "--- PASS: $test " pipeline.txt || { echo "::error::$test did not pass"; exit 1; }
+          done
           if grep -q -- '--- SKIP' pipeline.txt; then echo "::error::the pipeline test was skipped"; exit 1; fi
 
       - name: Burn subtitles into a generated clip with the CLI

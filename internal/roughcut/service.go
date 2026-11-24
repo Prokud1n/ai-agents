@@ -24,8 +24,9 @@ const (
 	tempDirPattern = ".roughcut-*"
 	outputDirMode  = 0o750
 
-	// maxSegments limits the fragments of one render: each is a branch of the ffmpeg filter graph.
-	maxSegments = 500
+	// MaxSegments limits the fragments of one render: each is a branch of the ffmpeg filter graph. The editor's
+	// edits are checked against it before they reach the media worker.
+	MaxSegments = 500
 	// maxFrameRate caps the constant frame rate of the result: a 120 fps slow-motion clip becomes 60 fps.
 	maxFrameRate = 60
 	frameEpsilon = 1e-6
@@ -238,11 +239,11 @@ func sourceDuration(info *ffmpeg.MediaInfo) float64 {
 	return info.Duration - max(audioOffset(info), 0)
 }
 
-// checkSegments limits the render: at most maxSegments fragments, each at least one frame long.
+// checkSegments limits the render: at most MaxSegments fragments, each at least one frame long.
 func checkSegments(p *Plan, fps float64) error {
-	if len(p.Keep) > maxSegments {
+	if len(p.Keep) > MaxSegments {
 		return fmt.Errorf("failed to check plan: %d fragments, at most %d (raise -max-pause): %w",
-			len(p.Keep), maxSegments, ErrInvalidPlan)
+			len(p.Keep), MaxSegments, ErrInvalidPlan)
 	}
 
 	if len(p.Keep) == 0 {

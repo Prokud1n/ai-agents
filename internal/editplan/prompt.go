@@ -199,35 +199,30 @@ func writeTrainerText(b *strings.Builder, req *Request) {
 		"Реши, что изменить, и вызови submit_edit один раз.\n", tag)
 }
 
-// speechPercent is the share of the source covered by words, in percent.
-func speechPercent(req *Request) float64 {
-	if req.Plan.SourceDuration <= 0 {
-		return 0
-	}
-
-	spoken := 0.0
-	for _, w := range req.Transcript.Words {
-		spoken += max(w.End-w.Start, 0)
-	}
-
-	return spoken / req.Plan.SourceDuration * percent
-}
-
-// writeMode says the mode of the current plan and, for a first version cut as a workout by the worker, why.
+// writeMode says the mode of the current plan and, for the first version with a caption or planned as a workout by
+// the worker, how much of the source is speech — the share the worker decides by (roughcut.Plan.SpeechShare).
 func writeMode(b *strings.Builder, req *Request) {
-	if previousEdit(req.Plan).Mode != roughcut.WorkoutMode {
+	workout := previousEdit(req.Plan).Mode == roughcut.WorkoutMode
+
+	if workout {
+		b.WriteString("Режим монтажа сейчас: workout (тренировка: ролик целиком, вырезано только то, что решили явно).\n")
+	} else {
 		b.WriteString("Режим монтажа сейчас: talk (разговорный: паузы длиннее порога, паразиты и неудачные дубли " +
 			"вырезаны).\n")
+	}
 
+	if req.IsRevision() || (!workout && strings.TrimSpace(req.Caption) == "") {
 		return
 	}
 
-	b.WriteString("Режим монтажа сейчас: workout (тренировка: ролик целиком, вырезано только то, что решили явно).\n")
+	fmt.Fprintf(b, "Речь с короткими паузами занимает %.0f%% исходника (столько оставила бы разговорная склейка).",
+		req.Plan.SpeechShare*percent)
 
-	if !req.IsRevision() {
-		fmt.Fprintf(b, "Речь занимает около %.0f%% исходника — возможно, это показ упражнений. Выбери режим "+
-			"(поле mode) по подписи и речи.\n", speechPercent(req))
+	if workout {
+		b.WriteString(" Речи мало — возможно, это показ упражнений. Выбери режим (поле mode) по подписи и речи.")
 	}
+
+	b.WriteString("\n")
 }
 
 // writeWorkoutState lists the cuts by time, the exercise titles and the sound of the previous versions.
@@ -242,12 +237,14 @@ func writeWorkoutState(b *strings.Builder, req *Request) {
 		}
 	}
 
-	if shown := roughcut.RemapTitles(previous.Titles, req.Plan.Keep); len(previous.Titles) > 0 {
+	if len(previous.Titles) > 0 {
+		spans := roughcut.TitleSpans(previous.Titles, req.Plan.Keep)
+
 		b.WriteString("\nПодписи упражнений (изменить — change_titles, убрать — remove_titles, по номеру):\n")
 
 		for i, t := range previous.Titles {
 			fmt.Fprintf(b, "- %d: «%s», с %s исходника%s\n", i, t.Text, roughcut.FormatTimecode(t.Start),
-				titlePlace(shown, &t))
+				titlePlace(spans[i]))
 		}
 	}
 
@@ -257,12 +254,10 @@ func writeWorkoutState(b *strings.Builder, req *Request) {
 }
 
 // titlePlace is where the title is shown in the current reel.
-func titlePlace(shown []roughcut.Title, t *roughcut.Title) string {
-	for _, s := range shown {
-		if s.Text == t.Text {
-			return fmt.Sprintf(" (в ролике %s–%s)", roughcut.FormatTimecode(s.Start), roughcut.FormatTimecode(s.End))
-		}
+func titlePlace(span roughcut.Interval) string {
+	if span.End <= span.Start {
+		return " (в ролике не видна)"
 	}
 
-	return " (в ролике не видна)"
+	return fmt.Sprintf(" (в ролике %s–%s)", roughcut.FormatTimecode(span.Start), roughcut.FormatTimecode(span.End))
 }

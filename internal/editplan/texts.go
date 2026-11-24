@@ -24,8 +24,8 @@ const (
 
 // Lines about the mode and the sound.
 const (
-	workoutModeLine = "Монтирую как тренировку: паузы и молчаливые отрезки не вырезаю."
-	talkModeLine    = "Монтирую как разговорный ролик: вырезаю паузы, оговорки и неудачные дубли."
+	workoutModeLine = "Смонтировал как тренировку: паузы и молчаливые отрезки не вырезал."
+	talkModeLine    = "Смонтировал как разговорный ролик: вырезал паузы, оговорки и неудачные дубли."
 	muteLine        = "Убрал звук исходника и субтитры речи — трек добавьте в Instagram."
 	unmuteLine      = "Вернул звук исходника и субтитры речи."
 )
@@ -34,7 +34,7 @@ const (
 // fragments cut and brought back, the takes chosen (a revision; the first version counts the repeats itself), the
 // corrected words, the exercise titles (a revision; the first version lists them all) and the sound. No indices, times
 // of the source or technical words: times are those of the timeline the trainer gave (the reel of a revision).
-func describeChanges(req *Request, in *Input, trimmed *trim, shown []roughcut.Title) []string {
+func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitles) []string {
 	words := req.Transcript.Words
 	lines := make([]string, 0, maxChangeLines)
 	previous := previousEdit(req.Plan)
@@ -73,7 +73,7 @@ func describeChanges(req *Request, in *Input, trimmed *trim, shown []roughcut.Ti
 	lines = append(lines, timeCutLines(&previous, in)...)
 
 	if req.IsRevision() {
-		lines = append(lines, titleChangeLines(&previous, in, shown)...)
+		lines = append(lines, titleChangeLines(&previous, in, placed)...)
 	}
 
 	if in.Mute != nil && *in.Mute != previous.Mute {
@@ -128,12 +128,30 @@ func secondsText(seconds float64, one, many string) string {
 	return many + " " + strings.Replace(strconv.FormatFloat(rounded, 'f', -1, float64Bits), ".", ",", 1) + " с"
 }
 
-// timeCutLines: «Вырезал отрезок 0:15–0:20.» for every cut by time, «Вернул вырезанный ранее отрезок (2,5 с).» for every
-// brought back one.
+// placedTitles are the titles this decision added and changed, with the kept intervals of the new reel.
+type placedTitles struct {
+	*newTitles
+
+	keep []roughcut.Interval
+}
+
+// reelClock is when the title starts in the new reel.
+func (p *placedTitles) reelClock(t roughcut.Title) string {
+	return clock(roughcut.ReelTime(p.keep, t.Start))
+}
+
+// timeCutLines: «Вырезал отрезок 0:15–0:20.» for every cut by time («Вырезал 0,5 с на 0:15.» for one shorter than a
+// second), «Вернул вырезанный ранее отрезок (2,5 с).» for every brought back one.
 func timeCutLines(previous *roughcut.Edit, in *Input) []string {
 	lines := make([]string, 0, len(in.CutSeconds)+len(in.RestoreCuts))
 
 	for _, r := range in.CutSeconds {
+		if r.To-r.From < 1 {
+			lines = append(lines, fmt.Sprintf("Вырезал %s на %s.", durationText(r.To-r.From), clock(r.From)))
+
+			continue
+		}
+
 		lines = append(lines, fmt.Sprintf("Вырезал отрезок %s–%s.", clock(r.From), clock(r.To)))
 	}
 
@@ -145,21 +163,19 @@ func timeCutLines(previous *roughcut.Edit, in *Input) []string {
 	return lines
 }
 
-// titleChangeLines describe the changes of the exercise titles of a revision; times are on the new reel (shown).
-func titleChangeLines(previous *roughcut.Edit, in *Input, shown []roughcut.Title) []string {
+// titleChangeLines describe the changes of the exercise titles of a revision; times are on the new reel.
+func titleChangeLines(previous *roughcut.Edit, in *Input, placed *placedTitles) []string {
 	lines := make([]string, 0, len(in.AddTitles)+len(in.ChangeTitles)+len(in.RemoveTitles))
 
 	for _, c := range in.ChangeTitles {
-		old := previous.Titles[c.Index]
+		old, changed := previous.Titles[c.Index], placed.changed[c.Index]
 
-		text := old.Text
-		if t := strings.TrimSpace(c.Text); t != "" && t != old.Text {
-			lines = append(lines, fmt.Sprintf("Переименовал подпись «%s» → «%s».", old.Text, t))
-			text = t
+		if changed.Text != old.Text {
+			lines = append(lines, fmt.Sprintf("Переименовал подпись «%s» → «%s».", old.Text, changed.Text))
 		}
 
 		if c.Word != nil || c.Start != nil || c.End != nil {
-			lines = append(lines, fmt.Sprintf("Сдвинул подпись «%s»: теперь с %s.", text, reelClock(shown, text)))
+			lines = append(lines, fmt.Sprintf("Сдвинул подпись «%s»: теперь с %s.", changed.Text, placed.reelClock(changed)))
 		}
 	}
 
@@ -167,23 +183,11 @@ func titleChangeLines(previous *roughcut.Edit, in *Input, shown []roughcut.Title
 		lines = append(lines, "Убрал подпись «"+previous.Titles[i].Text+"».")
 	}
 
-	for _, a := range in.AddTitles {
-		text := strings.TrimSpace(a.Text)
-		lines = append(lines, fmt.Sprintf("Добавил подпись «%s» с %s.", text, reelClock(shown, text)))
+	for _, t := range placed.added {
+		lines = append(lines, fmt.Sprintf("Добавил подпись «%s» с %s.", t.Text, placed.reelClock(t)))
 	}
 
 	return lines
-}
-
-// reelClock is when the title with the text starts in the new reel.
-func reelClock(shown []roughcut.Title, text string) string {
-	for _, t := range shown {
-		if t.Text == text {
-			return clock(t.Start)
-		}
-	}
-
-	return "—"
 }
 
 // clock formats seconds as m:ss.

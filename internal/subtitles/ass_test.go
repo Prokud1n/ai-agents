@@ -293,7 +293,7 @@ func TestBuildASSWithTitles(t *testing.T) {
 	ass, cues := buildASS(speech(wPrivetCapExcl), &style, nil, false, []Title{{Text: "Выпады", Start: 0.5, End: 3}})
 
 	assert.Equal(t, 1, cues, "titles are not speech cues")
-	assert.Contains(t, ass, "Style: Title,Fira Sans Extra Condensed ExtraBold,72,&H004BB9F2,&H004BB9F2,&H66000000,"+
+	assert.Contains(t, ass, "Style: Title,Fira Sans Extra Condensed ExtraBold,72,&H004BB9F2,&H004BB9F2,&H4C000000,"+
 		"&H99000000,0,0,0,0,100,100,0,0,3,14,0,2,140,140,460,1\n")
 	assert.Less(t, strings.Index(ass, ",Main,,"), strings.Index(ass, ",Title,,0,0,0,,ВЫПАДЫ"))
 }

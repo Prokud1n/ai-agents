@@ -236,10 +236,8 @@ func subtractOne(pieces []Interval, cut Interval) []Interval {
 	return out
 }
 
-// RemapTitles puts the titles of an edit onto the timeline of the cut by keep: a title runs from its start to its end,
-// but not past the next title (without an end — up to the next title, the last one to the end of the reel); what of
-// it was cut is skipped, and a title that starts in a cut starts where the reel goes on. Titles left shorter than
-// MinTitleSeconds are dropped. The result is ordered by time, does not overlap and has every end set.
+// RemapTitles puts the titles of an edit onto the timeline of the cut by keep (see TitleSpans): ordered by time,
+// without the titles that are not shown, every end set.
 func RemapTitles(titles []Title, keep []Interval) []Title {
 	if len(titles) == 0 || len(keep) == 0 {
 		return nil
@@ -248,28 +246,54 @@ func RemapTitles(titles []Title, keep []Interval) []Title {
 	sorted := slices.Clone(titles)
 	slices.SortStableFunc(sorted, func(a, b Title) int { return cmp.Compare(a.Start, b.Start) })
 
-	sourceEnd := keep[len(keep)-1].End
+	spans := TitleSpans(sorted, keep)
 	out := make([]Title, 0, len(sorted))
 
 	for i, t := range sorted {
-		end := sourceEnd
-		if i+1 < len(sorted) {
-			end = sorted[i+1].Start
+		if spans[i].End > spans[i].Start {
+			out = append(out, Title{Text: t.Text, Start: spans[i].Start, End: spans[i].End})
 		}
-
-		if t.End > t.Start {
-			end = min(end, t.End)
-		}
-
-		start, stop := ReelTime(keep, t.Start), ReelTime(keep, end)
-		if stop-start < MinTitleSeconds {
-			continue
-		}
-
-		out = append(out, Title{Text: t.Text, Start: roundTime(start), End: roundTime(stop)})
 	}
 
 	return out
+}
+
+// TitleSpans are the times of the titles on the reel cut by keep, one per title in the order given: a title runs from
+// its start to its end, but not past the next title in time (without an end — up to the next title, the last one to
+// the end of the reel); what of it was cut is skipped, and a title that starts in a cut starts where the reel goes on.
+// The span of a title left shorter than MinTitleSeconds is empty.
+func TitleSpans(titles []Title, keep []Interval) []Interval {
+	spans := make([]Interval, len(titles))
+	if len(keep) == 0 {
+		return spans
+	}
+
+	order := make([]int, len(titles))
+	for i := range order {
+		order[i] = i
+	}
+
+	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(titles[a].Start, titles[b].Start) })
+
+	sourceEnd := keep[len(keep)-1].End
+
+	for k, i := range order {
+		end := sourceEnd
+		if k+1 < len(order) {
+			end = titles[order[k+1]].Start
+		}
+
+		if t := titles[i]; t.End > t.Start {
+			end = min(end, t.End)
+		}
+
+		start, stop := ReelTime(keep, titles[i].Start), ReelTime(keep, end)
+		if stop-start >= MinTitleSeconds {
+			spans[i] = Interval{Start: roundTime(start), End: roundTime(stop)}
+		}
+	}
+
+	return spans
 }
 
 // ReelTime is the moment of the reel cut by keep that shows the source time t; a time inside a cut is where the reel

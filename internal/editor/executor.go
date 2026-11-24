@@ -516,12 +516,12 @@ func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *
 		e.log.InfoContext(ctx, "editor: reel ready", "task_id", data.TaskID, "job_id", result.JobID, "key", files.Reel,
 			"source_duration", result.SourceDuration, "duration", result.Duration, "audio_seconds", result.AudioSeconds)
 
-		text := Describe(result, data.Version, data.Input, summary)
+		var notes []string
 		if limit := e.reelsMax.Seconds(); limit > 0 && result.Duration > limit {
-			text += "\n" + longReelNote(limit)
+			notes = append(notes, longReelNote(limit))
 		}
 
-		return tasks.Output{Text: text, MediaKey: files.Reel}, nil
+		return tasks.Output{Text: Describe(result, data.Version, data.Input, summary, notes...), MediaKey: files.Reel}, nil
 	}
 
 	err := fmt.Errorf("edit job %s failed: %s", result.JobID, result.Code)

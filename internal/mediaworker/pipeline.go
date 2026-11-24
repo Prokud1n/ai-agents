@@ -373,31 +373,26 @@ func classifyTranscription(err error) error {
 
 // cut plans the rough cut: an auto job with the default settings (disputed repeats are kept), a render job with the
 // settings and the edit the editor decided on. An auto job with something to decide stops after it: the trainer's
-// caption, disputed repeats, or little speech. A source where a talking-head cut would keep less than minSpeechShare
-// (or no words at all) may be a workout: cutting its silence would cut the exercises, so it is planned in the workout
-// mode (nothing cut) and the editor decides; that plan is also what is rendered if the model cannot decide.
+// caption, disputed repeats, or little speech. A source with little speech (autoPlan) may be a workout: cutting its
+// silence would cut the exercises, so it is planned in the workout mode (nothing cut) and the editor decides; that plan
+// is also what is rendered if the model cannot decide.
 func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	auto := w.job.EffectiveStage() == editjob.AutoStage
-	edit, lowSpeech := w.job.Edit, auto && len(w.transcript.Words) == 0
 
-	if lowSpeech {
-		edit = workoutEdit()
+	var (
+		cut       *roughcut.Result
+		lowSpeech bool
+		err       error
+	)
+
+	if auto {
+		cut, lowSpeech, err = p.autoPlan(ctx, w)
+	} else {
+		cut, err = p.plan(ctx, w, w.job.Edit)
 	}
 
-	cut, err := p.plan(ctx, w, edit)
 	if err != nil {
 		return err
-	}
-
-	if share := speechShare(&cut.Plan); auto && !lowSpeech && share < p.minSpeechShare {
-		lowSpeech = true
-
-		p.log.InfoContext(ctx, "mediaworker: little speech, planned as a workout", "job_id", w.job.ID,
-			"speech_share", roundTime(share), "min_speech_share", p.minSpeechShare)
-
-		if cut, err = p.plan(ctx, w, workoutEdit()); err != nil {
-			return err
-		}
 	}
 
 	w.cut = cut
@@ -414,6 +409,40 @@ func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	}
 
 	return nil
+}
+
+// autoPlan is the plan of an auto job: the talking-head cut, or the workout plan (nothing cut) when the talking-head
+// cut keeps less than minSpeechShare of the source, cannot be built (every word a filler, too many fragments of a
+// counted workout) or there are no words at all. The second result says the workout plan was taken.
+func (p *Pipeline) autoPlan(ctx context.Context, w *jobWork) (*roughcut.Result, bool, error) {
+	if len(w.transcript.Words) > 0 {
+		cut, err := p.plan(ctx, w, w.job.Edit)
+
+		switch {
+		case errors.Is(err, roughcut.ErrInvalidPlan):
+			p.log.InfoContext(ctx, "mediaworker: no talking-head cut, planned as a workout", "job_id", w.job.ID,
+				"error", err)
+		case err != nil:
+			return nil, false, err
+		default:
+			p.log.InfoContext(ctx, "mediaworker: speech share", "job_id", w.job.ID,
+				"speech_share", cut.Plan.SpeechShare, "min_speech_share", p.minSpeechShare)
+
+			if cut.Plan.SpeechShare >= p.minSpeechShare {
+				return cut, false, nil
+			}
+		}
+	}
+
+	cut, err := p.plan(ctx, w, workoutEdit())
+	if err != nil {
+		return nil, false, err
+	}
+
+	p.log.InfoContext(ctx, "mediaworker: little speech, planned as a workout", "job_id", w.job.ID,
+		"speech_share", cut.Plan.SpeechShare, "min_speech_share", p.minSpeechShare, "words", len(w.transcript.Words))
+
+	return cut, true, nil
 }
 
 // plan runs the rough cut in plan-only mode with the edit and maps its errors to the failure codes.
@@ -442,15 +471,6 @@ func (p *Pipeline) plan(ctx context.Context, w *jobWork, edit *roughcut.Edit) (*
 // workoutEdit is the edit of the safe plan of a source with little speech: the workout mode, nothing cut.
 func workoutEdit() *roughcut.Edit {
 	return &roughcut.Edit{Mode: roughcut.WorkoutMode}
-}
-
-// speechShare is the share of the source a talking-head cut keeps: the speech with its short pauses.
-func speechShare(plan *roughcut.Plan) float64 {
-	if plan.SourceDuration <= 0 {
-		return 1
-	}
-
-	return plan.Duration / plan.SourceDuration
 }
 
 // render cuts, subtitles and exports in one ffmpeg pass: the source is decoded once and the reel encoded once.

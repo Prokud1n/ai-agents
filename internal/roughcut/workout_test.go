@@ -1,10 +1,14 @@
 package roughcut
 
 import (
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
 // TestBuildPlanWorkout: a workout keeps the whole source — pauses, the filler and the failed take stay — and cuts only
@@ -201,4 +205,53 @@ func TestDecisionsLogOfWorkout(t *testing.T) {
 	assert.Contains(t, log, "Звук исходника убран")
 	assert.Contains(t, log, "- с 0:06.2 до следующей подписи «Приседания — 10 раз»")
 	assert.Contains(t, log, "- с 0:00.5 до 0:03.0 «Спина»")
+}
+
+// TestSpeechShare: the share of the source the automatic talking-head cut keeps, the same in both modes and with any
+// edit. A dense talk after 6 s of silence keeps about 70 % — above the media worker's default threshold of 0.6.
+func TestSpeechShare(t *testing.T) {
+	t.Parallel()
+
+	dense := &transcription.Result{Language: testLanguage, Duration: 20}
+	text := strings.Fields("сегодня мы делаем простую зарядку для спины и плеч она займёт всего десять минут " +
+		"встаньте прямо поставьте ноги на ширину плеч руки опустите вдоль тела и начнём вместе")
+
+	for i, word := range text {
+		start := 6 + 0.5*float64(i) // 0.4 s words, 0.1 s pauses
+		dense.Words = append(dense.Words, transcription.Word{Word: word, Start: start, End: start + testWordLen})
+	}
+
+	auto := speech(editSpeech)
+	automatic := BuildPlan(auto, auto.Duration, testSettings())
+
+	tests := []struct {
+		name     string
+		src      *transcription.Result
+		duration float64
+		edit     Edit
+		expected float64
+	}{
+		{name: "6 s of silence, 14 s of dense speech", src: dense, duration: 20, expected: 0.704},
+		{name: "the same as a workout", src: dense, duration: 20, edit: Edit{Mode: WorkoutMode}, expected: 0.704},
+		{
+			name: "a talking head: its automatic cut", src: auto, duration: auto.Duration,
+			expected: math.Round(automatic.Duration/automatic.SourceDuration*1000) / 1000,
+		},
+		{
+			name: "an edit does not change it", src: auto, duration: auto.Duration,
+			edit:     Edit{Remove: []WordRange{{From: 7, To: 10}}},
+			expected: math.Round(automatic.Duration/automatic.SourceDuration*1000) / 1000,
+		},
+		{name: "no words", src: speech(""), duration: 30, edit: Edit{Mode: WorkoutMode}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			plan, err := BuildPlanEdited(tt.src, tt.duration, testSettings(), &tt.edit)
+			require.NoError(t, err)
+			assert.InDelta(t, tt.expected, plan.SpeechShare, 0.002)
+		})
+	}
 }

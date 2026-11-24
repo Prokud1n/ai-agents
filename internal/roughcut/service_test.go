@@ -255,11 +255,11 @@ func TestServiceCutErrors(t *testing.T) {
 		},
 		{
 			name: "edited plan with too many fragments",
-			input: CutData{Source: testSource, Transcript: speech(strings.Repeat("слово | ", maxSegments+1)), Plan: &Plan{
-				Version: PlanVersion, Keep: manyIntervals(maxSegments + 1),
+			input: CutData{Source: testSource, Transcript: speech(strings.Repeat("слово | ", MaxSegments+1)), Plan: &Plan{
+				Version: PlanVersion, Keep: manyIntervals(MaxSegments + 1),
 			}},
 			media: &fakeMedia{info: &ffmpeg.MediaInfo{
-				Duration: maxSegments + 2, HasVideo: true, HasAudio: true, AvgFrameRate: testRate,
+				Duration: MaxSegments + 2, HasVideo: true, HasAudio: true, AvgFrameRate: testRate,
 			}},
 			expected: ErrInvalidPlan,
 		},
