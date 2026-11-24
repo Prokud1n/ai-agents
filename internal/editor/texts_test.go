@@ -61,7 +61,7 @@ func TestDescribe(t *testing.T) {
 			result:  editjob.Result{SourceDuration: 120, Duration: 120},
 			version: 1,
 			caption: "Выпады",
-			summary: &editjob.Summary{Mode: roughcut.WorkoutMode, Changes: []string{titlesHeader, "0:03 — «Выпады»"}},
+			summary: &editjob.Summary{Mode: roughcut.WorkoutMode, Changes: []string{titlesHeader, testTitleLine}},
 			expected: "Черновик тренировки готов: 2:00 — ролик целиком, паузы и молчаливые отрезки не вырезал.\n" +
 				"Подписи упражнений:\n0:03 — «Выпады»\nВаша подпись к исходнику: «Выпады»",
 		},
@@ -159,10 +159,10 @@ func TestFirstSummary(t *testing.T) {
 			name: "a workout chosen by the model, an exercise without a time", plan: &roughcut.Plan{},
 			outcome: editplan.Outcome{
 				Kind: editplan.EditOutcome, Mode: roughcut.WorkoutMode, Untimed: []string{"Планка"},
-				Titles: []string{"0:03 — «Выпады»"},
+				Titles: []string{testTitleLine},
 			},
 			expected: editjob.Summary{Mode: roughcut.WorkoutMode, Changes: []string{
-				titlesHeader, "0:03 — «Выпады»", "Не поставил подписи «Планка»: не понял, в какой момент их показать. " +
+				titlesHeader, testTitleLine, "Не поставил подписи «Планка»: не понял, в какой момент их показать. " +
 					"Добавьте их правкой с временем, например: „подпиши выпады с 0:15 до 0:45“.",
 			}},
 		},

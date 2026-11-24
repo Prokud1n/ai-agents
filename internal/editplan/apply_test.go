@@ -42,7 +42,7 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 	t.Parallel()
 
 	edit := func(change func(in *Input)) Input {
-		in := Input{Decision: EditDecision, Reason: "правка"}
+		in := Input{Decision: EditDecision, Reason: testReason}
 		change(&in)
 
 		return in
@@ -100,17 +100,17 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 		{
 			name: "markup in a subtitle word", version: 2,
 			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: `{\b1}делаем`}} }),
-			expected: "без переносов строк",
+			expected: noLineBreaks,
 		},
 		{
 			name: "an empty subtitle word", version: 2,
 			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: " "}} }),
-			expected: "от 1 до 40 символов",
+			expected: titleLength,
 		},
 		{
 			name: "a sentence instead of a word", version: 2,
 			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: strings.Repeat("а", 41)}} }),
-			expected: "от 1 до 40 символов",
+			expected: titleLength,
 		},
 		{
 			name: "a subtitle word past the transcript", version: 2,

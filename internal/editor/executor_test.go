@@ -40,6 +40,7 @@ const (
 	testWorker    = 3 * time.Minute
 	testPoll      = time.Minute
 	testReelsMax  = 3 * time.Minute
+	testTitleLine = "0:03 — «Выпады»"
 )
 
 var (
@@ -906,7 +907,7 @@ func TestExecutorDecidesWorkout(t *testing.T) {
 	outcome := &editplan.Outcome{
 		Kind: editplan.EditOutcome, Mode: roughcut.WorkoutMode,
 		Edit:   roughcut.Edit{Mode: roughcut.WorkoutMode, Titles: []roughcut.Title{{Text: "Выпады", Start: 3}}},
-		Titles: []string{"0:03 — «Выпады»"},
+		Titles: []string{testTitleLine},
 	}
 	b, decider := plannedWorkout(), &fakeDecider{outcome: outcome}
 	data := editData()
@@ -925,7 +926,7 @@ func TestExecutorDecidesWorkout(t *testing.T) {
 	require.Len(t, b.replaced, 1)
 	assert.Equal(t, &outcome.Edit, b.replaced[0].Edit)
 	assert.Equal(t, &editjob.Summary{
-		Mode: roughcut.WorkoutMode, Changes: []string{titlesHeader, "0:03 — «Выпады»"},
+		Mode: roughcut.WorkoutMode, Changes: []string{titlesHeader, testTitleLine},
 	}, b.replaced[0].Summary)
 }
 

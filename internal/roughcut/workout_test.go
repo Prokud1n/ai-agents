@@ -12,6 +12,9 @@ import (
 //
 // editSpeech: держим 0.5–0.9, спину 0.95–1.35, ровно 1.4–1.8 | держим 2.4–2.8 … ровно 3.3–3.7 || эээ 5.7–6.1,
 // делаем 6.15–6.55, по 6.6–7.0, десять 7.05–7.45, приседаний 7.5–7.9; the source lasts 8.95 s.
+// allWordsKept is editSpeech with every word kept.
+const allWordsKept = "держим спину ровно держим спину ровно эээ делаем по десять приседаний"
+
 func TestBuildPlanWorkout(t *testing.T) {
 	t.Parallel()
 
@@ -30,7 +33,7 @@ func TestBuildPlanWorkout(t *testing.T) {
 			edit:     Edit{Mode: WorkoutMode},
 			keep:     []Interval{{Start: 0, End: 8.95}},
 			cuts:     []Cut{},
-			expected: "держим спину ровно держим спину ровно эээ делаем по десять приседаний",
+			expected: allWordsKept,
 		},
 		{
 			name:     "a removed word: with its margins, up to the kept neighbours",
@@ -47,7 +50,7 @@ func TestBuildPlanWorkout(t *testing.T) {
 				{Start: 0, End: 0.3, Reason: EditCutReason},
 				{Start: 7.95, End: 8.95, Reason: EditCutReason},
 			},
-			expected: "держим спину ровно держим спину ровно эээ делаем по десять приседаний",
+			expected: allWordsKept,
 		},
 		{
 			name:     "an accepted repeat is cut as a take",

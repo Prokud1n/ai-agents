@@ -17,6 +17,7 @@ import (
 const (
 	testSourceKey    = "incoming/-1001234567890/42/uniq.mov"
 	testResultPrefix = "edits"
+	testLanguage     = "ru"
 )
 
 // localStore is S3 on the local disk: sources are files, results are kept in memory with their content type.

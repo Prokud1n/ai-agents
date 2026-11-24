@@ -58,7 +58,7 @@ func newPipelineFakes(t *testing.T) *pipelineFakes {
 	return &pipelineFakes{
 		store:       newLocalStore(map[string]string{testSourceKey: source}),
 		prober:      &fakeProber{info: ffmpeg.MediaInfo{Duration: 182, HasVideo: true, HasAudio: true}},
-		transcriber: &fakeTranscriber{result: &transcription.Result{Language: "ru", Duration: 182, Words: words}},
+		transcriber: &fakeTranscriber{result: &transcription.Result{Language: testLanguage, Duration: 182, Words: words}},
 		cutter: &fakeCutter{result: &roughcut.Result{
 			Plan: roughcut.Plan{
 				Duration: 141, Keep: []roughcut.Interval{{Start: 0.5, End: 1}, {Start: 3, End: 3.5}},
@@ -268,7 +268,7 @@ func TestPipelineRendersDecidedVersion(t *testing.T) {
 	first, err := editjob.Files(fakes.store, testSourceKey, 1)
 	require.NoError(t, err)
 
-	stored := `{"language":"ru","duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
+	stored := `{"language":testLanguage,"duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
 	require.NoError(t, fakes.store.PutResult(t.Context(), first.Transcript, strings.NewReader(stored), editjob.JSONContentType))
 	require.NoError(t, fakes.store.PutResult(t.Context(), first.Reel, strings.NewReader("reel-v1"), editjob.VideoContentType))
 
@@ -321,7 +321,7 @@ func TestPipelineRenderInvalidEdit(t *testing.T) {
 	first, err := editjob.Files(fakes.store, testSourceKey, 1)
 	require.NoError(t, err)
 
-	stored := `{"language":"ru","duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
+	stored := `{"language":testLanguage,"duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
 	require.NoError(t, fakes.store.PutResult(t.Context(), first.Transcript, strings.NewReader(stored), editjob.JSONContentType))
 
 	job := testJob()

@@ -67,7 +67,7 @@ func TestPrompt(t *testing.T) {
 			req: func() *Request {
 				req := testRequest(2, &roughcut.Edit{
 					Mode: roughcut.WorkoutMode, CutTime: []roughcut.Interval{{Start: 0, End: 2}}, Mute: true,
-					Titles: []roughcut.Title{{Text: "Приседания", Start: 6.15}},
+					Titles: []roughcut.Title{{Text: squatsName, Start: 6.15}},
 				})
 				req.Revision = "убери подпись"
 

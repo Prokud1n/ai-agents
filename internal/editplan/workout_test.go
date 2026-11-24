@@ -12,6 +12,15 @@ import (
 
 // testSpeech on the source: 0 держим 0.5 … 5 ровно 3.3–3.7, 6 эээ 5.7–6.1, 7 делаем 6.15, 8 по 6.6, 9 десять 7.05,
 // 10 приседаний 7.5–7.9; the source lasts 8.95 s.
+// Literals shared by the tests.
+const (
+	testReason   = "правка"
+	noLineBreaks = "без переносов строк"
+	titleLength  = "от 1 до 40 символов"
+	squatsName   = "Приседания"
+	bridgeTitle  = "Мост"
+)
+
 const (
 	testSourceDuration = 8.95
 	squatsTitle        = "Приседания — 10 раз"
@@ -57,11 +66,11 @@ func TestApplyWorkoutFirstVersion(t *testing.T) {
 		{
 			name:     "a rest cut by seconds, a title by seconds until the end",
 			base:     workoutEdit(),
-			input:    Input{CutSeconds: []SecondsRange{{From: 3.8, To: 5.6}}, AddTitles: []TitleInput{{Text: "Мост", Start: new(6.0)}}},
+			input:    Input{CutSeconds: []SecondsRange{{From: 3.8, To: 5.6}}, AddTitles: []TitleInput{{Text: bridgeTitle, Start: new(6.0)}}},
 			duration: testSourceDuration - 1.8,
 			edit: roughcut.Edit{
 				Mode: roughcut.WorkoutMode, CutTime: []roughcut.Interval{{Start: 3.8, End: 5.6}},
-				Titles: []roughcut.Title{{Text: "Мост", Start: 6}},
+				Titles: []roughcut.Title{{Text: bridgeTitle, Start: 6}},
 			},
 			changes: []string{"Вырезал отрезок 0:04–0:06."},
 			titles:  []string{"0:04 — «Мост»"},
@@ -139,52 +148,52 @@ func TestApplyRejectsInvalidWorkoutEdit(t *testing.T) {
 		{name: "a cut past the video", input: Input{CutSeconds: []SecondsRange{{From: 9, To: 10}}}, expected: "вне видео"},
 		{name: "an unknown cut to restore", input: Input{RestoreCuts: []int{0}}, expected: "restore_cuts"},
 		{name: "an unknown title to remove", input: Input{RemoveTitles: []int{0}}, expected: "remove_titles"},
-		{name: "a title without a time", input: Input{AddTitles: []TitleInput{{Text: "Мост"}}}, expected: "untimed_titles"},
+		{name: "a title without a time", input: Input{AddTitles: []TitleInput{{Text: bridgeTitle}}}, expected: "untimed_titles"},
 		{
 			name:     "a title with a word and seconds",
-			input:    Input{AddTitles: []TitleInput{{Text: "Мост", Word: new(1), Start: new(1.0)}}},
+			input:    Input{AddTitles: []TitleInput{{Text: bridgeTitle, Word: new(1), Start: new(1.0)}}},
 			expected: "или словом",
 		},
 		{
 			name:     "a title with markup",
 			input:    Input{AddTitles: []TitleInput{{Text: `Мост {\b1}`, Word: new(1)}}},
-			expected: "без переносов строк",
+			expected: noLineBreaks,
 		},
 		{
 			name:     "a title on two lines",
 			input:    Input{AddTitles: []TitleInput{{Text: "Мост\nи планка", Word: new(1)}}},
-			expected: "без переносов строк",
+			expected: noLineBreaks,
 		},
 		{
 			name:     "a title too long",
 			input:    Input{AddTitles: []TitleInput{{Text: strings.Repeat("я", maxTitleRunes+1), Word: new(1)}}},
-			expected: "от 1 до 40 символов",
+			expected: titleLength,
 		},
 		{
 			name:     "an untimed title with an invisible character",
-			input:    Input{UntimedTitles: []string{"Мост​"}},
-			expected: "без переносов строк",
+			input:    Input{UntimedTitles: []string{"Мост\u200b"}},
+			expected: noLineBreaks,
 		},
 		{
 			name:     "two titles at once",
-			input:    Input{AddTitles: []TitleInput{{Text: "Мост", Word: new(7)}, {Text: "Планка", Start: new(6.3)}}},
+			input:    Input{AddTitles: []TitleInput{{Text: bridgeTitle, Word: new(7)}, {Text: "Планка", Start: new(6.3)}}},
 			expected: "почти одновременно",
 		},
 		{
 			name:     "a title of a word past the transcript",
-			input:    Input{AddTitles: []TitleInput{{Text: "Мост", Word: new(11)}}},
+			input:    Input{AddTitles: []TitleInput{{Text: bridgeTitle, Word: new(11)}}},
 			expected: "индексом 11",
 		},
 		{
 			name: "a title whose time is cut",
 			input: Input{
-				CutSeconds: []SecondsRange{{From: 5, To: 8.95}}, AddTitles: []TitleInput{{Text: "Мост", Start: new(6.0)}},
+				CutSeconds: []SecondsRange{{From: 5, To: 8.95}}, AddTitles: []TitleInput{{Text: bridgeTitle, Start: new(6.0)}},
 			},
 			expected: "не видно в ролике",
 		},
 		{
 			name:     "a title that ends before it starts",
-			input:    Input{AddTitles: []TitleInput{{Text: "Мост", Start: new(6.0), End: new(5.0)}}},
+			input:    Input{AddTitles: []TitleInput{{Text: bridgeTitle, Start: new(6.0), End: new(5.0)}}},
 			expected: "конец раньше начала",
 		},
 	}
@@ -194,7 +203,7 @@ func TestApplyRejectsInvalidWorkoutEdit(t *testing.T) {
 			t.Parallel()
 
 			in := tt.input
-			in.Decision, in.Reason = EditDecision, "правка"
+			in.Decision, in.Reason = EditDecision, testReason
 
 			_, err := Apply(testRequest(1, workoutEdit()), &in)
 
@@ -213,7 +222,7 @@ func TestApplyWorkoutRevision(t *testing.T) {
 	previous := func() *roughcut.Edit {
 		return &roughcut.Edit{
 			Mode: roughcut.WorkoutMode, CutTime: []roughcut.Interval{{Start: 0, End: 2}},
-			Titles: []roughcut.Title{{Text: "Спина", Start: 2.4}, {Text: "Приседания", Start: 6.15}},
+			Titles: []roughcut.Title{{Text: "Спина", Start: 2.4}, {Text: squatsName, Start: 6.15}},
 		}
 	}
 
@@ -233,9 +242,9 @@ func TestApplyWorkoutRevision(t *testing.T) {
 		},
 		{
 			name:  "a title removed and one added at a second of the reel",
-			input: Input{RemoveTitles: []int{0}, AddTitles: []TitleInput{{Text: "Мост", Start: new(1.0), End: new(3.0)}}},
+			input: Input{RemoveTitles: []int{0}, AddTitles: []TitleInput{{Text: bridgeTitle, Start: new(1.0), End: new(3.0)}}},
 			check: func(t *testing.T, edit *roughcut.Edit) {
-				assert.Equal(t, []roughcut.Title{{Text: "Мост", Start: 3, End: 5}, {Text: "Приседания", Start: 6.15}}, edit.Titles,
+				assert.Equal(t, []roughcut.Title{{Text: bridgeTitle, Start: 3, End: 5}, {Text: squatsName, Start: 6.15}}, edit.Titles,
 					"the reel starts at 2 s of the source")
 			},
 			changes: []string{"Убрал подпись «Спина».", "Добавил подпись «Мост» с 0:01."},
@@ -287,7 +296,7 @@ func TestApplyWorkoutRevision(t *testing.T) {
 			t.Parallel()
 
 			in := tt.input
-			in.Decision, in.Reason = EditDecision, "правка"
+			in.Decision, in.Reason = EditDecision, testReason
 
 			outcome, err := Apply(testRequest(2, previous()), &in)
 			require.NoError(t, err)

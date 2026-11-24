@@ -172,7 +172,7 @@ func TestIntegrationWorkoutKeepsPauses(t *testing.T) {
 
 	files := newLocalStore(map[string]string{testSourceKey: source})
 	p, burner := workoutPipeline(t, files, &fakeTranscriber{result: &transcription.Result{
-		Language: "ru", Duration: workoutDuration, Text: "Выпады.", Words: []transcription.Word{word},
+		Language: testLanguage, Duration: workoutDuration, Text: "Выпады.", Words: []transcription.Word{word},
 		Segments: []transcription.Segment{{Start: word.Start, End: word.End, Text: "Выпады."}},
 	}})
 
@@ -220,7 +220,7 @@ func TestIntegrationNoSpeechIsPlanned(t *testing.T) {
 
 	files := newLocalStore(map[string]string{testSourceKey: source})
 	p, burner := workoutPipeline(t, files, &fakeTranscriber{result: &transcription.Result{
-		Language: "ru", Duration: noSpeechDuration,
+		Language: testLanguage, Duration: noSpeechDuration,
 	}})
 
 	planned, err := p.Run(t.Context(), testJob())

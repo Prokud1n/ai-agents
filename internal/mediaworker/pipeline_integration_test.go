@@ -120,7 +120,7 @@ func realPipeline(t *testing.T, files *localStore) *Pipeline {
 // clipTranscript is what the speech recognition would give for makeSpeechClip.
 func clipTranscript() *transcription.Result {
 	return &transcription.Result{
-		Language: "ru", Duration: clipDuration, Text: "Привет! эээ это тест", Words: clipWords,
+		Language: testLanguage, Duration: clipDuration, Text: "Привет! эээ это тест", Words: clipWords,
 		Segments: []transcription.Segment{{Start: 0.5, End: 4.2, Text: "Привет! эээ это тест"}},
 	}
 }

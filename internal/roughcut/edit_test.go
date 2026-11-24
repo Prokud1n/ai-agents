@@ -35,7 +35,7 @@ func TestBuildPlanEdited(t *testing.T) {
 		{
 			name:               "the filler brought back",
 			edit:               Edit{Restore: []WordRange{{From: 6, To: 6}}},
-			expected:           "держим спину ровно держим спину ровно эээ делаем по десять приседаний",
+			expected:           allWordsKept,
 			expectedCandidates: []int{0},
 		},
 		{
