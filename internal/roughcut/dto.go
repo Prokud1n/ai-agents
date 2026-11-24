@@ -20,4 +20,6 @@ type CutData struct {
 	OutDir string
 	// PlanOnly skips rendering: only the plan, the remapped transcript and the log are written.
 	PlanOnly bool
+	// MinSpeechShare is recorded in the plan (Plan.MinSpeechShare): the caller's threshold of little speech.
+	MinSpeechShare float64
 }

@@ -269,6 +269,10 @@ func writeEditExtras(b *strings.Builder, edit *Edit) {
 		b.WriteString("\nЗвук исходника убран, субтитров речи нет\n")
 	}
 
+	for _, r := range edit.Hide {
+		fmt.Fprintf(b, "\nСкрыты в субтитрах (видео и звук не тронуты): слова %d–%d\n", r.From, r.To)
+	}
+
 	if len(edit.Titles) == 0 {
 		return
 	}

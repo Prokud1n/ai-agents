@@ -70,6 +70,10 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 			currentWord(req, f.Index), strings.TrimSpace(f.Text)))
 	}
 
+	for _, r := range in.Hide {
+		lines = append(lines, "Убрал из субтитров «"+quote(words, r)+"».")
+	}
+
 	lines = append(lines, timeCutLines(&previous, in)...)
 
 	if req.IsRevision() {

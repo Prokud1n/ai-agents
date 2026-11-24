@@ -148,7 +148,7 @@ func writeTakes(b *strings.Builder, plan *roughcut.Plan) {
 // writePrevious lists the changes of the previous versions: the new edit adds to them.
 func writePrevious(b *strings.Builder, req *Request) {
 	previous := previousEdit(req.Plan)
-	if len(previous.Remove)+len(previous.Restore)+len(previous.Words)+len(previous.Accept) == 0 {
+	if len(previous.Remove)+len(previous.Restore)+len(previous.Words)+len(previous.Accept)+len(previous.Hide) == 0 {
 		return
 	}
 
@@ -168,6 +168,11 @@ func writePrevious(b *strings.Builder, req *Request) {
 
 	for _, f := range previous.Words {
 		fmt.Fprintf(b, "- в субтитрах слово %d заменено на «%s»\n", f.Index, f.Text)
+	}
+
+	for _, r := range previous.Hide {
+		fmt.Fprintf(b, "- скрыты в субтитрах слова %d–%d «%s» (в видео и звуке остались)\n", r.From, r.To,
+			rangeText(req.Transcript.Words, r))
 	}
 }
 
@@ -211,12 +216,18 @@ func writeMode(b *strings.Builder, req *Request) {
 			"вырезаны).\n")
 	}
 
-	if req.IsRevision() || (!workout && strings.TrimSpace(req.Caption) == "") {
+	// A plan made before speech_share has 0 for a video with words: no share is better than a wrong one.
+	unknown := req.Plan.SpeechShare == 0 && len(req.Transcript.Words) > 0
+	if req.IsRevision() || unknown || (!workout && strings.TrimSpace(req.Caption) == "") {
 		return
 	}
 
 	fmt.Fprintf(b, "Речь с короткими паузами занимает %.0f%% исходника (столько оставила бы разговорная склейка).",
 		req.Plan.SpeechShare*percent)
+
+	if threshold := req.Plan.MinSpeechShare; threshold > 0 {
+		fmt.Fprintf(b, " Порог монтажа — %.0f%%: ниже него речи мало.", threshold*percent)
+	}
 
 	if workout {
 		b.WriteString(" Речи мало — возможно, это показ упражнений. Выбери режим (поле mode) по подписи и речи.")

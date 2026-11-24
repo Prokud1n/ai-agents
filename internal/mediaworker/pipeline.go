@@ -449,7 +449,7 @@ func (p *Pipeline) autoPlan(ctx context.Context, w *jobWork) (*roughcut.Result, 
 func (p *Pipeline) plan(ctx context.Context, w *jobWork, edit *roughcut.Edit) (*roughcut.Result, error) {
 	cut, err := p.cutter.Cut(ctx, &roughcut.CutData{
 		Source: w.source, Transcript: w.transcript, OutDir: filepath.Join(w.dir, cutDir), PlanOnly: true,
-		Settings: w.job.Settings, Edit: edit,
+		Settings: w.job.Settings, Edit: edit, MinSpeechShare: p.minSpeechShare,
 	})
 
 	switch {

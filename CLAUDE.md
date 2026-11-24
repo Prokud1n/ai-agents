@@ -187,7 +187,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   последней попытке) рендерится этот план целиком с пометкой. Подписи: `roughcut.RemapTitles` переносит их на время
   рилса, `subtitles` рисует стилем `title` из `style.yaml` (у края, противоположного субтитрам; валидация — не
   перекрывать субтитры и зоны Instagram); текст проверяет `editplan` (≤ 40 символов, без управляющих/Cf-символов и
-  `{}\<>`), ASS экранирует. `Mute` — `volume=0` в графе (дорожка остаётся), субтитров речи нет. Проверка с ffmpeg —
+  `{}\<>`), ASS экранирует. `Edit.Hide` (`hide_words`) — слова, скрытые только в субтитрах (`roughcut.SubtitleTranscript`),
+  видео и звук не режутся; посторонние фразы распознавания в тренировке убираются так, а не `remove_words`. Описание
+  черновика ≤ 920 UTF-16 (`editor.fitDescription`): заголовок и пометки первыми, хвост списков режется с пометкой. `Mute` — `volume=0` в графе (дорожка остаётся), субтитров речи нет. Проверка с ffmpeg —
   `mediaworker.TestIntegrationWorkoutKeepsPauses` и `TestIntegrationNoSpeechIsPlanned`. Черновик длиннее
   `EDITOR_REELS_MAX_DURATION` — пометка в описании.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота

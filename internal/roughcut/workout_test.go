@@ -255,3 +255,24 @@ func TestSpeechShare(t *testing.T) {
 		})
 	}
 }
+
+// TestSubtitleTranscriptHidesWords: hidden words leave the subtitles only — the workout keeps the whole video, the
+// other words keep their time and the punctuation of their segment.
+func TestSubtitleTranscriptHidesWords(t *testing.T) {
+	t.Parallel()
+
+	src := speech(editSpeech)
+	edit := &Edit{Mode: WorkoutMode, Hide: []WordRange{{From: 6, To: 7}}}
+
+	plan, err := BuildPlanEdited(src, src.Duration, testSettings(), edit)
+	require.NoError(t, err)
+	assert.Equal(t, []Interval{{Start: 0, End: src.Duration}}, plan.Keep, "the video is not cut")
+
+	got := SubtitleTranscript(src, plan.Keep, edit)
+
+	assert.Equal(t, "держим спину ровно держим спину ровно по десять приседаний", joinWords(got.Words))
+	assert.InDelta(t, src.Words[8].Start, got.Words[6].Start, 1e-9, "the time of the others stays")
+	require.NotEmpty(t, got.Segments)
+	assert.Equal(t, "по десять приседаний.", strings.TrimSpace(got.Segments[len(got.Segments)-1].Text))
+	assert.Equal(t, RemapTranscript(src, plan.Keep), SubtitleTranscript(src, plan.Keep, &Edit{Mode: WorkoutMode}))
+}

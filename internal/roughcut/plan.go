@@ -87,6 +87,9 @@ type Plan struct {
 	// pauses — whatever the mode and the edit: the media worker plans a source with little speech as a workout by it,
 	// and the editor's model sees it.
 	SpeechShare float64 `json:"speech_share"`
+	// MinSpeechShare is the threshold the media worker compared SpeechShare with (MEDIA_WORKER_MIN_SPEECH_SHARE;
+	// CutData.MinSpeechShare); 0 when unknown or off.
+	MinSpeechShare float64 `json:"min_speech_share,omitempty"`
 }
 
 // Edit is what the editor (the editing agent, by the trainer's caption or revision) changed on top of the
@@ -114,6 +117,9 @@ type Edit struct {
 	Titles []Title `json:"titles,omitempty"`
 	// Mute silences the sound of the source (the trainer adds a track in Instagram); the speech subtitles go too.
 	Mute bool `json:"mute,omitempty"`
+	// Hide are words left out of the subtitles only, the video and the sound stay (a phrase the speech recognition
+	// made up on music, which cutting would take seconds of an exercise with it). Indices of the source transcript.
+	Hide []WordRange `json:"hide,omitempty"`
 }
 
 // Title is an exercise title («Выпады — 12 раз») shown from Start to End, in seconds of the source. End 0 means until

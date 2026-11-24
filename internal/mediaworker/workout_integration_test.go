@@ -206,6 +206,19 @@ func TestIntegrationWorkoutKeepsPauses(t *testing.T) {
 	assert.Contains(t, string(ass.ASS), "Style: Title,Fira Sans Extra Condensed ExtraBold,")
 	assert.Contains(t, string(ass.ASS), ",Title,,0,0,0,,ВЫПАДЫ — 12 РАЗ\n")
 	assert.Contains(t, string(ass.ASS), ",Main,,0,0,0,,Выпады", "the speech subtitles stay")
+
+	// The spoken word hidden in the subtitles only: the reel is as long, the word is not in the ASS, the title stays.
+	edit.Hide = []roughcut.WordRange{{From: 0, To: 0}}
+
+	hidden, err := p.Run(t.Context(), renderJob(&plan, edit))
+	require.NoError(t, err)
+	assert.InDelta(t, done.Duration, hidden.Duration, 0.01, "hiding a word cuts nothing")
+
+	ass, err = burner.service.CreateSubtitles(burner.last().CreateSubtitlesData)
+	require.NoError(t, err)
+	assert.NotContains(t, string(ass.ASS), ",Main,,")
+	assert.Contains(t, string(ass.ASS), ",Title,,0,0,0,,ВЫПАДЫ — 12 РАЗ\n")
+	checkReel(t, storedReel(t, files), 30, hidden.Duration)
 }
 
 // TestIntegrationNoSpeechIsPlanned: a workout to music — sound all along, no words — is not refused as «no speech»:

@@ -231,7 +231,13 @@ func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edi
 		return nil, err
 	}
 
+	hide, err := mergeHidden(req, in, previous.Hide)
+	if err != nil {
+		return nil, err
+	}
+
 	edit.Mode = storedMode(mode)
+	edit.Hide = hide
 	edit.CutTime = roughcut.NormalizeIntervals(cuts, req.Plan.SourceDuration)
 	edit.Titles = titles
 	edit.Mute = previous.Mute
@@ -428,4 +434,25 @@ func untimedTitles(in *Input) []string {
 // roundSeconds keeps milliseconds, as the plans do.
 func roundSeconds(t float64) float64 {
 	return math.Round(t*millisPerSecond) / millisPerSecond
+}
+
+// mergeHidden adds the words this decision hides in the subtitles to those of the previous versions; a word hidden
+// already is refused, like a correction that changes nothing. Nil without hidden words.
+func mergeHidden(req *Request, in *Input, previous []roughcut.WordRange) ([]roughcut.WordRange, error) {
+	hidden := make([]bool, len(req.Transcript.Words))
+	for _, r := range previous {
+		mark(hidden, r, true)
+	}
+
+	for _, r := range in.Hide {
+		for i := r.From; i <= r.To; i++ {
+			if hidden[i] {
+				return nil, checkFailedf("слово %d уже скрыто в субтитрах", i)
+			}
+		}
+
+		mark(hidden, r, true)
+	}
+
+	return ranges(hidden), nil
 }

@@ -242,8 +242,9 @@ func TestFailureText(t *testing.T) {
 }
 
 // TestDescribeWorkoutFitsCaption: the description of a workout stays within the Telegram caption of a video (1024
-// UTF-16 units, with room for the link to the source) in the worst case — 20 titles, 20 exercises without a time, a
-// 300-character caption, a long reel, the fallback without the model — and the notes stand right after the header.
+// UTF-16 units, with room for the link to the source) in the worst case — six long changes, the disputed repeats, 20
+// titles, 20 exercises without a time, a 300-character caption, a long reel, the fallback without the model: the
+// notes stand right after the header, the lists are cut from the tail with a note.
 func TestDescribeWorkoutFitsCaption(t *testing.T) {
 	t.Parallel()
 
@@ -251,31 +252,42 @@ func TestDescribeWorkoutFitsCaption(t *testing.T) {
 		captionLimit = 1024
 		linkRoom     = 100 // «Исходник: https://t.me/c/…» after a blank line
 		titlesCount  = 20
+		changesCount = 6
 	)
 
 	name := strings.Repeat("я", 40)
 	caption := strings.Repeat("в", 300)
 	titles, untimed := make([]string, 0, titlesCount), make([]string, 0, titlesCount)
+	changes := make([]string, 0, changesCount)
 
 	for range titlesCount {
 		titles = append(titles, "0:15 — «"+name+"»")
 		untimed = append(untimed, name)
 	}
 
-	workout := &roughcut.Plan{Edit: &roughcut.Edit{Mode: roughcut.WorkoutMode}}
+	for range changesCount {
+		changes = append(changes, "Вырезал фрагмент «"+strings.Repeat("ф", 60)+"».")
+	}
+
+	workout := &roughcut.Plan{
+		Edit: &roughcut.Edit{Mode: roughcut.WorkoutMode}, Candidates: []roughcut.Candidate{{ID: 0}, {ID: 1}},
+	}
 	result := &editjob.Result{SourceDuration: 400, Duration: 380}
 	long := longReelNote(testReelsMax.Seconds())
 
 	tests := []struct {
-		name    string
-		outcome editplan.Outcome
-		note    string
+		name      string
+		outcome   editplan.Outcome
+		note      string
+		shortened bool
 	}{
 		{
-			name: "every title and exercise",
+			name: "every change, title and exercise",
 			outcome: editplan.Outcome{
-				Kind: editplan.EditOutcome, Mode: roughcut.WorkoutMode, Titles: titles, Untimed: untimed,
+				Kind: editplan.EditOutcome, Mode: roughcut.WorkoutMode, Changes: changes, Cut: 1, Titles: titles,
+				Untimed: untimed,
 			},
+			shortened: true,
 		},
 		{
 			name:    "without the model",
@@ -294,14 +306,46 @@ func TestDescribeWorkoutFitsCaption(t *testing.T) {
 			assert.LessOrEqual(t, len(utf16.Encode([]rune(text))), captionLimit-linkRoom, text)
 
 			lines := strings.Split(text, "\n")
-			require.GreaterOrEqual(t, len(lines), 2)
+			require.GreaterOrEqual(t, len(lines), 3)
 			assert.Equal(t, long, lines[1], "the length note right after the header")
 
 			if tt.note != "" {
 				assert.Equal(t, tt.note, lines[2])
 			}
 
+			assert.Equal(t, tt.shortened, strings.HasSuffix(text, shortenedNote))
 			assert.NotContains(t, text, strings.Repeat("в", maxWorkoutCaptionRunes+1), "the caption is cut")
+		})
+	}
+}
+
+func TestFitDescription(t *testing.T) {
+	t.Parallel()
+
+	line := strings.Repeat("д", 300)
+
+	tests := []struct {
+		name     string
+		tail     []string
+		expected string
+	}{
+		{name: "everything fits", tail: []string{"а", "б"}, expected: "заголовок\nа\nб"},
+		{
+			name:     "the tail is cut with a note",
+			tail:     []string{line, line, line, line},
+			expected: "заголовок\n" + line + "\n" + line + "\n" + shortenedNote,
+		},
+		{name: "a last line that does not fit", tail: []string{line, line, strings.Repeat("д", 400)},
+			expected: "заголовок\n" + line + "\n" + line + "\n" + shortenedNote},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := fitDescription([]string{"заголовок"}, tt.tail)
+			assert.Equal(t, tt.expected, got)
+			assert.LessOrEqual(t, utf16Len(got), maxDescriptionUnits)
 		})
 	}
 }

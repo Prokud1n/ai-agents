@@ -9,6 +9,9 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
+// speechShareLine is the speech share of testSpeech as the prompt gives it.
+const speechShareLine = "Речь с короткими паузами занимает 55% исходника"
+
 func TestPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -51,7 +54,7 @@ func TestPrompt(t *testing.T) {
 			},
 			expected: []string{
 				"Секунды в подписи — по времени исходника.", "<trainer_caption>\nбез первой фразы\n</trainer_caption>",
-				"Режим монтажа сейчас: talk", "Речь с короткими паузами занимает 55% исходника",
+				"Режим монтажа сейчас: talk", speechShareLine,
 			},
 			absent: []string{"Речи мало"},
 		},
@@ -61,7 +64,7 @@ func TestPrompt(t *testing.T) {
 			expected: []string{
 				"Подписи нет — выбери режим монтажа",
 				"Режим монтажа сейчас: workout",
-				"Речь с короткими паузами занимает 55% исходника", "Речи мало — возможно, это показ упражнений",
+				speechShareLine, "Речи мало — возможно, это показ упражнений",
 				"6 | 0:05.7–0:06.1 | в ролике 0:05.7 | эээ",
 			},
 			absent: []string{"Изменения прошлых версий", "Вырезанные по времени"},
@@ -83,6 +86,26 @@ func TestPrompt(t *testing.T) {
 				"Звук исходника убран (mute)",
 			},
 			absent: []string{"Речь с короткими паузами"},
+		},
+		{
+			name: "a caption with the worker's threshold",
+			req: func() *Request {
+				req := testRequest(1, nil)
+				req.Caption, req.Plan.MinSpeechShare = "тренировка ног", 0.6
+
+				return req
+			},
+			expected: []string{speechShareLine, "Порог монтажа — 60%: ниже него речи мало."},
+		},
+		{
+			name: "a plan made before speech_share: no share",
+			req: func() *Request {
+				req := testRequest(1, nil)
+				req.Caption, req.Plan.SpeechShare = "тренировка ног", 0
+
+				return req
+			},
+			absent: []string{"Речь с короткими паузами", "Порог монтажа"},
 		},
 		{
 			name: "a revision with the previous changes",

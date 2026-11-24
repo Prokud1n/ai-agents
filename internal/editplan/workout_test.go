@@ -76,6 +76,14 @@ func TestApplyWorkoutFirstVersion(t *testing.T) {
 			titles:  []string{"0:04 — «Мост»"},
 		},
 		{
+			name:     "a made-up phrase hidden in the subtitles only: the video stays whole",
+			base:     workoutEdit(),
+			input:    Input{Hide: []roughcut.WordRange{{From: 6, To: 6}}},
+			edit:     roughcut.Edit{Mode: roughcut.WorkoutMode, Hide: []roughcut.WordRange{{From: 6, To: 6}}},
+			duration: testSourceDuration,
+			changes:  []string{"Убрал из субтитров «эээ»."},
+		},
+		{
 			name:     "the sound removed, an exercise without a time",
 			base:     workoutEdit(),
 			input:    Input{Mute: new(true), UntimedTitles: []string{" Планка 30 с "}},
@@ -190,6 +198,11 @@ func TestApplyRejectsInvalidWorkoutEdit(t *testing.T) {
 				CutSeconds: []SecondsRange{{From: 5, To: 8.95}}, AddTitles: []TitleInput{{Text: bridgeTitle, Start: new(6.0)}},
 			},
 			expected: "не видно в ролике",
+		},
+		{
+			name:     "hidden words past the transcript",
+			input:    Input{Hide: []roughcut.WordRange{{From: 10, To: 11}}},
+			expected: "вне расшифровки",
 		},
 		{
 			name:     "a title that ends before it starts",
@@ -357,4 +370,29 @@ func TestApplyRefusesTooManyFragments(t *testing.T) {
 	var check *CheckError
 	require.ErrorAs(t, err, &check)
 	assert.Contains(t, check.Message, "не больше 500")
+}
+
+// TestApplyHideWordsAddUp: hidden words of the previous versions stay hidden; hiding one of them again changes
+// nothing and goes back to the model.
+func TestApplyHideWordsAddUp(t *testing.T) {
+	t.Parallel()
+
+	previous := workoutEdit()
+	previous.Hide = []roughcut.WordRange{{From: 6, To: 6}}
+
+	outcome, err := Apply(testRequest(2, previous), &Input{
+		Decision: EditDecision, Reason: testReason, Hide: []roughcut.WordRange{{From: 7, To: 8}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []roughcut.WordRange{{From: 6, To: 8}}, outcome.Edit.Hide)
+	assert.Equal(t, []string{"Убрал из субтитров «делаем по»."}, outcome.Changes)
+	assert.Contains(t, Prompt(testRequest(2, previous)), "- скрыты в субтитрах слова 6–6 «эээ»")
+
+	_, err = Apply(testRequest(2, previous), &Input{
+		Decision: EditDecision, Reason: testReason, Hide: []roughcut.WordRange{{From: 5, To: 6}},
+	})
+
+	var check *CheckError
+	require.ErrorAs(t, err, &check)
+	assert.Contains(t, check.Message, "уже скрыто")
 }

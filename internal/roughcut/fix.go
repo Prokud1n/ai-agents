@@ -20,6 +20,7 @@ func cloneEdit(e *Edit) *Edit {
 		CutTime: slices.Clone(e.CutTime),
 		Titles:  slices.Clone(e.Titles),
 		Mute:    e.Mute,
+		Hide:    slices.Clone(e.Hide),
 	}
 }
 

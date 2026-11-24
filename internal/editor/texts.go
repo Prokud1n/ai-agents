@@ -3,8 +3,10 @@ package editor
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/Prokud1n/ai-agents/internal/editjob"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
@@ -25,6 +27,9 @@ const (
 	maxUntimedNames = 5
 	// maxWorkoutCaptionRunes of the caption quoted in the description of a workout (its list of exercises is long).
 	maxWorkoutCaptionRunes = 120
+	// maxDescriptionUnits: the description is the caption of the video, at most 1024 UTF-16 units in Telegram; about
+	// 100 are left for the link to the source the gateway adds.
+	maxDescriptionUnits = 920
 )
 
 // Texts for the trainer. A failure is shown after «Не получилось выполнить задачу.» (tasks).
@@ -80,6 +85,8 @@ const (
 	titlesHint = "Подписи упражнений можно добавить правкой с временем, например: „подпиши выпады с 0:15 до 0:45“."
 	// titlesHeader goes before the list of the exercise titles of a workout.
 	titlesHeader = "Подписи упражнений:"
+	// shortenedNote ends a description whose lists did not fit into the caption of the video.
+	shortenedNote = "Описание сокращено: не всё поместилось в подпись к видео."
 )
 
 // forVersion is the text of the first version or of a revision.
@@ -165,17 +172,45 @@ func Describe(r *editjob.Result, version int, caption string, summary *editjob.S
 		header, body, quote = talkHeader(r), talkBody(r, summary), captionQuote(caption, maxCaptionRunes)
 	}
 
-	lines := append([]string{header}, notes...)
+	head := append([]string{header}, notes...)
 	if summary != nil && summary.Note != "" {
-		lines = append(lines, summary.Note)
+		head = append(head, summary.Note)
 	}
 
-	lines = append(lines, body...)
+	tail := slices.Clone(body)
 	if quote != "" {
-		lines = append(lines, quote)
+		tail = append(tail, quote)
 	}
 
-	return strings.Join(lines, "\n")
+	return fitDescription(head, tail)
+}
+
+// fitDescription joins the lines within maxDescriptionUnits: the head (the header and the notes) always, the tail
+// (changes, lists, the quoted caption) while it fits; what does not fit is replaced by shortenedNote.
+func fitDescription(head, tail []string) string {
+	text := strings.Join(head, "\n")
+	reserve := utf16Len("\n" + shortenedNote)
+
+	for i, line := range tail {
+		room := maxDescriptionUnits
+		if i+1 < len(tail) {
+			room -= reserve // a line after this one may not fit: the note must
+		}
+
+		next := text + "\n" + line
+		if utf16Len(next) > room {
+			return text + "\n" + shortenedNote
+		}
+
+		text = next
+	}
+
+	return text
+}
+
+// utf16Len is the length of the text as Telegram counts it.
+func utf16Len(text string) int {
+	return len(utf16.Encode([]rune(text)))
 }
 
 // talkHeader: «Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (…).»

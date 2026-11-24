@@ -57,6 +57,9 @@ type Input struct {
 	UntimedTitles []string      `json:"untimed_titles"`
 	// Mute silences the source (true) or brings its sound back (false); nil keeps it.
 	Mute *bool `json:"mute"`
+	// Hide are words left out of the subtitles only (a phrase made up by the speech recognition on music): the video
+	// and the sound stay.
+	Hide []roughcut.WordRange `json:"hide_words"`
 }
 
 // CandidateDecision decides a disputed repeat: Cut removes its earlier phrase (the repeat stays), otherwise both stay.
@@ -161,8 +164,9 @@ func checkInput(req *Request, in *Input) error {
 	words := len(req.Transcript.Words)
 
 	switch {
-	case len(in.Remove)+len(in.Restore) > maxRanges:
-		return checkFailedf("слишком много отрезков: не больше %d в remove_words и restore_words вместе", maxRanges)
+	case len(in.Remove)+len(in.Restore)+len(in.Hide) > maxRanges:
+		return checkFailedf("слишком много отрезков: не больше %d в remove_words, restore_words и hide_words вместе",
+			maxRanges)
 	case len(in.FixWords) > maxFixes:
 		return checkFailedf("слишком много исправлений: не больше %d в fix_words", maxFixes)
 	case !validSeconds(in.TrimStart) || !validSeconds(in.TrimEnd):
@@ -172,7 +176,7 @@ func checkInput(req *Request, in *Input) error {
 			timelineDuration(req))
 	}
 
-	for _, ranges := range [][]roughcut.WordRange{in.Remove, in.Restore} {
+	for _, ranges := range [][]roughcut.WordRange{in.Remove, in.Restore, in.Hide} {
 		for _, r := range ranges {
 			if r.From < 0 || r.To < r.From || r.To >= words {
 				return checkFailedf("отрезок слов %d–%d вне расшифровки: индексы от 0 до %d, from не больше to",
@@ -449,7 +453,7 @@ func previousState(previous *roughcut.Edit, words int) []wordState {
 	return state
 }
 
-func mark(state []wordState, r roughcut.WordRange, s wordState) {
+func mark[T any](state []T, r roughcut.WordRange, s T) {
 	for i := max(r.From, 0); i <= r.To && i < len(state); i++ {
 		state[i] = s
 	}
@@ -519,7 +523,7 @@ func checkChanged(req *Request, edit *roughcut.Edit, plan *roughcut.Plan) error 
 	}
 
 	if slices.Equal(before.Keep, plan.Keep) && slices.Equal(previous.Words, edit.Words) &&
-		slices.Equal(previous.Titles, edit.Titles) && previous.Mute == edit.Mute {
+		slices.Equal(previous.Titles, edit.Titles) && previous.Mute == edit.Mute && slices.Equal(previous.Hide, edit.Hide) {
 		return checkFailedf("правка ничего не меняет в ролике: проверь индексы слов, или ответь decision unclear")
 	}
 

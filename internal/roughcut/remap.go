@@ -14,13 +14,42 @@ import (
 // its words are kept; otherwise its text is rebuilt from its own tokens with punctuation (see segmentText).
 // Segments without kept words are dropped.
 func RemapTranscript(src *transcription.Result, keep []Interval) transcription.Result {
+	return remapTranscript(src, keep, nil)
+}
+
+// SubtitleTranscript is the transcript the subtitles of a cut are made from: RemapTranscript of the source with the
+// corrected words of the edit (Edit.Words), without the words it hides (Edit.Hide). Hidden words stay in the video and
+// the sound; only the subtitles leave them out, the punctuation of their segments is kept as for a cut word.
+func SubtitleTranscript(src *transcription.Result, keep []Interval, edit *Edit) transcription.Result {
+	return remapTranscript(subtitleWords(src, edit), keep, hiddenWords(edit, len(src.Words)))
+}
+
+// hiddenWords marks the words the edit hides in the subtitles; nil without any.
+func hiddenWords(edit *Edit, words int) []bool {
+	if edit == nil || len(edit.Hide) == 0 {
+		return nil
+	}
+
+	hidden := make([]bool, words)
+
+	for _, r := range edit.Hide {
+		for i := max(r.From, 0); i <= r.To && i < words; i++ {
+			hidden[i] = true
+		}
+	}
+
+	return hidden
+}
+
+// remapTranscript is RemapTranscript without the hidden words (nil hides nothing).
+func remapTranscript(src *transcription.Result, keep []Interval, hidden []bool) transcription.Result {
 	offsets := intervalOffsets(keep)
 	words := make([]transcription.Word, 0, len(src.Words))
 	keptWord := make([]bool, len(src.Words))
 
 	for i, w := range src.Words {
 		k, ok := findInterval(keep, (w.Start+w.End)/2)
-		if !ok {
+		if !ok || (hidden != nil && hidden[i]) {
 			continue
 		}
 

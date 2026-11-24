@@ -146,6 +146,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	}
 
 	plan = SnapToFrames(&plan, fps)
+	plan.MinSpeechShare = data.MinSpeechShare
 	if err := checkSegments(&plan, fps); err != nil {
 		return nil, err
 	}
@@ -153,7 +154,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	s.logPlan(ctx, &plan, data.Plan != nil)
 
 	result := &Result{
-		Plan: plan, Transcript: RemapTranscript(subtitleWords(data.Transcript, plan.Edit), plan.Keep), Log: DecisionsLog(&plan),
+		Plan: plan, Transcript: SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit), Log: DecisionsLog(&plan),
 		Render: ffmpeg.RenderOptions{
 			Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info), Mute: plan.Edit != nil && plan.Edit.Mute,
 		},

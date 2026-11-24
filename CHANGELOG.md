@@ -26,10 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edge opposite the speech subtitles, clear of them and of the Instagram zones). `mute` removes the sound of the source
   (a silent track stays) and the speech subtitles. The draft of a workout says so («Черновик тренировки готов…»),
   lists the titles with their time and the notes. A draft longer than `EDITOR_REELS_MAX_DURATION` (3 min) gets a
-  note right after the header (Instagram hardly shows such reels to non-followers), not a refusal; the description of
-  a workout stays within the 1024 characters of a video caption (at most 5 titles and 5 untimed exercises named, the
-  caption not quoted when the titles came from it). `plan.json` keeps `speech_share` — the share of the source the
-  automatic talking-head cut keeps — which the worker decides by and the model sees; a talking-head cut that cannot be
+  note right after the header (Instagram hardly shows such reels to non-followers), not a refusal. Every draft
+  description is kept within 920 UTF-16 units (the 1024 of a video caption less room for the link to the source):
+  the header and the notes always come first, the changes, lists and the quoted caption follow while they fit, and
+  the rest is replaced by «Описание сокращено: не всё поместилось в подпись к видео.»; a workout names at most 4
+  titles and 5 untimed exercises and does not quote a caption the titles came from. `hide_words` leaves words out of
+  the subtitles only (a phrase the speech recognition made up on music): the video and the sound stay, unlike
+  `remove_words`, which in a workout would cut seconds of an exercise; hidden words add up over the versions
+  (`Edit.Hide`). `plan.json` keeps `speech_share` — the share of the source the automatic talking-head cut keeps — and
+  `min_speech_share`, the worker's threshold; the worker decides by them, the model sees both; a talking-head cut that cannot be
   built (every word a filler, more than 500 fragments) also gives the workout plan instead of «no speech», and the
   app refuses an edit of more than 500 fragments before it reaches the worker.
 
