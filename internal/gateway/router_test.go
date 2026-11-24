@@ -259,9 +259,39 @@ func TestRouterMessages(t *testing.T) {
 		},
 		{
 			name:  "unknown command is a plain message",
+			input: groupMessage("/stop", withEntities(command(5))),
+			expected: routed{
+				Type: MessageEventType, Target: MarketerRole, Topic: OtherTopic, Text: "/stop", IsCommand: true,
+			},
+		},
+		{
+			name:  "help is a team command",
+			input: groupMessage("/help", inTopic(sourcesTopic), withEntities(command(5))),
+			expected: routed{
+				Type: CommandEventType, Target: MarketerRole, Topic: SourcesTopic, TopicID: sourcesTopic,
+				Command: HelpCommand, IsCommand: true,
+			},
+		},
+		{
+			name:  "start is a team command",
 			input: groupMessage("/start", withEntities(command(6))),
 			expected: routed{
-				Type: MessageEventType, Target: MarketerRole, Topic: OtherTopic, Text: "/start", IsCommand: true,
+				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: StartCommand, IsCommand: true,
+			},
+		},
+		{
+			name:  "feedback with its text",
+			input: groupMessage("/feedback всё отлично", withEntities(command(9))),
+			expected: routed{
+				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: FeedbackCommand,
+				Text: "всё отлично", IsCommand: true,
+			},
+		},
+		{
+			name:  "onboard command",
+			input: groupMessage("/onboard", withEntities(command(8))),
+			expected: routed{
+				Type: CommandEventType, Target: MarketerRole, Topic: OtherTopic, Command: OnboardCommand, IsCommand: true,
 			},
 		},
 		{

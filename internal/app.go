@@ -19,6 +19,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/logger"
 	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/pilot"
 	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
 	"github.com/Prokud1n/ai-agents/internal/providers/embeddings"
 	"github.com/Prokud1n/ai-agents/internal/providers/postgres"
@@ -59,6 +60,8 @@ func DeclareApplicationOptions() []fx.Option {
 		tasks.Module,
 		// The idea backlog: /idea tasks go to its executor, approved cards become ideas
 		ideas.Module,
+		// The pilot: the trainer's feedback, the metrics, the weekly reports and the pinned greetings
+		pilot.Module,
 		// Gateway ⇄ tasks: group events become tasks, drafts go to the group (to the log without bot tokens)
 		teamchat.Module,
 		// The editor's tasks go to the media worker (cmd/media-worker) through Redis: the app runs no ffmpeg

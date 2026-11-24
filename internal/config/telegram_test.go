@@ -24,6 +24,7 @@ func TestTelegramParse(t *testing.T) {
 				"TELEGRAM_MARKETER_TOKEN":    "",
 				"TELEGRAM_GROUP_ID":          "",
 				"TELEGRAM_ALLOWED_USER_IDS":  "",
+				"TELEGRAM_ADMIN_USER_IDS":    "",
 				"TELEGRAM_TOPIC_SOURCES_ID":  "",
 				"TELEGRAM_TOPIC_PLANNING_ID": "",
 			},
@@ -36,6 +37,7 @@ func TestTelegramParse(t *testing.T) {
 				"TELEGRAM_MARKETER_TOKEN":   "1:a",
 				"TELEGRAM_GROUP_ID":         "-1001234567890",
 				"TELEGRAM_ALLOWED_USER_IDS": "111,222",
+				"TELEGRAM_ADMIN_USER_IDS":   "111",
 				"TELEGRAM_TOPIC_SOURCES_ID": "7",
 			},
 			expected: func() Telegram {
@@ -43,6 +45,7 @@ func TestTelegramParse(t *testing.T) {
 				cfg.MarketerToken = "1:a"
 				cfg.GroupID = -1001234567890
 				cfg.AllowedUserIDs = []int64{111, 222}
+				cfg.AdminUserIDs = []int64{111}
 				cfg.SourcesTopicID = 7
 
 				return cfg

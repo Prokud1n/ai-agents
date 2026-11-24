@@ -47,6 +47,12 @@ const (
 	IdeasCommand    Command = "ideas"
 	IdeaDoneCommand Command = "idea_done"
 	IdeaDropCommand Command = "idea_drop"
+	// HelpCommand and StartCommand explain the team; FeedbackCommand is the trainer's feedback on the pilot;
+	// OnboardCommand (admins only) publishes and pins the greetings of the topics.
+	HelpCommand     Command = "help"
+	StartCommand    Command = "start"
+	FeedbackCommand Command = "feedback"
+	OnboardCommand  Command = "onboard"
 )
 
 // Topic is a named forum topic of the team group.

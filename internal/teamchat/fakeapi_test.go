@@ -108,7 +108,8 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "getFile":
 		f.record(token, method, body, 0)
 		f.serveFile(w, body)
-	case "answerCallbackQuery", "setMessageReaction":
+	case "answerCallbackQuery", "setMessageReaction", "setMyCommands", "deleteMyCommands", "pinChatMessage",
+		"unpinChatMessage":
 		f.record(token, method, body, 0)
 		writeResult(w, true)
 	default: // sendMessage, edits

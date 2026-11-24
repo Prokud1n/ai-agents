@@ -27,6 +27,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/pgtest"
+	"github.com/Prokud1n/ai-agents/internal/pilot"
 	"github.com/Prokud1n/ai-agents/internal/providers/embeddings"
 	"github.com/Prokud1n/ai-agents/internal/providers/redis"
 	"github.com/Prokud1n/ai-agents/internal/providers/telegram"
@@ -354,6 +355,7 @@ func TestIntegrationStopOrder(t *testing.T) {
 type integrationEnv struct {
 	api         *fakeBotAPI
 	service     *tasks.Service
+	pilot       *pilot.Service
 	executor    *scriptedExecutor
 	store       *fakeStore
 	filesDir    string // TELEGRAM_FILES_DIR of the gateway
@@ -395,7 +397,8 @@ func (r *stopRecorder) index(name string) int {
 	return -1
 }
 
-func startIntegrationEnv(t *testing.T) *integrationEnv {
+// startIntegrationEnv starts the env; configure changes the gateway config before the start.
+func startIntegrationEnv(t *testing.T, configure ...func(cfg *config.Telegram)) *integrationEnv {
 	t.Helper()
 
 	db := pgtest.Connect(t)
@@ -420,11 +423,16 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 	gatewayCfg := gatewayConfig(t, env.api, base)
 	env.filesDir = gatewayCfg.FilesDir
 
+	for _, c := range configure {
+		c(gatewayCfg)
+	}
+
 	app := fxtest.New(t,
 		fx.Supply(
 			gatewayCfg,
 			integrationTasksConfig(prefix),
 			&config.LLM{}, &config.OpenAI{}, &config.Embeddings{}, &config.Team{Timezone: integrationTimezone},
+			&config.Pilot{},
 			slog.New(slog.DiscardHandler),
 			db, rdb,
 		),
@@ -434,6 +442,7 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		gateway.Module,
 		tasks.Module,
 		ideas.Module,
+		pilot.Module,
 		Module,
 		// The agents are scripted; idea tasks go to the real idea executor with a scripted model.
 		fx.Decorate(func(backlog *ideas.Service, log *slog.Logger) (tasks.Executor, error) {
@@ -448,7 +457,7 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		}),
 		// Videos go to a fake store: S3 of the compose stack is not reachable from the tests.
 		fx.Decorate(func() mediaStore { return env.store }),
-		fx.Populate(&env.service),
+		fx.Populate(&env.service, &env.pilot),
 		fx.WithLogger(func() fxevent.Logger { return env.stops }),
 	)
 	app.RequireStart()
@@ -598,6 +607,7 @@ func cleanGatewayKeys(t *testing.T, rdb *redis.Client, base, groupID int64, call
 
 		for _, id := range []int64{
 			ideaMessageID, revisionMsgID, videoMessageID, voiceMessageID, ideaCommandMsgID, ideasMsgID, ideaDoneMsgID,
+			feedbackIdeaMsgID, feedbackMsgID, feedbackReplyMsgID, feedbackStatusMsgID, onboardMsgID, onboardAgainMsgID,
 		} {
 			keys = append(keys, "telegram:seen:message:"+strconv.FormatInt(groupID, 10)+":"+strconv.FormatInt(id, 10))
 		}
