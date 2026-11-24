@@ -32,6 +32,7 @@ const (
 	testReel2Key  = "edits/-1001234567890/42/uniq-v2-reel.mp4"
 	testCaption   = "про планку"
 	testRevision  = "убери первые 3 секунды"
+	testChange    = "Обрезал начало: убрал первые 3 с."
 	testTimeout   = 45 * time.Minute
 	testQueue     = 3 * time.Hour
 	testWorker    = 3 * time.Minute
@@ -216,11 +217,11 @@ func testPlan() *roughcut.Plan {
 	}
 }
 
-// storedFiles are the transcript of the source and the plan of the version, as the worker stores them.
-func storedFiles(t *testing.T, version int) map[string][]byte {
+// storedFiles are the transcript of the source and the plan of version 1, as the worker stores them.
+func storedFiles(t *testing.T) map[string][]byte {
 	t.Helper()
 
-	files, err := editjob.Files(testStore{}, testSourceKey, version)
+	files, err := editjob.Files(testStore{}, testSourceKey, 1)
 	require.NoError(t, err)
 
 	transcript, err := json.Marshal(&transcription.Result{Language: "ru", Duration: 60, Words: []transcription.Word{
@@ -239,7 +240,7 @@ func editOutcome() *editplan.Outcome {
 	return &editplan.Outcome{
 		Kind:    editplan.EditOutcome,
 		Edit:    roughcut.Edit{Remove: []roughcut.WordRange{{From: 0, To: 0}}, Notes: []string{"начало убрано"}},
-		Changes: []string{"Обрезал начало: убрал первые 3 с."},
+		Changes: []string{testChange},
 		Cut:     1,
 	}
 }
@@ -510,7 +511,7 @@ func TestExecutorDecidesPlannedJob(t *testing.T) {
 		{
 			name: "the caption applied", decider: &fakeDecider{outcome: editOutcome()}, edit: &editOutcome().Edit,
 			expected: &editjob.Summary{Changes: []string{
-				"Обрезал начало: убрал первые 3 с.", "Спорные повторы: вырезал 1, оставил 0.",
+				testChange, "Спорные повторы: вырезал 1, оставил 0.",
 			}},
 		},
 		{
@@ -539,7 +540,7 @@ func TestExecutorDecidesPlannedJob(t *testing.T) {
 				job:    planned,
 				result: &editjob.Result{JobID: testJobID, Status: editjob.PlannedStatus, Candidates: 1},
 			}
-			deps := &testDeps{board: b, store: testStore{files: storedFiles(t, 1)}, decider: tt.decider, tech: &fakeTech{}}
+			deps := &testDeps{board: b, store: testStore{files: storedFiles(t)}, decider: tt.decider, tech: &fakeTech{}}
 
 			_, err := newTestExecutorWith(deps).Execute(t.Context(), editData())
 
@@ -571,7 +572,7 @@ func TestExecutorRevision(t *testing.T) {
 	t.Parallel()
 
 	b, decider := &fakeBoard{}, &fakeDecider{outcome: editOutcome()}
-	deps := &testDeps{board: b, store: testStore{files: storedFiles(t, 1)}, decider: decider, tech: &fakeTech{}}
+	deps := &testDeps{board: b, store: testStore{files: storedFiles(t)}, decider: decider, tech: &fakeTech{}}
 
 	_, err := newTestExecutorWith(deps).Execute(t.Context(), revisionData())
 
@@ -597,7 +598,7 @@ func TestExecutorRevision(t *testing.T) {
 	out, err := newTestExecutorWith(deps).Execute(t.Context(), revisionData())
 	require.NoError(t, err)
 	assert.Equal(t, testReel2Key, out.MediaKey, "version 2 has its own video")
-	assert.Equal(t, "Новая версия рилс: было 0:45, стало 0:42.\nОбрезал начало: убрал первые 3 с.", out.Text)
+	assert.Equal(t, "Новая версия рилс: было 0:45, стало 0:42.\n"+testChange, out.Text)
 	assert.Len(t, decider.requests, 1, "a finished version is not decided again")
 }
 
@@ -635,7 +636,7 @@ func TestExecutorRevisionRefused(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			files := storedFiles(t, 1)
+			files := storedFiles(t)
 			if tt.noFiles {
 				files = nil
 			}
@@ -688,7 +689,7 @@ func TestExecutorModelErrors(t *testing.T) {
 			t.Parallel()
 
 			b, tech := &fakeBoard{}, &fakeTech{}
-			deps := &testDeps{board: b, store: testStore{files: storedFiles(t, 1)}, decider: &fakeDecider{err: tt.err},
+			deps := &testDeps{board: b, store: testStore{files: storedFiles(t)}, decider: &fakeDecider{err: tt.err},
 				tech: tech}
 
 			_, err := newTestExecutorWith(deps).Execute(t.Context(), revisionData())

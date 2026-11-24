@@ -48,7 +48,7 @@ func (d *Decider) Decide(ctx context.Context, req *Request) (*Outcome, error) {
 	}
 
 	d.log.WarnContext(ctx, "editplan: the model answered without a decision", "task_id", req.TaskID,
-		"version", req.Version, "answer", oneLine(result.Text, maxReasonRunes))
+		"version", req.Version, "answer", oneLine(result.Text))
 
-	return &Outcome{Kind: NoAnswerOutcome, Reason: oneLine(result.Text, maxReasonRunes)}, nil
+	return &Outcome{Kind: NoAnswerOutcome, Reason: oneLine(result.Text)}, nil
 }

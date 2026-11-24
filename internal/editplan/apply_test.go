@@ -175,6 +175,9 @@ func TestApplyFirstVersion(t *testing.T) {
 }
 
 // TestApplyRevision: a revision adds to the edit of the previous versions; the trainer is told what changed.
+// noReasonNote is the note of a revision without the model's reason.
+const noReasonNote = "Правка тренера к версии 1: —"
+
 func TestApplyRevision(t *testing.T) {
 	t.Parallel()
 
@@ -189,7 +192,7 @@ func TestApplyRevision(t *testing.T) {
 			name:  "the first second trimmed",
 			input: Input{Decision: EditDecision, TrimStart: 1},
 			expectedEdit: roughcut.Edit{
-				Remove: []roughcut.WordRange{{From: 0, To: 2}}, Notes: []string{"Правка тренера к версии 1: —"},
+				Remove: []roughcut.WordRange{{From: 0, To: 2}}, Notes: []string{noReasonNote},
 			},
 			expectedChanges: []string{"Обрезал начало: убрал первые 1 с."},
 		},
@@ -197,7 +200,7 @@ func TestApplyRevision(t *testing.T) {
 			name:  "the end trimmed",
 			input: Input{Decision: EditDecision, TrimEnd: 1.5},
 			expectedEdit: roughcut.Edit{
-				Remove: []roughcut.WordRange{{From: 7, To: 10}}, Notes: []string{"Правка тренера к версии 1: —"},
+				Remove: []roughcut.WordRange{{From: 7, To: 10}}, Notes: []string{noReasonNote},
 			},
 			expectedChanges: []string{"Обрезал конец: убрал последние 1,5 с."},
 		},
@@ -218,7 +221,7 @@ func TestApplyRevision(t *testing.T) {
 			previous: &roughcut.Edit{Remove: []roughcut.WordRange{{From: 7, To: 10}}},
 			input:    Input{Decision: EditDecision, Restore: []roughcut.WordRange{{From: 7, To: 10}}},
 			expectedEdit: roughcut.Edit{
-				Restore: []roughcut.WordRange{{From: 7, To: 10}}, Notes: []string{"Правка тренера к версии 1: —"},
+				Restore: []roughcut.WordRange{{From: 7, To: 10}}, Notes: []string{noReasonNote},
 			},
 			expectedChanges: []string{"Вернул фрагмент «делаем по десять приседаний»."},
 		},
@@ -235,7 +238,7 @@ func TestApplyRevision(t *testing.T) {
 				Accept: []int{0}, Remove: []roughcut.WordRange{{From: 10, To: 10}},
 				Words: []roughcut.WordFix{{Index: 8, Text: "по"}, {Index: 9, Text: "10"}},
 				Notes: []string{
-					"Правка тренера к версии 1: —", "Повтор 0: первая фраза вырезана, оставлен повтор — второй дубль",
+					noReasonNote, "Повтор 0: первая фраза вырезана, оставлен повтор — второй дубль",
 				},
 			},
 			expectedChanges: []string{

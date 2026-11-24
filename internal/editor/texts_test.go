@@ -67,8 +67,8 @@ func TestDescribe(t *testing.T) {
 			result:   editjob.Result{SourceDuration: 60, Duration: 42},
 			version:  2,
 			caption:  "про планку",
-			summary:  &editjob.Summary{Changes: []string{"Обрезал начало: убрал первые 3 с."}, PreviousDuration: 45},
-			expected: "Новая версия рилс: было 0:45, стало 0:42.\nОбрезал начало: убрал первые 3 с.",
+			summary:  &editjob.Summary{Changes: []string{testChange}, PreviousDuration: 45},
+			expected: "Новая версия рилс: было 0:45, стало 0:42.\n" + testChange,
 		},
 		{
 			name:     "a revision without its summary",

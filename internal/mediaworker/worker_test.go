@@ -19,6 +19,8 @@ import (
 
 var testNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
+const testJobID = "task-17-v1"
+
 // fakeBoard records what the worker did with one delivery.
 type fakeBoard struct {
 	mu sync.Mutex
@@ -168,7 +170,7 @@ func deliveryWithTimeout(queueDeadline time.Time, timeout time.Duration) *editjo
 func TestWorkerHandle(t *testing.T) {
 	t.Parallel()
 
-	done := &editjob.Result{JobID: "task-17-v1", Status: editjob.DoneStatus}
+	done := &editjob.Result{JobID: testJobID, Status: editjob.DoneStatus}
 	later := testNow.Add(time.Hour)
 
 	tests := []struct {
@@ -189,7 +191,7 @@ func TestWorkerHandle(t *testing.T) {
 		},
 		{
 			name: "a failure is a result with its code", board: &fakeBoard{},
-			runner:       &fakeRunner{result: &editjob.Result{JobID: "task-17-v1"}, err: fail(editjob.NoAudioCode, errNoAudio)},
+			runner:       &fakeRunner{result: &editjob.Result{JobID: testJobID}, err: fail(editjob.NoAudioCode, errNoAudio)},
 			delivery:     delivery(later),
 			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.FailedStatus, expectedCode: editjob.NoAudioCode,
 		},
@@ -224,12 +226,12 @@ func TestWorkerHandle(t *testing.T) {
 		},
 		{
 			name:  "a planned job replaced by its render stage is skipped",
-			board: &fakeBoard{stored: &editjob.Job{ID: "task-17-v1", Stage: editjob.RenderStage}}, runner: &fakeRunner{},
+			board: &fakeBoard{stored: &editjob.Job{ID: testJobID, Stage: editjob.RenderStage}}, runner: &fakeRunner{},
 			delivery: delivery(later), expectedAcks: 1,
 		},
 		{
 			name:   "the current stage is run",
-			board:  &fakeBoard{stored: &editjob.Job{ID: "task-17-v1", Stage: editjob.AutoStage}},
+			board:  &fakeBoard{stored: &editjob.Job{ID: testJobID, Stage: editjob.AutoStage}},
 			runner: &fakeRunner{result: done}, delivery: delivery(later),
 			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
 		},

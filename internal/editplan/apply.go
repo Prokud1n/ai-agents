@@ -83,7 +83,7 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	reason := oneLine(in.Reason, maxReasonRunes)
+	reason := oneLine(in.Reason)
 
 	switch in.Decision {
 	case CannotDecision:
@@ -436,7 +436,7 @@ func notes(req *Request, in *Input, reason string) []string {
 			verdict = "первая фраза вырезана, оставлен повтор"
 		}
 
-		out = append(out, fmt.Sprintf("Повтор %d: %s — %s", d.ID, verdict, orDash(oneLine(d.Reason, maxReasonRunes))))
+		out = append(out, fmt.Sprintf("Повтор %d: %s — %s", d.ID, verdict, orDash(oneLine(d.Reason))))
 	}
 
 	return out
@@ -450,9 +450,9 @@ func orDash(s string) string {
 	return s
 }
 
-// oneLine collapses whitespace and line breaks and cuts the text to limit runes.
-func oneLine(text string, limit int) string {
-	return truncate(strings.Join(strings.Fields(text), " "), limit)
+// oneLine collapses whitespace and line breaks and cuts the text to maxReasonRunes.
+func oneLine(text string) string {
+	return truncate(strings.Join(strings.Fields(text), " "), maxReasonRunes)
 }
 
 func truncate(text string, limit int) string {
