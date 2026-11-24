@@ -268,7 +268,7 @@ func TestPipelineRendersDecidedVersion(t *testing.T) {
 	first, err := editjob.Files(fakes.store, testSourceKey, 1)
 	require.NoError(t, err)
 
-	stored := `{"language":testLanguage,"duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
+	stored := `{"language":"ru","duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
 	require.NoError(t, fakes.store.PutResult(t.Context(), first.Transcript, strings.NewReader(stored), editjob.JSONContentType))
 	require.NoError(t, fakes.store.PutResult(t.Context(), first.Reel, strings.NewReader("reel-v1"), editjob.VideoContentType))
 
@@ -321,7 +321,7 @@ func TestPipelineRenderInvalidEdit(t *testing.T) {
 	first, err := editjob.Files(fakes.store, testSourceKey, 1)
 	require.NoError(t, err)
 
-	stored := `{"language":testLanguage,"duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
+	stored := `{"language":"ru","duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
 	require.NoError(t, fakes.store.PutResult(t.Context(), first.Transcript, strings.NewReader(stored), editjob.JSONContentType))
 
 	job := testJob()
