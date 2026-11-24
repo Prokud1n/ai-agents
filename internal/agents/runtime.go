@@ -57,6 +57,12 @@ func NewRuntime(
 // the partial Result comes with the error, and its Messages are safe to pass to the next run
 // (tool_use blocks without a tool_result are removed). ErrIterationLimit comes with a partial Result too:
 // the history up to the last tool results, the tokens and the text of the last turn.
+//
+// A successful call of a final tool (see finalTool) ends the run with its tool result as the last message and stop
+// reason tool_use: the decision is in the tool, another model turn would only cost tokens.
+//
+// The end of the first user message is a cache breakpoint besides the system prompt, so every turn of a run with
+// tools reads the task from the cache.
 func (r *Runtime) Run(ctx context.Context, data *RunAgentData) (*Result, error) {
 	agent, err := r.registry.Get(data.Agent)
 	if err != nil {
@@ -73,7 +79,7 @@ func (r *Runtime) Run(ctx context.Context, data *RunAgentData) (*Result, error) 
 	result := &Result{Model: req.Model}
 
 	for range maxToolIterations {
-		req.Messages = messages
+		req.Messages = withCacheBreakpoint(messages)
 
 		resp, err := r.call(ctx, agent, &req)
 		if err != nil {
@@ -88,7 +94,7 @@ func (r *Runtime) Run(ctx context.Context, data *RunAgentData) (*Result, error) 
 
 		switch resp.StopReason {
 		case anthropic.ToolUseStopReason:
-			toolResults, err := r.executeTools(ctx, agent, tools, resp.Content)
+			toolResults, final, err := r.executeTools(ctx, agent, tools, resp.Content)
 			if err != nil {
 				return nil, err
 			}
@@ -97,6 +103,12 @@ func (r *Runtime) Run(ctx context.Context, data *RunAgentData) (*Result, error) 
 				assistant,
 				{Role: anthropic.UserRole, Content: toolResults},
 			})
+
+			if final {
+				result.Messages = messages
+
+				return result, nil
+			}
 		case anthropic.PauseTurnStopReason:
 			messages = slices.Concat(messages, []anthropic.Message{assistant})
 		default:
@@ -214,15 +226,17 @@ func (r *Runtime) call(
 	return resp, nil
 }
 
-// executeTools runs every tool_use block of the response and returns tool_result blocks in the same order.
-// A tool error goes to the model as a short message (see ToolError), its details go to the log.
+// executeTools runs every tool_use block of the response and returns tool_result blocks in the same order, and
+// whether a final tool succeeded. A tool error goes to the model as a short message (see ToolError), its details go
+// to the log.
 func (r *Runtime) executeTools(
 	ctx context.Context,
 	agent *Agent,
 	tools []Tool,
 	content []anthropic.ContentBlock,
-) ([]anthropic.ContentBlock, error) {
+) ([]anthropic.ContentBlock, bool, error) {
 	results := make([]anthropic.ContentBlock, 0, len(content))
+	final := false
 
 	for i := range content {
 		block := &content[i]
@@ -230,7 +244,7 @@ func (r *Runtime) executeTools(
 			continue
 		}
 
-		output, err := runTool(ctx, tools, block)
+		output, ends, err := runTool(ctx, tools, block)
 		if err != nil {
 			r.log.WarnContext(ctx, "agents: tool failed",
 				"error", err, logKeyAgent, agent.Name, "tool", block.Name, "tool_use_id", block.ID)
@@ -240,31 +254,65 @@ func (r *Runtime) executeTools(
 		}
 
 		results = append(results, anthropic.ToolResultBlock(block.ID, output, false))
+		final = final || ends
 	}
 
 	if len(results) == 0 {
-		return nil, fmt.Errorf("failed to run agent %q: stop reason tool_use without tool_use blocks: %w",
+		return nil, false, fmt.Errorf("failed to run agent %q: stop reason tool_use without tool_use blocks: %w",
 			agent.Name, ErrInvalidResponse)
 	}
 
-	return results, nil
+	return results, final, nil
 }
 
-func runTool(ctx context.Context, tools []Tool, block *anthropic.ContentBlock) (string, error) {
+// runTool runs the tool of the block; true when it is a final tool that succeeded.
+func runTool(
+	ctx context.Context,
+	tools []Tool,
+	block *anthropic.ContentBlock,
+) (output string, ends bool, err error) {
 	for _, t := range tools {
 		if t.Name() != block.Name {
 			continue
 		}
 
-		output, err := t.Execute(ctx, block.Input)
+		output, err = t.Execute(ctx, block.Input)
 		if err != nil {
-			return "", fmt.Errorf("failed to execute tool %q: %w", block.Name, err)
+			return "", false, fmt.Errorf("failed to execute tool %q: %w", block.Name, err)
 		}
 
-		return output, nil
+		f, ok := t.(finalTool)
+
+		return output, ok && f.EndsRun(), nil
 	}
 
-	return "", NewToolError(fmt.Sprintf("tool %q is not available to this agent", block.Name))
+	return "", false, NewToolError(fmt.Sprintf("tool %q is not available to this agent", block.Name))
+}
+
+// withCacheBreakpoint returns the messages with the end of the first user message (the task) marked as a cacheable
+// prefix; with the system prompt that is two of the four breakpoints the API allows. The caller's messages are not
+// changed, so the history of the result has no marks.
+func withCacheBreakpoint(messages []anthropic.Message) []anthropic.Message {
+	for i := range messages {
+		if messages[i].Role != anthropic.UserRole {
+			continue
+		}
+
+		content := messages[i].Content
+		if len(content) == 0 || !content[len(content)-1].Cacheable() {
+			return messages
+		}
+
+		last := content[len(content)-1]
+		last.CacheControl = anthropic.EphemeralCache()
+
+		out := slices.Clone(messages)
+		out[i].Content = append(slices.Clone(content[:len(content)-1]), last)
+
+		return out
+	}
+
+	return messages
 }
 
 // toolErrorMessage is what the model sees: the ToolError message, or a generic one for other errors.

@@ -116,10 +116,14 @@ func errorResponse(status int) fakeResponse {
 func newTestRuntime(t *testing.T, api *fakeAPI) (*Runtime, *fakeRecorder) {
 	t.Helper()
 
+	return newTestRuntimeWith(t, api, loadTestRegistry(t))
+}
+
+func newTestRuntimeWith(t *testing.T, api *fakeAPI, registry *Registry) (*Runtime, *fakeRecorder) {
+	t.Helper()
+
 	server := httptest.NewServer(api)
 	t.Cleanup(server.Close)
-
-	registry := loadTestRegistry(t)
 
 	log := slog.New(slog.DiscardHandler)
 	client := anthropic.NewClient(&config.Anthropic{
@@ -277,6 +281,9 @@ func TestRuntimeRequest(t *testing.T) {
 
 	first := requests[0]
 	assert.Equal(t, testModel, first.Model)
+	require.NotNil(t, first.Messages[0].Content[0].CacheControl, "the task is a cache breakpoint")
+	assert.Equal(t, anthropic.EphemeralCache(), requests[1].Messages[0].Content[0].CacheControl)
+	assert.Nil(t, requests[1].Messages[2].Content[0].CacheControl, "only the first user message")
 	assert.Equal(t, 1024, first.MaxTokens)
 	require.Len(t, first.System, 1)
 	assert.Contains(t, first.System[0].Text, "You are a test coach.")
@@ -606,4 +613,46 @@ func TestRuntimeRunIterationLimit(t *testing.T) {
 	assert.Equal(t, anthropic.UserRole, last.Role)
 	require.Len(t, last.Content, 1)
 	assert.Equal(t, anthropic.ToolResultContentType, last.Content[0].Type)
+}
+
+// TestRuntimeFinalTool: a successful call of a final tool ends the run without another model turn; a failed one
+// goes back to the model as usual.
+func TestRuntimeFinalTool(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		requests int
+	}{
+		{name: "success ends the run", input: `{"text":"hi"}`, requests: 1},
+		{name: "a failed call continues", input: `"not an object"`, requests: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tools := testTools()
+			tools[0].(*fakeTool).final = true
+
+			registry, err := LoadRegistry(validAgentsDir, validSkillsDir, tools)
+			require.NoError(t, err)
+
+			api := &fakeAPI{responses: []fakeResponse{toolUseResponse(echoToolName, tt.input), finalResponse()}}
+			runtime, _ := newTestRuntimeWith(t, api, registry)
+
+			result, err := runtime.Run(context.Background(), &RunAgentData{Agent: coachAgent, Input: userInput})
+			require.NoError(t, err)
+			require.Len(t, api.sentRequests(), tt.requests)
+			assert.Equal(t, tt.requests, result.Calls)
+			assert.Nil(t, result.Messages[0].Content[0].CacheControl, "the history has no cache marks")
+
+			if tt.requests == 1 {
+				require.Len(t, result.Messages, 3)
+				assert.Equal(t, anthropic.ToolUseStopReason, result.StopReason)
+				assert.Equal(t, "echo: hi", result.Messages[2].Content[0].Content)
+			}
+		})
+	}
 }

@@ -4,12 +4,14 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/Prokud1n/ai-agents/internal/editjob"
+	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 	"github.com/Prokud1n/ai-agents/internal/teamchat"
 )
 
-// Module runs the editor's tasks through the media worker; it needs editjob.Module, media.Module and tasks.Module.
+// Module runs the editor's tasks through the media worker; it needs editjob.Module, editplan.Module, media.Module and
+// tasks.Module.
 // tasks.Executor is decorated: the editor's tasks go to Executor, the rest to the agents as before.
 //
 // The decoration is outside fx.Module on purpose (as in teamchat): a decorator applies to its own scope and the scopes
@@ -18,7 +20,7 @@ var Module = fx.Options(
 	fx.Module("editor",
 		// Executor is visible to the application: the decorator of tasks.Executor below takes it.
 		fx.Provide(NewExecutor),
-		fx.Provide(NewWaker, asBoard, asDoneListener, asResultKeys, asTaskWaker, asTechReporter, fx.Private),
+		fx.Provide(NewWaker, asBoard, asDoneListener, asStore, asDecider, asTaskWaker, asTechReporter, fx.Private),
 		fx.Invoke(registerWaker),
 	),
 	fx.Decorate(routeExecutor),
@@ -42,8 +44,12 @@ func asDoneListener(b *editjob.Board) doneListener {
 	return b
 }
 
-func asResultKeys(s *media.Store) resultKeys {
+func asStore(s *media.Store) store {
 	return s
+}
+
+func asDecider(d *editplan.Decider) decider {
+	return d
 }
 
 func asTechReporter(r *teamchat.TechReporter) techReporter {

@@ -151,7 +151,7 @@ func startExchange(t *testing.T, pipeline *fakePipeline) (*exchangeEnv, *editjob
 
 	pipeline.store = store
 	env := &exchangeEnv{
-		client: client, board: board, store: store, cfg: cfg, executor: NewExecutor(board, store, &fakeTech{}, cfg, log),
+		client: client, board: board, store: store, cfg: cfg, executor: NewExecutor(board, store, &fakeDecider{}, &fakeTech{}, cfg, log),
 		wakes: &recordingWaker{}, source: source,
 	}
 
@@ -277,7 +277,7 @@ func TestIntegrationEditorWithoutWorker(t *testing.T) {
 	tech := &fakeTech{}
 	cfg := *env.cfg
 	cfg.WorkerWait = 200 * time.Millisecond
-	executor := NewExecutor(env.board, env.store, tech, &cfg, slog.New(slog.DiscardHandler))
+	executor := NewExecutor(env.board, env.store, &fakeDecider{}, tech, &cfg, slog.New(slog.DiscardHandler))
 	data := env.data(33)
 
 	_, err := executor.Execute(t.Context(), data)
@@ -308,7 +308,7 @@ func TestIntegrationEditorTimeoutFromStart(t *testing.T) {
 	env, board := startExchange(t, pipeline)
 	cfg := *env.cfg
 	cfg.JobTimeout = 300 * time.Millisecond
-	executor := NewExecutor(env.board, env.store, &fakeTech{}, &cfg, slog.New(slog.DiscardHandler))
+	executor := NewExecutor(env.board, env.store, &fakeDecider{}, &fakeTech{}, &cfg, slog.New(slog.DiscardHandler))
 	data := env.data(34)
 
 	_, err := executor.Execute(t.Context(), data)

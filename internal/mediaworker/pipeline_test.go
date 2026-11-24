@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,8 +43,8 @@ type pipelineFakes struct {
 	burner      *fakeBurner
 }
 
-// newPipelineFakes: a 3-minute source with a picture and sound, three words, a plan that cuts it to 2:21 with
-// one disputed repeat left in.
+// newPipelineFakes: a 3-minute source with a picture and sound, two words, a plan that cuts it to 2:21 with nothing
+// to decide.
 func newPipelineFakes(t *testing.T) *pipelineFakes {
 	t.Helper()
 
@@ -59,7 +60,7 @@ func newPipelineFakes(t *testing.T) *pipelineFakes {
 		cutter: &fakeCutter{result: &roughcut.Result{
 			Plan: roughcut.Plan{
 				Duration: 141, Keep: []roughcut.Interval{{Start: 0.5, End: 1}, {Start: 3, End: 3.5}},
-				Cuts: make([]roughcut.Cut, 3), Candidates: make([]roughcut.Candidate, 1),
+				Cuts: make([]roughcut.Cut, 3), Candidates: []roughcut.Candidate{},
 			},
 			Transcript: transcription.Result{Words: words},
 			Render:     ffmpeg.RenderOptions{Fade: 0.01, FrameRate: ffmpeg.Rational{Num: 30, Den: 1}},
@@ -103,11 +104,13 @@ func TestPipelineRun(t *testing.T) {
 	assert.InDelta(t, 182, result.SourceDuration, 1e-9)
 	assert.InDelta(t, 141, result.Duration, 1e-9)
 	assert.Equal(t, 3, result.Cuts)
-	assert.Equal(t, 1, result.Candidates, "disputed repeats are kept and counted")
+	assert.Zero(t, result.Candidates)
 	assert.InDelta(t, 182, result.AudioSeconds, 1e-9)
 
 	assert.True(t, fakes.cutter.got.PlanOnly, "the plan is rendered in the same pass as the subtitles")
 	assert.Empty(t, fakes.cutter.got.AcceptCandidates, "disputed repeats are not cut")
+	assert.Nil(t, fakes.cutter.got.Edit, "the automatic plan")
+	assert.Equal(t, 1, fakes.transcriber.calls)
 	require.NotNil(t, fakes.burner.got.Cut)
 	assert.Equal(t, fakes.cutter.result.Segments(), fakes.burner.got.Cut.Segments)
 	assert.Equal(t, fakes.cutter.result.Render, fakes.burner.got.Cut.Options)
@@ -138,6 +141,126 @@ func TestPipelineToneMapsHDR(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, transfer != testSDR, fakes.burner.got.ToneMap, transfer)
 	}
+}
+
+// TestPipelineStopsForDecision: with the trainer's caption or disputed repeats the auto stage stops after the plan:
+// the transcript, the plan and the log are stored for the editor, no reel is rendered.
+func TestPipelineStopsForDecision(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		decide bool
+		change func(f *pipelineFakes)
+	}{
+		{name: "a caption to apply", decide: true},
+		{
+			name:   "a disputed repeat",
+			change: func(f *pipelineFakes) { f.cutter.result.Plan.Candidates = make([]roughcut.Candidate, 2) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakes := newPipelineFakes(t)
+			if tt.change != nil {
+				tt.change(fakes)
+			}
+
+			job := testJob()
+			job.Decide = tt.decide
+
+			result, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), job)
+			require.NoError(t, err)
+
+			assert.Equal(t, editjob.PlannedStatus, result.Status)
+			assert.Equal(t, len(fakes.cutter.result.Plan.Candidates), result.Candidates)
+			assert.Nil(t, fakes.burner.got, "nothing is rendered before the decision")
+
+			files, err := editjob.Files(fakes.store, testSourceKey, 1)
+			require.NoError(t, err)
+			assert.Equal(t, []string{files.Plan, files.Decisions, files.Transcript}, fakes.store.order)
+		})
+	}
+}
+
+// TestPipelineRendersDecidedVersion: a render job (a revision) reads the stored transcript — the speech is not
+// transcribed again, the OpenAI key is not needed — and builds the plan with the editor's edit; the reel of the
+// version goes under its own key, the files of version 1 stay.
+func TestPipelineRendersDecidedVersion(t *testing.T) {
+	t.Parallel()
+
+	fakes := newPipelineFakes(t)
+	fakes.keys = fakeKeys{err: whisper.ErrAPIKeyMissing}
+
+	first, err := editjob.Files(fakes.store, testSourceKey, 1)
+	require.NoError(t, err)
+
+	stored := `{"language":"ru","duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
+	require.NoError(t, fakes.store.PutResult(t.Context(), first.Transcript, strings.NewReader(stored), editjob.JSONContentType))
+	require.NoError(t, fakes.store.PutResult(t.Context(), first.Reel, strings.NewReader("reel-v1"), editjob.VideoContentType))
+
+	job := testJob()
+	job.ID, job.Version, job.Stage = editjob.JobID(17, 2), 2, editjob.RenderStage
+	job.Settings = &roughcut.Settings{MaxPause: 0.4, RetakeSimilarity: 0.7}
+	job.Edit = &roughcut.Edit{Remove: []roughcut.WordRange{{From: 0, To: 0}}, Notes: []string{"начало убрано"}}
+
+	result, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), job)
+	require.NoError(t, err)
+
+	assert.Equal(t, editjob.DoneStatus, result.Status)
+	assert.Zero(t, fakes.transcriber.calls, "the stored transcript is used")
+	assert.InDelta(t, 0, result.AudioSeconds, 1e-9, "nothing transcribed, nothing billed")
+	assert.Equal(t, job.Edit, fakes.cutter.got.Edit)
+	assert.Equal(t, job.Settings, fakes.cutter.got.Settings)
+	require.NotNil(t, fakes.cutter.got.Transcript)
+	assert.Equal(t, "привет", fakes.cutter.got.Transcript.Words[0].Word)
+
+	second, err := editjob.Files(fakes.store, testSourceKey, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{first.Transcript, first.Reel, second.Plan, second.Decisions, second.Reel}, fakes.store.order,
+		"the transcript is not stored again")
+	assert.Equal(t, "reel-v1", string(fakes.store.results[first.Reel].data), "version 1 is not overwritten")
+	assert.Equal(t, "reel", string(fakes.store.results[second.Reel].data))
+}
+
+// TestPipelineRenderWithoutTranscript: a render job whose stored transcript is gone fails without a transcription.
+func TestPipelineRenderWithoutTranscript(t *testing.T) {
+	t.Parallel()
+
+	fakes := newPipelineFakes(t)
+	job := testJob()
+	job.ID, job.Version, job.Stage = editjob.JobID(17, 2), 2, editjob.RenderStage
+	job.Settings = &roughcut.Settings{MaxPause: 0.4, RetakeSimilarity: 0.7}
+
+	_, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), job)
+	require.Error(t, err)
+	assert.Equal(t, editjob.SourceMissingCode, CodeOf(err))
+	assert.Zero(t, fakes.transcriber.calls)
+}
+
+// TestPipelineRenderInvalidEdit: a decided edit the plan cannot be built with is the app's fault, not «no speech».
+func TestPipelineRenderInvalidEdit(t *testing.T) {
+	t.Parallel()
+
+	fakes := newPipelineFakes(t)
+	fakes.cutter.err = fmt.Errorf("plan: %w", roughcut.ErrInvalidPlan)
+
+	first, err := editjob.Files(fakes.store, testSourceKey, 1)
+	require.NoError(t, err)
+
+	stored := `{"language":"ru","duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
+	require.NoError(t, fakes.store.PutResult(t.Context(), first.Transcript, strings.NewReader(stored), editjob.JSONContentType))
+
+	job := testJob()
+	job.ID, job.Version, job.Stage = editjob.JobID(17, 2), 2, editjob.RenderStage
+	job.Settings = &roughcut.Settings{MaxPause: 0.4, RetakeSimilarity: 0.7}
+
+	_, err = fakes.pipeline(t, t.TempDir()).Run(t.Context(), job)
+	require.Error(t, err)
+	assert.Equal(t, editjob.InvalidEditCode, CodeOf(err))
 }
 
 func TestPipelineFailures(t *testing.T) {

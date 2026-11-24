@@ -40,7 +40,13 @@ func (ph *phrases) attempt(r *retake) (from, to int) {
 }
 
 func (ph *phrases) kept(r *retake) Span {
-	return ph.span(ph.tokens[r.to].idx, ph.tokens[r.keptTo-1].idx)
+	words := ph.keptWords(r)
+
+	return ph.span(words.From, words.To)
+}
+
+func (ph *phrases) keptWords(r *retake) WordRange {
+	return WordRange{From: ph.tokens[r.to].idx, To: ph.tokens[r.keptTo-1].idx}
 }
 
 // joinTokens joins aligned tokens, or returns "" if any of them is unknown.
@@ -127,6 +133,7 @@ func describeCandidates(ph *phrases, candidates []candidate, cutFor func(*candid
 			Reason:       c.reason,
 			Earlier:      ph.span(from, to),
 			EarlierWords: WordRange{From: from, To: to},
+			LaterWords:   ph.keptWords(&c.retake),
 			Later:        ph.kept(&c.retake),
 			Cut:          cutFor(c),
 			Similarity:   math.Round(c.similarity*percent) / percent,
@@ -213,6 +220,15 @@ func DecisionsLog(p *Plan) string {
 
 	writeCuts(&b, p.Cuts, FillerCutReason, "Слова-паразиты")
 	writeCuts(&b, p.Cuts, PauseCutReason, "Паузы")
+
+	if p.Edit != nil {
+		writeCuts(&b, p.Cuts, EditCutReason, "Вырезано по правкам")
+		fmt.Fprintf(&b, "\nРешения монтажёра: %d\n", len(p.Edit.Notes))
+
+		for _, note := range p.Edit.Notes {
+			fmt.Fprintf(&b, "- %s\n", note)
+		}
+	}
 
 	return b.String()
 }

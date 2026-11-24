@@ -8,6 +8,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editor"
+	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/mediaworker"
@@ -50,14 +51,14 @@ func TestApplicationWiresGatewayToTasks(t *testing.T) {
 	err := fx.ValidateApp(append(DeclareApplicationOptions(),
 		fx.Invoke(func(gateway.Handler, tasks.Notifier, *teamchat.Handler) {}),
 		fx.Invoke(func(*media.Store) {}),
-		fx.Invoke(func(tasks.Executor, *editor.Executor) {}),
+		fx.Invoke(func(tasks.Executor, *editor.Executor, *editplan.Decider) {}),
 	)...)
 
 	require.NoError(t, err)
 }
 
 // TestMediaWorkerHasNoAppSecrets: the media worker's graph builds the worker without the Telegram gateway, the
-// Claude API client or PostgreSQL (ffmpeg there parses files from users).
+// Claude API client, the editor's model (editplan) or PostgreSQL (ffmpeg there parses files from users).
 func TestMediaWorkerHasNoAppSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -67,6 +68,7 @@ func TestMediaWorkerHasNoAppSecrets(t *testing.T) {
 	for _, invoke := range []any{
 		func(*gateway.Sender) {},
 		func(*anthropic.Client) {},
+		func(*editplan.Decider) {},
 		func(*postgres.Client) {},
 		func(*config.Telegram) {},
 		func(*config.Anthropic) {},

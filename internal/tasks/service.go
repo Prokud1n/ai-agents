@@ -275,18 +275,8 @@ func (s *Service) Reject(ctx context.Context, data *RejectTaskData) (Task, error
 }
 
 // RequestRevision stores the revision and queues the task in one transaction: the next run makes a new
-// version from the previous one and the revision text. A video draft cannot be revised by text yet
-// (ErrVideoRevision).
+// version from the previous one and the revision text (a video draft too: the editor makes a new video).
 func (s *Service) RequestRevision(ctx context.Context, data *RequestRevisionData) (Task, error) {
-	v, err := s.repo.GetVersion(ctx, data.TaskID, data.Version)
-	if err != nil && !errors.Is(err, ErrNotFound) { // an unknown version is refused by the updater
-		return Task{}, err
-	}
-
-	if v.MediaKey != "" {
-		return Task{}, fmt.Errorf("task %d version %d: %w", data.TaskID, data.Version, ErrVideoRevision)
-	}
-
 	text := strings.TrimSpace(data.Text)
 	updater := WithFeedbackSource(UpdateToRevisionQueued(data.Version, data.UserID, text, s.now()), data.SourceMessageID)
 

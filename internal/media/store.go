@@ -215,6 +215,35 @@ func (s *Store) Download(ctx context.Context, key, dir string, maxSize int64) (*
 	return local, nil
 }
 
+// Read returns a stored file of this store (a result file, such as the plan of an edit) in memory: at most maxSize
+// bytes, a larger object is ErrFileTooLarge. Errors are those of Download.
+func (s *Store) Read(ctx context.Context, key string, maxSize int64) ([]byte, error) {
+	if maxSize <= 0 || maxSize == math.MaxInt64 {
+		return nil, fmt.Errorf("max size %d: %w", maxSize, ErrInvalidLimit)
+	}
+
+	if _, err := s.parseOwnKey(key); err != nil {
+		return nil, err
+	}
+
+	obj, err := s.storage.GetObject(ctx, key)
+	if err != nil {
+		return nil, notFound(err)
+	}
+	defer obj.Close()
+
+	data, err := io.ReadAll(io.LimitReader(obj, maxSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read media file: %w", err)
+	}
+
+	if int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("failed to read media file: object is above %d bytes: %w", maxSize, ErrFileTooLarge)
+	}
+
+	return data, nil
+}
+
 // parseOwnKey parses the key and checks that it is under one of this store's prefixes.
 func (s *Store) parseOwnKey(key string) (KeyInfo, error) {
 	info, err := ParseKey(key)

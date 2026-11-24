@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/editjob"
+	"github.com/Prokud1n/ai-agents/internal/editplan"
 )
 
 const (
@@ -36,7 +37,44 @@ const (
 	badSourceText      = "Не смог прочитать видео. Пришлите его ещё раз — лучше исходным файлом из галереи."
 	noAudioText        = "В видео нет звука, а монтирую я по речи. Пришлите видео со звуком."
 	noSpeechText       = "Не нашёл в видео речи, по которой можно резать. Пришлите видео, где вы говорите в кадре."
+
+	// cannotRevisionText and unclearRevisionText: a revision the editor cannot do or did not understand (shown after
+	// «Не получилось применить правку.» above the previous draft).
+	// The note ends with «Можно одобрить эту версию или дать правку ещё раз.», so these texts do not ask for it again.
+	cannotRevisionText = "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль и поправить " +
+		"слово в субтитрах."
+	unclearRevisionText = "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или " +
+		"„оставь второй дубль“."
+	// modelFailedText: the decision failed for a technical reason after all the retries of the task.
+	modelFailedText = "Не получилось решить, как смонтировать видео, из-за технической ошибки — я уже пробовал " +
+		"несколько раз. Пришлите исходник ещё раз чуть позже."
+	// The revision's variants of the technical texts: the source is there, the trainer only gives the revision again.
+	modelFailedRevisionText = "Не смог её разобрать из-за технической ошибки, я уже пробовал несколько раз — " +
+		"попробуйте чуть позже."
+	editFailedRevisionText = "Монтаж новой версии не удался из-за технической ошибки, я уже пробовал несколько раз — " +
+		"попробуйте чуть позже."
+	technicalRevisionText = "Мешает техническая неполадка — я уже передал её технической команде, попробуйте чуть позже."
+	// captionFailedNote: the caption was not applied because the decision failed on our side.
+	captionFailedNote = "Подпись как указание к монтажу не применил из-за технической ошибки. Если нужна правка, " +
+		"ответьте на черновик."
+	// artifactsMissingText: the transcript or the plan of the earlier edit is gone from the storage.
+	artifactsMissingText = "Не нашёл материалы прошлого монтажа этого видео. Пришлите исходник ещё раз — " +
+		"смонтирую заново."
+	// captionCannotNote and captionUnclearNote: the first draft is made without the caption's instruction.
+	captionCannotNote = "Подпись как указание к монтажу не применил: такое я пока не умею. Могу обрезать, убрать или " +
+		"вернуть фрагмент, выбрать дубль и поправить слово в субтитрах — ответьте на черновик правкой."
+	captionUnclearNote = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
+		"правка, ответьте на черновик, например: „убери первые 3 секунды“."
 )
+
+// forVersion is the text of the first version or of a revision.
+func forVersion(version int, first, revision string) string {
+	if version > 1 {
+		return revision
+	}
+
+	return first
+}
 
 // failureText is the trainer's reason of a failed job, by its code (technical codes get technicalText before).
 func (e *Executor) failureText(r *editjob.Result) string {
@@ -85,9 +123,14 @@ func queueTimeoutText(timeout time.Duration) string {
 		"Пришлите исходник ещё раз чуть позже.", minutesText(timeout.Seconds()))
 }
 
-// Describe is the description of the video draft: the durations before and after, what was cut, the disputed
-// repeats left in the reel and the trainer's caption.
-func Describe(r *editjob.Result, caption string) string {
+// Describe is the description of the video draft. The first version: the durations before and after, what the
+// editor changed by the caption and decided on the disputed repeats (summary), the trainer's caption. A revision: the
+// durations of the previous version and this one and what was changed. summary is nil for an automatic cut.
+func Describe(r *editjob.Result, version int, caption string, summary *editjob.Summary) string {
+	if version > 1 {
+		return describeRevision(r, summary)
+	}
+
 	lines := make([]string, 0, 3)
 
 	removed := r.SourceDuration - r.Duration
@@ -98,16 +141,78 @@ func Describe(r *editjob.Result, caption string) string {
 			"и неудачные дубли).", clock(r.SourceDuration), clock(r.Duration), clock(removed)))
 	}
 
-	if r.Candidates > 0 {
-		lines = append(lines, fmt.Sprintf("Спорные повторы оставил в ролике: %d. Их разберём на следующем шаге.",
-			r.Candidates))
+	switch {
+	case summary != nil:
+		lines = append(lines, summary.Changes...)
+	case r.Candidates > 0:
+		lines = append(lines, fmt.Sprintf("Спорные повторы оставил в ролике: %d.", r.Candidates))
 	}
 
 	if text := strings.TrimSpace(caption); text != "" {
 		lines = append(lines, "Ваша подпись к исходнику: «"+truncate(text, maxCaptionRunes)+"»")
 	}
 
+	if summary != nil && summary.Note != "" {
+		lines = append(lines, summary.Note)
+	}
+
 	return strings.Join(lines, "\n")
+}
+
+// describeRevision: «Новая версия рилс: было 0:45, стало 0:42.» and what changed.
+func describeRevision(r *editjob.Result, summary *editjob.Summary) string {
+	if summary == nil {
+		summary = &editjob.Summary{}
+	}
+
+	header := fmt.Sprintf("Новая версия рилс: %s.", clock(r.Duration))
+	if summary.PreviousDuration > 0 {
+		header = fmt.Sprintf("Новая версия рилс: было %s, стало %s.", clock(summary.PreviousDuration), clock(r.Duration))
+	}
+
+	lines := append([]string{header}, summary.Changes...)
+	if summary.Note != "" {
+		lines = append(lines, summary.Note)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// captionNotes say why the caption was not applied, by the decision.
+var captionNotes = map[editplan.OutcomeKind]string{
+	editplan.CannotOutcome: captionCannotNote,
+	editplan.FailedOutcome: captionFailedNote,
+}
+
+// firstSummary is the summary of a decided first version: what the caption changed, how the disputed repeats were
+// decided, and why the caption was not applied if it was not.
+func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Summary {
+	candidates := len(req.Plan.Candidates)
+	summary := &editjob.Summary{}
+
+	if outcome.Kind != editplan.EditOutcome {
+		if candidates > 0 {
+			summary.Changes = []string{fmt.Sprintf("Спорные повторы оставил в ролике: %d.", candidates)}
+		}
+
+		if strings.TrimSpace(req.Caption) != "" {
+			summary.Note = captionNotes[outcome.Kind]
+			if summary.Note == "" {
+				summary.Note = captionUnclearNote
+			}
+		}
+
+		return summary
+	}
+
+	summary.Changes = append(summary.Changes, outcome.Changes...)
+
+	if candidates > 0 {
+		summary.Changes = append(summary.Changes, fmt.Sprintf("Спорные повторы: вырезал %d, оставил %d.",
+			outcome.Cut, candidates-outcome.Cut))
+	}
+
+	return summary
 }
 
 // clock formats seconds as m:ss.
