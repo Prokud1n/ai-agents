@@ -17,6 +17,7 @@ import (
 const (
 	testSourceKey    = "incoming/-1001234567890/42/uniq.mov"
 	testResultPrefix = "edits"
+	testLanguage     = "ru"
 )
 
 // localStore is S3 on the local disk: sources are files, results are kept in memory with their content type.
@@ -143,13 +144,19 @@ func (f *fakeTranscriber) Transcribe(context.Context, transcription.TranscribeDa
 type fakeCutter struct {
 	result *roughcut.Result
 	err    error
-	got    *roughcut.CutData
+	// talkErr fails only a talking-head plan (an edit without the workout mode).
+	talkErr error
+	got     *roughcut.CutData
 }
 
 func (f *fakeCutter) Cut(_ context.Context, data *roughcut.CutData) (*roughcut.Result, error) {
 	f.got = data
 	if f.err != nil {
 		return nil, f.err
+	}
+
+	if f.talkErr != nil && (data.Edit == nil || data.Edit.Mode != roughcut.WorkoutMode) {
+		return nil, f.talkErr
 	}
 
 	if err := os.MkdirAll(data.OutDir, 0o700); err != nil {

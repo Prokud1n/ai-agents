@@ -80,7 +80,7 @@ func (s *Service) CreateSubtitles(data CreateSubtitlesData) (*Subtitles, error) 
 		return nil, err
 	}
 
-	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke)
+	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles)
 
 	return &Subtitles{ASS: []byte(ass), Cues: cues}, nil
 }
@@ -96,7 +96,7 @@ func (s *Service) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*
 		return nil, err
 	}
 
-	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke)
+	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles)
 
 	dir, err := os.MkdirTemp("", tempDirPattern)
 	if err != nil {
@@ -308,7 +308,7 @@ func fontFallbacks(style *Style, fonts []ffmpeg.FontSelection, shown bool) []str
 
 	for _, f := range fonts {
 		family := squash(f.Family)
-		if family != squash(style.Text.Font) && family != squash(style.Accent.Font) {
+		if family != squash(style.Text.Font) && family != squash(style.Accent.Font) && family != squash(style.Title.Font) {
 			continue
 		}
 

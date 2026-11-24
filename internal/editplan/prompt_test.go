@@ -9,6 +9,9 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
+// speechShareLine is the speech share of testSpeech as the prompt gives it.
+const speechShareLine = "Речь с короткими паузами занимает 55% исходника"
+
 func TestPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -49,7 +52,60 @@ func TestPrompt(t *testing.T) {
 
 				return req
 			},
-			expected: []string{"Секунды в подписи — по времени исходника.", "<trainer_caption>\nбез первой фразы\n</trainer_caption>"},
+			expected: []string{
+				"Секунды в подписи — по времени исходника.", "<trainer_caption>\nбез первой фразы\n</trainer_caption>",
+				"Режим монтажа сейчас: talk", speechShareLine,
+			},
+			absent: []string{"Речи мало"},
+		},
+		{
+			name: "first version planned as a workout, no caption",
+			req:  func() *Request { return testRequest(1, &roughcut.Edit{Mode: roughcut.WorkoutMode}) },
+			expected: []string{
+				"Подписи нет — выбери режим монтажа",
+				"Режим монтажа сейчас: workout",
+				speechShareLine, "Речи мало — возможно, это показ упражнений",
+				"6 | 0:05.7–0:06.1 | в ролике 0:05.7 | эээ",
+			},
+			absent: []string{"Изменения прошлых версий", "Вырезанные по времени"},
+		},
+		{
+			name: "a workout revision with cuts, titles and no sound",
+			req: func() *Request {
+				req := testRequest(2, &roughcut.Edit{
+					Mode: roughcut.WorkoutMode, CutTime: []roughcut.Interval{{Start: 0, End: 2}}, Mute: true,
+					Titles: []roughcut.Title{{Text: squatsName, Start: 6.15}},
+				})
+				req.Revision = "убери подпись"
+
+				return req
+			},
+			expected: []string{
+				"- 0: 0:00.0–0:02.0 исходника",
+				"- 0: «Приседания», с 0:06.2 исходника (в ролике 0:04.2–0:07.0)",
+				"Звук исходника убран (mute)",
+			},
+			absent: []string{"Речь с короткими паузами"},
+		},
+		{
+			name: "a caption with the worker's threshold",
+			req: func() *Request {
+				req := testRequest(1, nil)
+				req.Caption, req.Plan.MinSpeechShare = "тренировка ног", 0.6
+
+				return req
+			},
+			expected: []string{speechShareLine, "Порог монтажа — 60%: ниже него речи мало."},
+		},
+		{
+			name: "a plan made before speech_share: no share",
+			req: func() *Request {
+				req := testRequest(1, nil)
+				req.Caption, req.Plan.SpeechShare = "тренировка ног", 0
+
+				return req
+			},
+			absent: []string{"Речь с короткими паузами", "Порог монтажа"},
 		},
 		{
 			name: "a revision with the previous changes",

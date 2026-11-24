@@ -24,8 +24,9 @@ const (
 	tempDirPattern = ".roughcut-*"
 	outputDirMode  = 0o750
 
-	// maxSegments limits the fragments of one render: each is a branch of the ffmpeg filter graph.
-	maxSegments = 500
+	// MaxSegments limits the fragments of one render: each is a branch of the ffmpeg filter graph. The editor's
+	// edits are checked against it before they reach the media worker.
+	MaxSegments = 500
 	// maxFrameRate caps the constant frame rate of the result: a 120 fps slow-motion clip becomes 60 fps.
 	maxFrameRate = 60
 	frameEpsilon = 1e-6
@@ -64,12 +65,15 @@ type Service struct {
 // Result is what Cut produced; Files has the paths of the written files (Video is empty in plan-only mode).
 // Render is how the plan is rendered: with PlanOnly the caller renders it itself in one pass with the subtitles
 // (Segments and Render go to ffmpeg as they are).
+// Titles are the exercise titles of the edit on the timeline of the cut (RemapTitles); Render.Mute silences the
+// source (Edit.Mute).
 type Result struct {
 	Plan       Plan
 	Transcript transcription.Result
 	Log        string
 	Files      Files
 	Render     ffmpeg.RenderOptions
+	Titles     []Title
 }
 
 // Segments are the kept fragments of the plan for ffmpeg.
@@ -142,6 +146,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	}
 
 	plan = SnapToFrames(&plan, fps)
+	plan.MinSpeechShare = data.MinSpeechShare
 	if err := checkSegments(&plan, fps); err != nil {
 		return nil, err
 	}
@@ -149,8 +154,11 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	s.logPlan(ctx, &plan, data.Plan != nil)
 
 	result := &Result{
-		Plan: plan, Transcript: RemapTranscript(subtitleWords(data.Transcript, plan.Edit), plan.Keep), Log: DecisionsLog(&plan),
-		Render: ffmpeg.RenderOptions{Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info)},
+		Plan: plan, Transcript: SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit), Log: DecisionsLog(&plan),
+		Render: ffmpeg.RenderOptions{
+			Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info), Mute: plan.Edit != nil && plan.Edit.Mute,
+		},
+		Titles: RemapTitles(editTitles(plan.Edit), plan.Keep),
 	}
 
 	if err := prepareOutDir(data.OutDir); err != nil {
@@ -232,11 +240,11 @@ func sourceDuration(info *ffmpeg.MediaInfo) float64 {
 	return info.Duration - max(audioOffset(info), 0)
 }
 
-// checkSegments limits the render: at most maxSegments fragments, each at least one frame long.
+// checkSegments limits the render: at most MaxSegments fragments, each at least one frame long.
 func checkSegments(p *Plan, fps float64) error {
-	if len(p.Keep) > maxSegments {
+	if len(p.Keep) > MaxSegments {
 		return fmt.Errorf("failed to check plan: %d fragments, at most %d (raise -max-pause): %w",
-			len(p.Keep), maxSegments, ErrInvalidPlan)
+			len(p.Keep), MaxSegments, ErrInvalidPlan)
 	}
 
 	if len(p.Keep) == 0 {
@@ -445,6 +453,15 @@ func (s *Service) render(ctx context.Context, src, dir string, plan *Plan, opts 
 	}
 
 	return video, nil
+}
+
+// editTitles are the titles of the edit, nil without one.
+func editTitles(edit *Edit) []Title {
+	if edit == nil {
+		return nil
+	}
+
+	return edit.Titles
 }
 
 func planSegments(plan *Plan) []ffmpeg.Segment {

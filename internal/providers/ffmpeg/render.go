@@ -65,6 +65,8 @@ type RenderOptions struct {
 	// MediaInfo.FormatStart (ffmpeg has already subtracted the latter). Segment times count from the first
 	// audio sample, as the transcript does, so both streams are shifted by it before cutting.
 	Offset float64
+	// Mute silences the sound of the source: the audio track stays (silent), so the export has the same streams.
+	Mute bool
 }
 
 // RenderSegments re-encodes the given fragments of src one after another into dst (MP4 regardless of its
@@ -231,7 +233,13 @@ func segmentsGraph(segments []Segment, opts RenderOptions, videoOut, audioOut st
 	}
 
 	b.WriteString(",split=" + n + labels("s", len(segments)) + ";")
-	b.WriteString("[0:a:0]" + shiftExpr("asetpts", opts.Offset) + ",asplit=" + n + labels("t", len(segments)) + ";")
+	b.WriteString("[0:a:0]" + shiftExpr("asetpts", opts.Offset))
+
+	if opts.Mute {
+		b.WriteString(",volume=0")
+	}
+
+	b.WriteString(",asplit=" + n + labels("t", len(segments)) + ";")
 
 	for i, s := range segments {
 		k := strconv.Itoa(i)

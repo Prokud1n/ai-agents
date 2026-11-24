@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Workout editing (T3.10). A cut has a mode, kept in `plan.json` (`Edit.Mode`, `Plan.Mode`) and carried over the
+  versions: `talk` (as before: pauses, fillers and failed takes are cut) or `workout` — the video stays whole, only what
+  the editor cut explicitly goes (words, `Edit.CutTime` fragments by time, trims by time, accepted repeats). The model
+  chooses the mode from the caption and the transcript (`submit_edit.mode`), the trainer can ask for it («тренировка»,
+  «не режь паузы», «убери паузы»). A source with little speech is no longer cut blindly: when its talking-head cut would
+  keep less than `MEDIA_WORKER_MIN_SPEECH_SHARE` (0.6) of the source, or it has no words at all, the auto stage stops
+  with a workout plan (nothing cut) and the model decides even without a caption; a video without speech is no longer
+  refused as «no speech». Without the model (no key, a cut answer, overload on the last attempt) such a video is
+  rendered whole with a note instead of failing. Exercise titles («Выпады — 12 раз»): the model places them at the word
+  where the trainer names the exercise or at the seconds of a caption-list, until the next title; exercises it cannot
+  place are named in the description with a hint to add them by a revision with time («подпиши выпады с 0:15 до
+  0:45»); revisions add, rename, move and remove titles. The app checks them (at most 20, 40 characters, no control,
+  invisible characters or markup, not two at once, seen in the reel) and the worker draws them in a new `title` style of
+  `assets/subtitles/style.yaml` (Fira Sans Extra Condensed ExtraBold, capitals, #F2B94B, on a translucent box at the
+  edge opposite the speech subtitles, clear of them and of the Instagram zones). `mute` removes the sound of the source
+  (a silent track stays) and the speech subtitles. The draft of a workout says so («Черновик тренировки готов…»),
+  lists the titles with their time and the notes. A draft longer than `EDITOR_REELS_MAX_DURATION` (3 min) gets a
+  note right after the header (Instagram hardly shows such reels to non-followers), not a refusal. Every draft
+  description is kept within 920 UTF-16 units (the 1024 of a video caption less room for the link to the source):
+  the header and the notes always come first, the changes, lists and the quoted caption follow while they fit, and
+  the rest is replaced by «Описание сокращено: не всё поместилось в подпись к видео.»; a workout names at most 4
+  titles and 5 untimed exercises and does not quote a caption the titles came from. `hide_words` leaves words out of
+  the subtitles only (a phrase the speech recognition made up on music): the video and the sound stay, unlike
+  `remove_words`, which in a workout would cut seconds of an exercise; hidden words add up over the versions
+  (`Edit.Hide`). `plan.json` keeps `speech_share` — the share of the source the automatic talking-head cut keeps — and
+  `min_speech_share`, the worker's threshold; the worker decides by them, the model sees both; a talking-head cut that cannot be
+  built (every word a filler, more than 500 fragments) also gives the workout plan instead of «no speech», and the
+  app refuses an edit of more than 500 fragments before it reaches the worker.
+
 - The editor (Монтажёр) takes revisions by text, applies the caption and decides disputed repeats (T3.4c). A reply to
   the video draft (and «Правки» → reply) is a new version of the task: the editor's agent (`agents/editor`, Sonnet by
   `LLM_DEFAULT_MODEL`, the editing rules in its cached role prompt, calls counted in `llm_usage`) decides on the transcript and the

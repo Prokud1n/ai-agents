@@ -102,14 +102,17 @@ type Executor struct {
 	queueTimeout time.Duration
 	workerWait   time.Duration
 	pollInterval time.Duration
-	log          *slog.Logger
-	now          func() time.Time
+	// reelsMax is the longest reel Instagram publishes (EDITOR_REELS_MAX_DURATION): a longer draft gets a note.
+	reelsMax time.Duration
+	log      *slog.Logger
+	now      func() time.Time
 }
 
 func NewExecutor(b board, s store, d decider, tech techReporter, cfg *config.Editor, log *slog.Logger) *Executor {
 	return &Executor{
 		board: b, store: s, decider: d, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
-		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, log: log, now: time.Now,
+		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, reelsMax: cfg.ReelsMaxDuration, log: log,
+		now: time.Now,
 	}
 }
 
@@ -241,13 +244,20 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 
 	outcome, err := e.decide(ctx, data, req)
 	if err != nil {
-		return err
+		if !isWorkout(req.Plan) || !e.fallBack(ctx, data, err) {
+			return err
+		}
+
+		outcome = &editplan.Outcome{Kind: editplan.FailedOutcome, Reason: err.Error()}
 	}
 
 	job := e.newJob(data)
 	job.Stage = editjob.RenderStage
 	job.Settings = new(req.Plan.Settings)
 	job.Summary = firstSummary(req, outcome)
+	// Without a decision the plan the worker made is rendered: for a source with little speech it is the safe workout
+	// one (nothing cut), not the talking-head cut.
+	job.Edit = req.Plan.Edit
 
 	if outcome.Kind == editplan.EditOutcome {
 		job.Edit = new(outcome.Edit)
@@ -264,6 +274,25 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	}
 
 	return &tasks.DeferredError{After: e.pollInterval}
+}
+
+// fallBack reports whether the first version of a workout is rendered without the model: its plan cuts nothing, so
+// it is a usable draft, better than no draft. A technical failure (already told to «Техничка») falls back at once, a
+// temporary one only on the last attempt of the task (before it, the task retries the model).
+func (e *Executor) fallBack(ctx context.Context, data *tasks.ExecuteData, err error) bool {
+	var temporary *tasks.TemporaryError
+	if errors.As(err, &temporary) {
+		if !data.LastAttempt {
+			return false
+		}
+
+		e.report(ctx, data, modelFailedCode, err)
+	}
+
+	e.log.WarnContext(ctx, "editor: the model is unavailable, the workout is rendered as planned",
+		"task_id", data.TaskID, "error", err)
+
+	return true
 }
 
 // revise decides on the revision of the previous version and submits the render of the new one. A revision the editor
@@ -367,7 +396,8 @@ func (e *Executor) loadRequest(
 		}
 	}
 
-	if len(transcript.Words) == 0 || len(plan.Keep) == 0 {
+	// No words is a workout shown in silence; a plan without kept intervals is broken.
+	if len(plan.Keep) == 0 {
 		return nil, &tasks.PermanentError{Message: artifactsMissingText,
 			Err: fmt.Errorf("task %d: empty transcript or plan: %w", data.TaskID, errArtifactMissing)}
 	}
@@ -486,7 +516,12 @@ func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *
 		e.log.InfoContext(ctx, "editor: reel ready", "task_id", data.TaskID, "job_id", result.JobID, "key", files.Reel,
 			"source_duration", result.SourceDuration, "duration", result.Duration, "audio_seconds", result.AudioSeconds)
 
-		return tasks.Output{Text: Describe(result, data.Version, data.Input, summary), MediaKey: files.Reel}, nil
+		var notes []string
+		if limit := e.reelsMax.Seconds(); limit > 0 && result.Duration > limit {
+			notes = append(notes, longReelNote(limit))
+		}
+
+		return tasks.Output{Text: Describe(result, data.Version, data.Input, summary, notes...), MediaKey: files.Reel}, nil
 	}
 
 	err := fmt.Errorf("edit job %s failed: %s", result.JobID, result.Code)

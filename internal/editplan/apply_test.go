@@ -42,7 +42,7 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 	t.Parallel()
 
 	edit := func(change func(in *Input)) Input {
-		in := Input{Decision: EditDecision, Reason: "правка"}
+		in := Input{Decision: EditDecision, Reason: testReason}
 		change(&in)
 
 		return in
@@ -58,12 +58,12 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 		{
 			name: "a word past the transcript", version: 2,
 			input:    edit(func(in *Input) { in.Remove = []roughcut.WordRange{{From: 10, To: 11}} }),
-			expected: "вне расшифровки",
+			expected: outsideTranscript,
 		},
 		{
 			name: "a reversed range", version: 2,
 			input:    edit(func(in *Input) { in.Restore = []roughcut.WordRange{{From: 4, To: 3}} }),
-			expected: "вне расшифровки",
+			expected: outsideTranscript,
 		},
 		{
 			name: "an unknown candidate", version: 1,
@@ -100,17 +100,17 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 		{
 			name: "markup in a subtitle word", version: 2,
 			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: `{\b1}делаем`}} }),
-			expected: "без переносов строк",
+			expected: noLineBreaks,
 		},
 		{
 			name: "an empty subtitle word", version: 2,
 			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: " "}} }),
-			expected: "от 1 до 40 символов",
+			expected: titleLength,
 		},
 		{
 			name: "a sentence instead of a word", version: 2,
 			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: strings.Repeat("а", 41)}} }),
-			expected: "от 1 до 40 символов",
+			expected: titleLength,
 		},
 		{
 			name: "a subtitle word past the transcript", version: 2,
@@ -290,7 +290,7 @@ func TestDescribeChangesLimit(t *testing.T) {
 		in.FixWords = append(in.FixWords, roughcut.WordFix{Index: i, Text: "слово"})
 	}
 
-	lines := describeChanges(req, in, &trim{})
+	lines := describeChanges(req, in, &trim{}, &placedTitles{newTitles: &newTitles{}})
 
 	assert.Len(t, lines, maxChangeLines)
 	assert.Equal(t, "И ещё изменений: 3.", lines[maxChangeLines-1])

@@ -39,6 +39,19 @@ func TestParseStyle(t *testing.T) {
 			},
 		},
 		{name: "unknown field", input: "text:\n  colour: \"#FFFFFF\"\n", expectedErr: "field colour not found"},
+		{
+			name:  "titles at the top above bottom subtitles",
+			input: "layout:\n  position: bottom\ntitle:\n  position: top\n  margin: 300\n",
+			modify: func(s *Style) {
+				s.Layout.Position = BottomPosition
+				s.Title.Position, s.Title.Margin = TopPosition, 300
+			},
+		},
+		{name: "titles over the subtitles", input: "title:\n  position: top\n  margin: 300\n", expectedErr: "overlap the subtitles"},
+		{name: "titles in the Instagram caption", input: "title:\n  margin: 300\n", expectedErr: "between the Instagram zones"},
+		{name: "unknown title position", input: "title:\n  position: left\n", expectedErr: "title.position"},
+		{name: "bad title box", input: "title:\n  box: black\n", expectedErr: "title.box"},
+		{name: "comma in a title font", input: "title:\n  font: \"Fira, Sans\"\n", expectedErr: "title.font"},
 		{name: "bad color", input: "text:\n  color: white\n", expectedErr: "text.color must be #RRGGBB"},
 		{name: "text in the Instagram top bar", input: "layout:\n  margin_top: 100\n", expectedErr: "layout.margin_top"},
 		{name: "text under the buttons", input: "layout:\n  margin_side: 40\n", expectedErr: "layout.margin_side"},

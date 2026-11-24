@@ -3,6 +3,26 @@ package roughcut
 // PlanVersion is the version of the plan.json format; it changes when a field changes its meaning.
 const PlanVersion = 1
 
+// Mode is how the cut treats the silence between words.
+type Mode string
+
+const (
+	// TalkMode is a talking-head reel: pauses, fillers and failed takes are cut. An empty mode is TalkMode.
+	TalkMode Mode = "talk"
+	// WorkoutMode is a workout reel: the exercises are shown, often in silence, so nothing is cut automatically —
+	// only what the editor cut explicitly (Edit.Remove, Edit.CutTime, accepted candidates).
+	WorkoutMode Mode = "workout"
+)
+
+// Effective is the mode with the empty one read as TalkMode.
+func (m Mode) Effective() Mode {
+	if m == WorkoutMode {
+		return WorkoutMode
+	}
+
+	return TalkMode
+}
+
 // CutReason says why a piece of the source was cut.
 type CutReason string
 
@@ -14,7 +34,7 @@ const (
 	FillerCutReason CutReason = "filler"
 	// RetakeCutReason is a failed take: a phrase that was broken off or said again right after.
 	RetakeCutReason CutReason = "retake"
-	// EditCutReason is a fragment the editor asked to cut (Edit.Remove): a revision of the trainer.
+	// EditCutReason is a fragment the editor asked to cut (Edit.Remove, Edit.CutTime): a revision of the trainer.
 	EditCutReason CutReason = "edit"
 )
 
@@ -61,6 +81,15 @@ type Plan struct {
 	// Edit is what the editor changed on top of the automatic plan (CutData.Edit): the next revision starts
 	// from it. Nil for an automatic plan.
 	Edit *Edit `json:"edit,omitempty"`
+	// Mode the plan was built in (Edit.Mode); empty for a talking-head plan made before modes existed.
+	Mode Mode `json:"mode,omitempty"`
+	// SpeechShare is the share of the source (0..1) the automatic talking-head cut keeps — the speech with its short
+	// pauses — whatever the mode and the edit: the media worker plans a source with little speech as a workout by it,
+	// and the editor's model sees it.
+	SpeechShare float64 `json:"speech_share"`
+	// MinSpeechShare is the threshold the media worker compared SpeechShare with (MEDIA_WORKER_MIN_SPEECH_SHARE;
+	// CutData.MinSpeechShare); 0 when unknown or off.
+	MinSpeechShare float64 `json:"min_speech_share,omitempty"`
 }
 
 // Edit is what the editor (the editing agent, by the trainer's caption or revision) changed on top of the
@@ -79,6 +108,27 @@ type Edit struct {
 	Words []WordFix `json:"words,omitempty"`
 	// Notes explain the editor's decisions of this version in the decisions log.
 	Notes []string `json:"notes,omitempty"`
+	// Mode of the cut; empty is TalkMode.
+	Mode Mode `json:"mode,omitempty"`
+	// CutTime are fragments of the source cut by time, in seconds of the source (a trim of a workout, «вырежи
+	// с 0:15 до 0:20»), in both modes.
+	CutTime []Interval `json:"cut_time,omitempty"`
+	// Titles are the exercise titles drawn over the reel, on the source timeline.
+	Titles []Title `json:"titles,omitempty"`
+	// Mute silences the sound of the source (the trainer adds a track in Instagram); the speech subtitles go too.
+	Mute bool `json:"mute,omitempty"`
+	// Hide are words left out of the subtitles only, the video and the sound stay (a phrase the speech recognition
+	// made up on music, which cutting would take seconds of an exercise with it). Indices of the source transcript.
+	Hide []WordRange `json:"hide,omitempty"`
+}
+
+// Title is an exercise title («Выпады — 12 раз») shown from Start to End, in seconds of the source. End 0 means until
+// the next title or the end of the reel. Its text is checked by the app (no line breaks, invisible characters or
+// markup).
+type Title struct {
+	Text  string  `json:"text"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end,omitempty"`
 }
 
 // WordFix is a corrected subtitle word: Text replaces the word Index of the source transcript.

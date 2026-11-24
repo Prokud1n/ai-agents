@@ -14,6 +14,12 @@ import (
 const (
 	mainStyleName   = "Main"
 	accentStyleName = "Accent"
+	titleStyleName  = "Title"
+	// titleLayer draws the exercise titles above the speech subtitles.
+	titleLayer = 1
+	// ASS BorderStyle: 1 is an outline with a drop shadow, 3 an opaque box (filled with the outline color).
+	outlineBorderStyle = 1
+	boxBorderStyle     = 3
 
 	// ASS \an alignment: 8 is top center, 5 middle center, 2 bottom center.
 	topAlignment    = 8
@@ -38,14 +44,74 @@ const styleFormat = "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryC
 
 const eventFormat = "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
 
-// buildASS makes the whole subtitle file for a transcript.
-func buildASS(result *transcription.Result, style *Style, accents []string, karaoke bool) (ass string, cues int) {
+// buildASS makes the whole subtitle file for a transcript and the exercise titles.
+func buildASS(
+	result *transcription.Result,
+	style *Style,
+	accents []string,
+	karaoke bool,
+	titles []Title,
+) (ass string, cues int) {
 	tokens := markAccents(tokensFromTranscript(result), accents, style.Accent.Words)
 	limits := layoutLimits{maxLines: style.Layout.MaxLines, maxLineChars: style.lineChars()}
 	units := buildUnits(tokens, limits.maxLineChars)
 	timed := timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(accents)) > 0))
 
-	return renderASS(timed, style, karaoke), len(timed)
+	return renderASS(timed, style, karaoke) + titleEvents(titles, style), len(timed)
+}
+
+// titleEvents are the dialogue lines of the exercise titles: the Title style, above the subtitles, the text escaped
+// and in capitals when the style says so. libass wraps a long title within the side margins.
+func titleEvents(titles []Title, style *Style) string {
+	var b strings.Builder
+
+	for _, t := range titles {
+		text := strings.Join(strings.Fields(t.Text), " ")
+		if style.Title.Uppercase {
+			text = strings.ToUpper(text)
+		}
+
+		if text == "" || t.End <= t.Start {
+			continue
+		}
+
+		fmt.Fprintf(&b, "Dialogue: %d,%s,%s,%s,,0,0,0,,%s\n", titleLayer, formatTime(t.Start), formatTime(t.End),
+			titleStyleName, escapeText(text))
+	}
+
+	return b.String()
+}
+
+// titleStyleLine is the style of the exercise titles: on a translucent box when the style has one, otherwise with the
+// outline and the shadow of the subtitles.
+func titleStyleLine(style *Style) string {
+	t := &style.Title
+	alignment, marginV := placement(&Layout{
+		Position: style.titlePosition(), MarginTop: t.Margin, MarginBottom: t.Margin,
+	})
+
+	borderStyle, outlineColor, outline := outlineBorderStyle, style.Outline.Color, style.Outline.Size
+	shadowColor, shadow := style.Shadow.Color, style.Shadow.Size
+
+	if t.Box != "" {
+		borderStyle, outlineColor, outline, shadow = boxBorderStyle, t.Box, t.BoxPadding, 0
+	}
+
+	bold := 0
+	if t.Bold {
+		bold = assBold
+	}
+
+	fields := []string{
+		titleStyleName, t.Font, strconv.Itoa(t.Size),
+		assColor(t.Color), assColor(t.Color), assColor(outlineColor), assColor(shadowColor),
+		strconv.Itoa(bold), "0", "0", "0", "100", "100", "0", "0", strconv.Itoa(borderStyle),
+		formatFloat(outline), formatFloat(shadow),
+		strconv.Itoa(alignment), strconv.Itoa(style.Layout.MarginSide), strconv.Itoa(style.Layout.MarginSide),
+		strconv.Itoa(marginV), "1",
+	}
+
+	return "Style: " + strings.Join(fields, ",")
 }
 
 // renderASS writes an ASS document for a 1080×1920 frame. Line breaks are explicit (\N); WrapStyle 0 lets libass
@@ -61,7 +127,8 @@ func renderASS(cues []cue, style *Style, karaoke bool) string {
 
 	b.WriteString("[V4+ Styles]\n" + styleFormat + "\n")
 	b.WriteString(styleLine(mainStyleName, &style.Text, style) + "\n")
-	b.WriteString(styleLine(accentStyleName, &style.Accent.TextStyle, style) + "\n\n")
+	b.WriteString(styleLine(accentStyleName, &style.Accent.TextStyle, style) + "\n")
+	b.WriteString(titleStyleLine(style) + "\n\n")
 
 	b.WriteString("[Events]\n" + eventFormat + "\n")
 

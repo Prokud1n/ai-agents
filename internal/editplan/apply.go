@@ -43,6 +43,23 @@ type Input struct {
 	Restore    []roughcut.WordRange `json:"restore_words"`
 	Candidates []CandidateDecision  `json:"candidates"`
 	FixWords   []roughcut.WordFix   `json:"fix_words"`
+	// Mode: talk or workout; empty keeps the mode of the previous version.
+	Mode roughcut.Mode `json:"mode"`
+	// CutSeconds are stretches of the timeline cut by time; RestoreCuts bring back the cuts by time of the
+	// previous versions by their number in the prompt.
+	CutSeconds  []SecondsRange `json:"cut_seconds"`
+	RestoreCuts []int          `json:"restore_cuts"`
+	// AddTitles, ChangeTitles and RemoveTitles edit the exercise titles; UntimedTitles are exercises of the caption
+	// whose moment the editor could not find: they are named in the description, not drawn.
+	AddTitles     []TitleInput  `json:"add_titles"`
+	ChangeTitles  []TitleChange `json:"change_titles"`
+	RemoveTitles  []int         `json:"remove_titles"`
+	UntimedTitles []string      `json:"untimed_titles"`
+	// Mute silences the source (true) or brings its sound back (false); nil keeps it.
+	Mute *bool `json:"mute"`
+	// Hide are words left out of the subtitles only (a phrase made up by the speech recognition on music): the video
+	// and the sound stay.
+	Hide []roughcut.WordRange `json:"hide_words"`
 }
 
 // CandidateDecision decides a disputed repeat: Cut removes its earlier phrase (the repeat stays), otherwise both stay.
@@ -98,9 +115,20 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
+	// A workout is trimmed by time: the exercise before the first word goes too.
+	mode := nextMode(req, in)
 	trimmed := trimWords(req, in.TrimStart, in.TrimEnd)
 
+	if mode == roughcut.WorkoutMode {
+		trimmed = trimTime(req, in.TrimStart, in.TrimEnd)
+	}
+
 	edit, err := mergeEdit(req, in, trimmed.ranges)
+	if err != nil {
+		return nil, err
+	}
+
+	news, err := mergeExtras(req, in, mode, &trimmed, &edit)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +136,11 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	edit.Notes = notes(req, in, reason)
 
 	plan, err := buildPlan(req, &edit)
+	if err != nil {
+		return nil, err
+	}
+
+	shown, err := checkTitlesShown(&edit, &plan)
 	if err != nil {
 		return nil, err
 	}
@@ -121,8 +154,8 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	cut, kept := countCandidates(in.Candidates)
 
 	return &Outcome{
-		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, &trimmed), Cut: cut, Kept: kept,
-		Duration: plan.Duration, Reason: reason,
+		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}), Cut: cut, Kept: kept,
+		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
 	}, nil
 }
 
@@ -131,8 +164,9 @@ func checkInput(req *Request, in *Input) error {
 	words := len(req.Transcript.Words)
 
 	switch {
-	case len(in.Remove)+len(in.Restore) > maxRanges:
-		return checkFailedf("слишком много отрезков: не больше %d в remove_words и restore_words вместе", maxRanges)
+	case len(in.Remove)+len(in.Restore)+len(in.Hide) > maxRanges:
+		return checkFailedf("слишком много отрезков: не больше %d в remove_words, restore_words и hide_words вместе",
+			maxRanges)
 	case len(in.FixWords) > maxFixes:
 		return checkFailedf("слишком много исправлений: не больше %d в fix_words", maxFixes)
 	case !validSeconds(in.TrimStart) || !validSeconds(in.TrimEnd):
@@ -142,7 +176,7 @@ func checkInput(req *Request, in *Input) error {
 			timelineDuration(req))
 	}
 
-	for _, ranges := range [][]roughcut.WordRange{in.Remove, in.Restore} {
+	for _, ranges := range [][]roughcut.WordRange{in.Remove, in.Restore, in.Hide} {
 		for _, r := range ranges {
 			if r.From < 0 || r.To < r.From || r.To >= words {
 				return checkFailedf("отрезок слов %d–%d вне расшифровки: индексы от 0 до %d, from не больше to",
@@ -152,6 +186,10 @@ func checkInput(req *Request, in *Input) error {
 	}
 
 	if err := checkCandidates(req.Plan, in.Candidates); err != nil {
+		return err
+	}
+
+	if err := checkWorkoutInput(req, in); err != nil {
 		return err
 	}
 
@@ -235,10 +273,12 @@ func invisibleRune(r rune) bool {
 	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
 }
 
-// trim is what a trim of the start and the end cuts: the words, and the seconds actually cut at the start and at the
-// end of the timeline (up to the end of the last word cut, from the start of the first one).
+// trim is what a trim of the start and the end cuts: the words (a talking head) or the fragments of the source (a
+// workout, trimTime), and the seconds actually cut at the start and at the end of the timeline (for words: up to the
+// end of the last word cut, from the start of the first one).
 type trim struct {
 	ranges     []roughcut.WordRange
+	cuts       []roughcut.Interval
 	start, end float64
 }
 
@@ -413,7 +453,7 @@ func previousState(previous *roughcut.Edit, words int) []wordState {
 	return state
 }
 
-func mark(state []wordState, r roughcut.WordRange, s wordState) {
+func mark[T any](state []T, r roughcut.WordRange, s T) {
 	for i := max(r.From, 0); i <= r.To && i < len(state); i++ {
 		state[i] = s
 	}
@@ -465,6 +505,9 @@ func buildPlan(req *Request, edit *roughcut.Edit) (roughcut.Plan, error) {
 		return roughcut.Plan{}, fmt.Errorf("failed to build the edited plan: %w", err)
 	case len(plan.Keep) == 0 || plan.Duration < minReelSeconds:
 		return roughcut.Plan{}, checkFailedf("после правки от ролика остаётся %.1f с: так вырезать нельзя", plan.Duration)
+	case len(plan.Keep) > roughcut.MaxSegments:
+		return roughcut.Plan{}, checkFailedf("после правки в ролике %d кусков, а монтаж принимает не больше %d: "+
+			"вырежи меньше отдельных отрезков или верни часть вырезанных", len(plan.Keep), roughcut.MaxSegments)
 	}
 
 	return plan, nil
@@ -479,7 +522,8 @@ func checkChanged(req *Request, edit *roughcut.Edit, plan *roughcut.Plan) error 
 		return fmt.Errorf("failed to build the previous plan: %w", err)
 	}
 
-	if slices.Equal(before.Keep, plan.Keep) && slices.Equal(previous.Words, edit.Words) {
+	if slices.Equal(before.Keep, plan.Keep) && slices.Equal(previous.Words, edit.Words) &&
+		slices.Equal(previous.Titles, edit.Titles) && previous.Mute == edit.Mute && slices.Equal(previous.Hide, edit.Hide) {
 		return checkFailedf("правка ничего не меняет в ролике: проверь индексы слов, или ответь decision unclear")
 	}
 
