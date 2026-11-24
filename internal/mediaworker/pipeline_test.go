@@ -41,6 +41,8 @@ type pipelineFakes struct {
 	transcriber *fakeTranscriber
 	cutter      *fakeCutter
 	burner      *fakeBurner
+	// minSpeechShare of the pipeline; 0 turns the check of little speech off.
+	minSpeechShare float64
 }
 
 // newPipelineFakes: a 3-minute source with a picture and sound, two words, a plan that cuts it to 2:21 with nothing
@@ -76,6 +78,7 @@ func (f *pipelineFakes) pipeline(t *testing.T, workDir string) *Pipeline {
 		Store: f.store, Prober: f.prober, Keys: f.keys, Transcriber: f.transcriber, Cutter: f.cutter, Burner: f.burner,
 		Config: &config.MediaWorker{
 			WorkDir: workDir, MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 20, Fit: string(ffmpeg.PadFitMode),
+			MinSpeechShare: f.minSpeechShare,
 		},
 		Log: slog.New(slog.DiscardHandler),
 	})
@@ -184,6 +187,73 @@ func TestPipelineStopsForDecision(t *testing.T) {
 			assert.Equal(t, []string{files.Plan, files.Decisions, files.Transcript}, fakes.store.order)
 		})
 	}
+}
+
+// TestPipelineLittleSpeech: a source where the talking-head cut keeps less than MEDIA_WORKER_MIN_SPEECH_SHARE, or with
+// no words at all, may be a workout: the auto stage stops for the editor with the safe workout plan (nothing cut),
+// instead of cutting the silence or refusing «no speech». With enough speech it is rendered at once, as before.
+func TestPipelineLittleSpeech(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		duration float64
+		noWords  bool
+		status   editjob.Status
+		workout  bool
+	}{
+		{name: "speech keeps 77 % of the source: rendered at once", duration: 141, status: editjob.DoneStatus},
+		{name: "speech keeps 16 % of the source: a workout plan to decide", duration: 30, status: editjob.PlannedStatus, workout: true},
+		{name: "no words: a workout plan to decide, not «no speech»", duration: 141, noWords: true, status: editjob.PlannedStatus, workout: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakes := newPipelineFakes(t)
+			fakes.minSpeechShare = 0.6
+			fakes.cutter.result.Plan.SourceDuration, fakes.cutter.result.Plan.Duration = 182, tt.duration
+
+			if tt.noWords {
+				fakes.transcriber.result.Words = nil
+			}
+
+			result, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), testJob())
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.status, result.Status)
+
+			if !tt.workout {
+				assert.Nil(t, fakes.cutter.got.Edit, "the talking-head plan")
+				assert.NotNil(t, fakes.burner.got)
+
+				return
+			}
+
+			require.NotNil(t, fakes.cutter.got.Edit, "the last plan is the workout one")
+			assert.Equal(t, roughcut.WorkoutMode, fakes.cutter.got.Edit.Mode)
+			assert.Nil(t, fakes.burner.got, "nothing is rendered before the decision")
+		})
+	}
+}
+
+// TestPipelineRendersTitlesAndMute: the exercise titles of the plan go to the subtitles; a muted plan has no speech
+// subtitles.
+func TestPipelineRendersTitlesAndMute(t *testing.T) {
+	t.Parallel()
+
+	fakes := newPipelineFakes(t)
+	fakes.cutter.result.Titles = []roughcut.Title{{Text: "Выпады — 12 раз", Start: 0.2, End: 0.8}}
+	fakes.cutter.result.Render.Mute = true
+
+	_, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), testJob())
+	require.NoError(t, err)
+
+	require.NotNil(t, fakes.burner.got)
+	assert.Equal(t, []subtitles.Title{{Text: "Выпады — 12 раз", Start: 0.2, End: 0.8}}, fakes.burner.got.Titles)
+	assert.Empty(t, fakes.burner.got.Transcript.Words, "no speech subtitles without the sound")
+	assert.True(t, fakes.burner.got.Cut.Options.Mute)
 }
 
 // TestPipelineRendersDecidedVersion: a render job (a revision) reads the stored transcript — the speech is not
@@ -314,12 +384,6 @@ func TestPipelineFailures(t *testing.T) {
 			transcribed: true,
 		},
 		{
-			name:        "no words",
-			change:      func(f *pipelineFakes) { f.transcriber.result.Words = nil },
-			expected:    editjob.NoSpeechCode,
-			transcribed: true,
-		},
-		{
 			name:        "nothing to keep in the plan",
 			change:      func(f *pipelineFakes) { f.cutter.err = fmt.Errorf("plan: %w", roughcut.ErrInvalidPlan) },
 			expected:    editjob.NoSpeechCode,
@@ -373,6 +437,10 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 	}{
 		{name: "unknown fit", input: config.MediaWorker{Fit: "stretch", MaxSourceDuration: time.Minute, MaxSourceSize: 1}},
 		{name: "no duration limit", input: config.MediaWorker{Fit: "pad", MaxSourceSize: 1}},
+		{
+			name:  "a speech share above 1",
+			input: config.MediaWorker{Fit: "pad", MaxSourceDuration: time.Minute, MaxSourceSize: 1, MinSpeechShare: 1.5},
+		},
 	}
 
 	for _, tt := range tests {

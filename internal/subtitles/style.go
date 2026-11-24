@@ -54,6 +54,9 @@ const (
 	minFade          = 50
 	maxFade          = 1000
 
+	// titleLines: a title is at most this many lines (its text is short: editplan limits it).
+	titleLines = 2
+
 	rgbHexLen  = 6
 	rgbaHexLen = 8
 	hexBase    = 16
@@ -79,6 +82,24 @@ type Style struct {
 	// Vignette darkens the frame softly behind the subtitles, for readability without an outline.
 	Vignette Vignette `yaml:"vignette"`
 	Layout   Layout   `yaml:"layout"`
+	// Title is the look of the exercise titles of a workout («Выпады — 12 раз»), apart from the speech subtitles.
+	Title TitleStyle `yaml:"title"`
+}
+
+// TitleStyle is the look and the place of the exercise titles. They stand at the edge opposite the subtitles, clear
+// of them and of the Instagram interface; a title is at most titleLines lines (libass wraps it within the side
+// margins of the subtitles).
+type TitleStyle struct {
+	TextStyle `yaml:",inline"`
+
+	// Position empty: the edge opposite the subtitles (bottom for subtitles at the top or in the middle).
+	Position Position `yaml:"position"`
+	// Margin from the frame edge of the position (top or bottom; unused in the middle).
+	Margin int `yaml:"margin"`
+	// Box is the color of the box under the title, "#RRGGBBAA"; empty: no box, the outline and shadow of the
+	// subtitles. BoxPadding is the box around the text, in pixels.
+	Box        string  `yaml:"box"`
+	BoxPadding float64 `yaml:"box_padding"`
 }
 
 // Vignette darkens the frame from the edge where the subtitles stand (top or bottom; none for middle): evenly
@@ -166,6 +187,12 @@ func DefaultStyle() Style {
 			CharWidth:          0.5,
 			TrimEndPunctuation: true,
 		},
+		Title: TitleStyle{
+			TextStyle:  TextStyle{Font: "Fira Sans Extra Condensed ExtraBold", Size: 72, Uppercase: true, Color: "#F2B94B"},
+			Margin:     460,
+			Box:        "#00000099",
+			BoxPadding: 14,
+		},
 	}
 }
 
@@ -210,6 +237,7 @@ func (s *Style) Validate() error {
 	errs = append(errs, validateText("accent", &s.Accent.TextStyle)...)
 	errs = append(errs, validateLayout(&s.Layout)...)
 	errs = append(errs, validateFit(s)...)
+	errs = append(errs, validateTitle(s)...)
 	errs = append(errs,
 		validateBorder("outline", s.Outline), validateBorder("shadow", s.Shadow),
 		validateColor("karaoke_color", s.KaraokeColor), validateVignette(s))
@@ -408,4 +436,89 @@ func assColor(color string) string {
 	hex := strings.TrimPrefix(color, "#")
 
 	return fmt.Sprintf("&H%02X%s%s%s", opaque-opacity(color), strings.ToUpper(hex[4:6]), strings.ToUpper(hex[2:4]), strings.ToUpper(hex[0:2]))
+}
+
+// validateTitle checks the title look and that the title block stays clear of the subtitles and the Instagram zones.
+func validateTitle(s *Style) []error {
+	t := &s.Title
+	errs := validateText("title", &t.TextStyle)
+
+	switch t.Position {
+	case "", TopPosition, MiddlePosition, BottomPosition:
+	default:
+		return append(errs, fmt.Errorf("title.position must be top, middle or bottom, got %q", t.Position))
+	}
+
+	if t.Margin < 0 || t.Margin > maxVertMargin {
+		errs = append(errs, fmt.Errorf("title.margin must be 0..%d", maxVertMargin))
+	}
+
+	if t.BoxPadding < 0 || t.BoxPadding > maxBorder {
+		errs = append(errs, fmt.Errorf("title.box_padding must be 0..%d", maxBorder))
+	}
+
+	if t.Box != "" {
+		if err := validateColor("title.box", t.Box); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errs
+	}
+
+	top, bottom := s.titleSpan()
+	if top < SafeZoneTop || bottom > FrameHeight-SafeZoneBottom {
+		errs = append(errs, fmt.Errorf("titles (%d..%d px) must stay between the Instagram zones (%d..%d px)",
+			top, bottom, SafeZoneTop, FrameHeight-SafeZoneBottom))
+	}
+
+	if subTop, subBottom := s.subtitlesSpan(); top < subBottom && subTop < bottom {
+		errs = append(errs, fmt.Errorf("titles (%d..%d px) overlap the subtitles (%d..%d px): move title.position "+
+			"or title.margin", top, bottom, subTop, subBottom))
+	}
+
+	return errs
+}
+
+// titleSpan is the vertical extent of a title block (titleLines lines with the box), from the top of the frame.
+func (s *Style) titleSpan() (top, bottom int) {
+	t := &s.Title
+	height := int(float64(titleLines*t.Size)*lineHeightFactor + 2*t.BoxPadding)
+
+	return blockSpan(s.titlePosition(), t.Margin, height)
+}
+
+// titlePosition is where the titles stand: as set, or at the edge opposite the subtitles.
+func (s *Style) titlePosition() Position {
+	switch {
+	case s.Title.Position != "":
+		return s.Title.Position
+	case s.Layout.Position == BottomPosition:
+		return TopPosition
+	default:
+		return BottomPosition
+	}
+}
+
+// subtitlesSpan is the vertical extent of the tallest subtitle.
+func (s *Style) subtitlesSpan() (top, bottom int) {
+	margin := s.Layout.MarginTop
+	if s.Layout.Position == BottomPosition {
+		margin = s.Layout.MarginBottom
+	}
+
+	return blockSpan(s.Layout.Position, margin, s.blockHeight())
+}
+
+// blockSpan places a block of the height at the position with the margin from its edge.
+func blockSpan(position Position, margin, height int) (top, bottom int) {
+	switch position {
+	case TopPosition:
+		return margin, margin + height
+	case BottomPosition:
+		return FrameHeight - margin - height, FrameHeight - margin
+	default:
+		return FrameHeight/2 - height/2, FrameHeight/2 + height/2
+	}
 }

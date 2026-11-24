@@ -126,7 +126,8 @@ func clipTranscript() *transcription.Result {
 }
 
 // realPipelineWith is the pipeline with the real ffmpeg, rough cut and subtitles over the store, with a fake speech
-// recognition.
+// recognition. The check of little speech is off (MinSpeechShare 0): the synthetic talking clip is 35 % speech, far
+// sparser than a real one, and these tests check the talking-head cut; workout_integration_test.go checks it on.
 func realPipelineWith(t *testing.T, files store, speech transcriber) *Pipeline {
 	t.Helper()
 

@@ -14,6 +14,16 @@ type CreateSubtitlesData struct {
 	Accents []string
 	// Karaoke highlights the word being spoken.
 	Karaoke bool
+	// Titles are the exercise titles («Выпады — 12 раз») on the timeline of the transcript, drawn in the Title style
+	// apart from the speech subtitles. Their text is plain: it is escaped like speech.
+	Titles []Title
+}
+
+// Title is a caption shown from Start to End, in seconds.
+type Title struct {
+	Text  string
+	Start float64
+	End   float64
 }
 
 type BurnSubtitlesData struct {

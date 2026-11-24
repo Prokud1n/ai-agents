@@ -57,6 +57,23 @@ func TestDescribe(t *testing.T) {
 				"Ваша подпись к исходнику: «добавь музыку»\n" + captionCannotNote,
 		},
 		{
+			name:    "a workout kept whole, with its titles",
+			result:  editjob.Result{SourceDuration: 120, Duration: 120},
+			version: 1,
+			caption: "Выпады",
+			summary: &editjob.Summary{Mode: roughcut.WorkoutMode, Changes: []string{titlesHeader, "0:03 — «Выпады»"}},
+			expected: "Черновик тренировки готов: 2:00 — ролик целиком, паузы и молчаливые отрезки не вырезал.\n" +
+				"Подписи упражнений:\n0:03 — «Выпады»\nВаша подпись к исходнику: «Выпады»",
+		},
+		{
+			name:    "a workout with the start cut, without the model",
+			result:  editjob.Result{SourceDuration: 130, Duration: 120},
+			version: 1,
+			summary: &editjob.Summary{Mode: roughcut.WorkoutMode, Note: workoutFallbackNote},
+			expected: "Черновик тренировки готов: было 2:10, стало 2:00 — паузы и молчаливые отрезки оставил, убрал " +
+				"только указанное (0:10).\n" + workoutFallbackNote,
+		},
+		{
 			name:     "nothing to cut",
 			result:   editjob.Result{SourceDuration: 30.2, Duration: 30},
 			version:  1,
@@ -131,6 +148,30 @@ func TestFirstSummary(t *testing.T) {
 			expected: editjob.Summary{Note: captionUnclearNote},
 		},
 		{
+			name: "a workout the model did not understand: the whole video and a hint", caption: "сделай красиво",
+			plan:    &roughcut.Plan{Edit: &roughcut.Edit{Mode: roughcut.WorkoutMode}},
+			outcome: editplan.Outcome{Kind: editplan.UnclearOutcome},
+			expected: editjob.Summary{
+				Mode: roughcut.WorkoutMode, Changes: []string{titlesHint}, Note: captionUnclearNote,
+			},
+		},
+		{
+			name: "a workout chosen by the model, an exercise without a time", plan: &roughcut.Plan{},
+			outcome: editplan.Outcome{
+				Kind: editplan.EditOutcome, Mode: roughcut.WorkoutMode, Untimed: []string{"Планка"},
+				Titles: []string{"0:03 — «Выпады»"},
+			},
+			expected: editjob.Summary{Mode: roughcut.WorkoutMode, Changes: []string{
+				titlesHeader, "0:03 — «Выпады»", "Не поставил подписи «Планка»: не понял, в какой момент их показать. " +
+					"Добавьте их правкой с временем, например: „подпиши выпады с 0:15 до 0:45“.",
+			}},
+		},
+		{
+			name: "the model switched a workout back to talk", plan: &roughcut.Plan{Edit: &roughcut.Edit{Mode: roughcut.WorkoutMode}},
+			outcome:  editplan.Outcome{Kind: editplan.EditOutcome, Mode: roughcut.TalkMode},
+			expected: editjob.Summary{},
+		},
+		{
 			name: "the model did not decide the repeats", plan: twoCandidates,
 			outcome:  editplan.Outcome{Kind: editplan.NoAnswerOutcome},
 			expected: editjob.Summary{Changes: []string{"Спорные повторы оставил в ролике: 2."}},
@@ -154,6 +195,7 @@ func TestRevisionTexts(t *testing.T) {
 	for _, text := range []string{
 		cannotRevisionText, unclearRevisionText, modelFailedText, artifactsMissingText, captionCannotNote,
 		captionUnclearNote, captionFailedNote, modelFailedRevisionText, editFailedRevisionText, technicalRevisionText,
+		workoutFallbackNote, titlesHint, longReelNote(180), untimedNote([]string{"«Выпады»"}),
 	} {
 		assert.NotContains(t, text, "S3")
 		assert.NotContains(t, text, "Claude")
@@ -161,8 +203,8 @@ func TestRevisionTexts(t *testing.T) {
 		assert.NotContains(t, text, "Whisper")
 	}
 
-	assert.Equal(t, "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль и поправить "+
-		"слово в субтитрах.", cannotRevisionText)
+	assert.Equal(t, "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль, поправить "+
+		"слово в субтитрах, подписать упражнения и убрать звук.", cannotRevisionText)
 	assert.Equal(t, "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или "+
 		"„оставь второй дубль“.", unclearRevisionText)
 

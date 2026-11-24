@@ -54,6 +54,15 @@ func TestSegmentsFilter(t *testing.T) {
 				"[t0]atrim=start=1.001000:end=2.002000,asetpts=PTS-STARTPTS[a0];" +
 				"[v0][a0]concat=n=1:v=1:a=1[v][a]",
 		},
+		{
+			name:  "muted: the audio track stays, silent",
+			input: []Segment{{Start: 1, End: 2}},
+			opts:  RenderOptions{Mute: true},
+			expected: "[0:v:0]setpts=PTS,split=1[s0];[0:a:0]asetpts=PTS,volume=0,asplit=1[t0];" +
+				"[s0]trim=start=1.000000:end=2.000000,setpts=PTS-STARTPTS[v0];" +
+				"[t0]atrim=start=1.000000:end=2.000000,asetpts=PTS-STARTPTS[a0];" +
+				"[v0][a0]concat=n=1:v=1:a=1[v][a]",
+		},
 	}
 
 	for _, tt := range tests {

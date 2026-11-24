@@ -46,8 +46,9 @@ func (r *Request) IsRevision() bool {
 	return r.Version > 1
 }
 
+// validate: a transcript and a plan are needed; the transcript may have no words (a workout shown in silence).
 func (r *Request) validate() error {
-	if r.Transcript == nil || r.Plan == nil || len(r.Transcript.Words) == 0 {
+	if r.Transcript == nil || r.Plan == nil || len(r.Plan.Keep) == 0 {
 		return fmt.Errorf("task %d version %d: no transcript or plan: %w", r.TaskID, r.Version, ErrInvalidRequest)
 	}
 
@@ -86,4 +87,10 @@ type Outcome struct {
 	Duration float64
 	// Reason is the model's explanation or the last check failure: for the log, not for the trainer.
 	Reason string
+	// Mode of the new version (EditOutcome).
+	Mode roughcut.Mode
+	// Titles are the exercise titles of the new version with their time in the reel, for the description; Untimed
+	// are the exercises the editor could not place in time.
+	Titles  []string
+	Untimed []string
 }

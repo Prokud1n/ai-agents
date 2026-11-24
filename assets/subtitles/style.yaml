@@ -65,3 +65,19 @@ layout:
   char_width: 0.5
   # Drop . , : ; at the end of a subtitle.
   trim_end_punctuation: true
+
+# Exercise titles of a workout reel («Выпады — 12 раз»), drawn apart from the speech subtitles, in the accent font in
+# capitals. position empty: the edge opposite the subtitles (bottom here); margin is from that edge. A title is at
+# most 2 lines; with the box (padding included) it must stay clear of the subtitles and the Instagram zones: here it
+# takes 1252..1460 px, the caption and buttons start at 1500. The translucent dark box keeps it readable over a gym
+# floor or a mat, where there is no vignette.
+title:
+  font: Fira Sans Extra Condensed ExtraBold
+  size: 72
+  bold: false
+  uppercase: true
+  color: "#F2B94B" # the accent yellow
+  position: ""
+  margin: 460
+  box: "#00000099" # 60 % black
+  box_padding: 14

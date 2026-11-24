@@ -52,6 +52,35 @@ func TestPrompt(t *testing.T) {
 			expected: []string{"Секунды в подписи — по времени исходника.", "<trainer_caption>\nбез первой фразы\n</trainer_caption>"},
 		},
 		{
+			name: "first version planned as a workout, no caption",
+			req:  func() *Request { return testRequest(1, &roughcut.Edit{Mode: roughcut.WorkoutMode}) },
+			expected: []string{
+				"Подписи нет — выбери режим монтажа",
+				"Режим монтажа сейчас: workout",
+				"Речь занимает около 49% исходника",
+				"6 | 0:05.7–0:06.1 | в ролике 0:05.7 | эээ",
+			},
+			absent: []string{"Изменения прошлых версий", "Вырезанные по времени"},
+		},
+		{
+			name: "a workout revision with cuts, titles and no sound",
+			req: func() *Request {
+				req := testRequest(2, &roughcut.Edit{
+					Mode: roughcut.WorkoutMode, CutTime: []roughcut.Interval{{Start: 0, End: 2}}, Mute: true,
+					Titles: []roughcut.Title{{Text: "Приседания", Start: 6.15}},
+				})
+				req.Revision = "убери подпись"
+
+				return req
+			},
+			expected: []string{
+				"- 0: 0:00.0–0:02.0 исходника",
+				"- 0: «Приседания», с 0:06.2 исходника (в ролике 0:04.2–0:07.0)",
+				"Звук исходника убран (mute)",
+			},
+			absent: []string{"Речь занимает"},
+		},
+		{
 			name: "a revision with the previous changes",
 			req: func() *Request {
 				req := testRequest(3, &roughcut.Edit{

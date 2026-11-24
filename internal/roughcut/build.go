@@ -60,18 +60,28 @@ func BuildPlanEdited(
 	duration = planDuration(transcript, duration, settings)
 
 	texts := alignTokens(transcript)
-	removed := markFillers(words, newFillerSet(settings.Fillers))
+	fillers := markFillers(words, newFillerSet(settings.Fillers))
 	ph := &phrases{
 		words:  words,
 		texts:  texts,
-		tokens: buildTokens(words, removed, segmentStarts(words, transcript.Segments), texts),
+		tokens: buildTokens(words, fillers, segmentStarts(words, transcript.Segments), texts),
 	}
+	// Retakes and candidates are found the same way in both modes, so the IDs of the candidates do not depend on it.
 	retakes, candidates := detectRetakes(ph.tokens, settings.RetakeSimilarity)
-	removed = markRetakes(removed, ph.tokens, retakes)
 
 	accepted, rest, err := splitAccepted(candidates, edit.Accept)
 	if err != nil {
 		return Plan{}, err
+	}
+
+	mode := edit.Mode.Effective()
+	cuts := &cutPlan{mode: mode, words: words, duration: duration, settings: settings,
+		times: normalizeIntervals(edit.CutTime, duration)}
+
+	// A workout keeps the fillers and the failed takes: only what the editor chose is cut.
+	removed, takes := make([]CutReason, len(words)), []Take{}
+	if mode == TalkMode {
+		removed, takes = markRetakes(fillers, ph.tokens, retakes), describeTakes(ph, retakes)
 	}
 
 	for i := range accepted {
@@ -83,10 +93,10 @@ func BuildPlanEdited(
 		return Plan{}, err
 	}
 
-	keep, cuts := buildIntervals(words, removed, duration, settings)
+	keep, planCuts := cuts.build(removed)
 
 	cutFor := func(c *candidate) Interval {
-		_, withCut := buildIntervals(words, markRetakes(removed, ph.tokens, []retake{c.retake}), duration, settings)
+		_, withCut := cuts.build(markRetakes(removed, ph.tokens, []retake{c.retake}))
 
 		return cutCovering(withCut, mid(words[ph.tokens[c.from].idx]))
 	}
@@ -97,10 +107,21 @@ func BuildPlanEdited(
 		Duration:       totalDuration(keep),
 		Settings:       settings,
 		Keep:           keep,
-		Cuts:           cuts,
-		Takes:          append(describeTakes(ph, retakes), describeAccepted(ph, accepted)...),
+		Cuts:           planCuts,
+		Takes:          append(takes, describeAccepted(ph, accepted)...),
 		Candidates:     describeCandidates(ph, rest, cutFor),
+		Mode:           planMode(edit.Mode),
 	}, nil
+}
+
+// planMode is the mode written into the plan: empty for a talking-head plan without an explicit mode, so the
+// automatic plan stays as it was.
+func planMode(m Mode) Mode {
+	if m == "" {
+		return ""
+	}
+
+	return m.Effective()
 }
 
 // applyWordEdits returns a copy of removed with the restored words kept and the removed words cut (a word in both

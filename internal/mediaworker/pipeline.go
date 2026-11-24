@@ -59,7 +59,6 @@ var (
 	errNoVideo      = errors.New("source has no picture")
 	errNoAudio      = errors.New("source has no sound")
 	errTooLong      = errors.New("source is longer than the limit")
-	errNoWords      = errors.New("transcript has no words")
 )
 
 // resultFile is a local file of the job uploaded under its key.
@@ -150,8 +149,10 @@ type Pipeline struct {
 	maxDuration float64
 	maxSize     int64
 	fit         ffmpeg.FitMode
-	log         *slog.Logger
-	now         func() time.Time
+	// minSpeechShare: see config.MediaWorker.MinSpeechShare.
+	minSpeechShare float64
+	log            *slog.Logger
+	now            func() time.Time
 }
 
 // NewPipeline fails on invalid MEDIA_WORKER_* values, so a typo stops the start.
@@ -167,10 +168,15 @@ func NewPipeline(p *PipelineParams) (*Pipeline, error) {
 		return nil, fmt.Errorf("MEDIA_WORKER_MAX_SOURCE_DURATION and _SIZE must be positive: %w", ErrInvalidConfig)
 	}
 
+	if cfg.MinSpeechShare < 0 || cfg.MinSpeechShare > 1 {
+		return nil, fmt.Errorf("MEDIA_WORKER_MIN_SPEECH_SHARE %.2f must be within 0..1: %w", cfg.MinSpeechShare,
+			ErrInvalidConfig)
+	}
+
 	return &Pipeline{
 		store: p.Store, prober: p.Prober, keys: p.Keys, transcriber: p.Transcriber, cutter: p.Cutter, burner: p.Burner,
 		workDir: cfg.WorkDir, maxDuration: cfg.MaxSourceDuration.Seconds(), maxSize: cfg.MaxSourceSize, fit: fit,
-		log: p.Log, now: time.Now,
+		minSpeechShare: cfg.MinSpeechShare, log: p.Log, now: time.Now,
 	}, nil
 }
 
@@ -318,8 +324,9 @@ func (p *Pipeline) transcribe(ctx context.Context, w *jobWork) error {
 	w.transcript = transcript
 	w.result.AudioSeconds = transcript.Duration
 
+	// A video without words is not refused: it may be a workout shown in silence (see cut).
 	if len(transcript.Words) == 0 {
-		return fail(editjob.NoSpeechCode, errNoWords)
+		p.log.InfoContext(ctx, "mediaworker: no speech recognized", "job_id", w.job.ID)
 	}
 
 	return nil
@@ -342,10 +349,7 @@ func (p *Pipeline) loadTranscript(ctx context.Context, w *jobWork) error {
 		return fail(editjob.SourceMissingCode, fmt.Errorf("failed to decode the stored transcript: %w", err))
 	}
 
-	if len(transcript.Words) == 0 {
-		return fail(editjob.NoSpeechCode, errNoWords)
-	}
-
+	// No words is a workout shown in silence: the plan decides whether anything is left to render.
 	w.transcript = &transcript
 
 	return nil
@@ -368,24 +372,32 @@ func classifyTranscription(err error) error {
 }
 
 // cut plans the rough cut: an auto job with the default settings (disputed repeats are kept), a render job with the
-// settings and the edit the editor decided on. An auto job with something to decide stops after it.
+// settings and the edit the editor decided on. An auto job with something to decide stops after it: the trainer's
+// caption, disputed repeats, or little speech. A source where a talking-head cut would keep less than minSpeechShare
+// (or no words at all) may be a workout: cutting its silence would cut the exercises, so it is planned in the workout
+// mode (nothing cut) and the editor decides; that plan is also what is rendered if the model cannot decide.
 func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
-	cut, err := p.cutter.Cut(ctx, &roughcut.CutData{
-		Source: w.source, Transcript: w.transcript, OutDir: filepath.Join(w.dir, cutDir), PlanOnly: true,
-		Settings: w.job.Settings, Edit: w.job.Edit,
-	})
+	auto := w.job.EffectiveStage() == editjob.AutoStage
+	edit, lowSpeech := w.job.Edit, auto && len(w.transcript.Words) == 0
 
-	switch {
-	case errors.Is(err, roughcut.ErrNoAudio):
-		return fail(editjob.NoAudioCode, err)
-	case errors.Is(err, roughcut.ErrNoVideo) || errors.Is(err, roughcut.ErrNoFrameRate):
-		return fail(editjob.BadSourceCode, err)
-	case errors.Is(err, roughcut.ErrInvalidPlan) && w.job.EffectiveStage() == editjob.RenderStage:
-		return fail(editjob.InvalidEditCode, err)
-	case errors.Is(err, roughcut.ErrInvalidPlan):
-		return fail(editjob.NoSpeechCode, err)
-	case err != nil:
+	if lowSpeech {
+		edit = workoutEdit()
+	}
+
+	cut, err := p.plan(ctx, w, edit)
+	if err != nil {
 		return err
+	}
+
+	if share := speechShare(&cut.Plan); auto && !lowSpeech && share < p.minSpeechShare {
+		lowSpeech = true
+
+		p.log.InfoContext(ctx, "mediaworker: little speech, planned as a workout", "job_id", w.job.ID,
+			"speech_share", roundTime(share), "min_speech_share", p.minSpeechShare)
+
+		if cut, err = p.plan(ctx, w, workoutEdit()); err != nil {
+			return err
+		}
 	}
 
 	w.cut = cut
@@ -394,14 +406,51 @@ func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	w.result.Retakes = len(cut.Plan.Takes)
 	w.result.Candidates = len(cut.Plan.Candidates)
 
-	if w.job.EffectiveStage() == editjob.AutoStage && (w.job.Decide || len(cut.Plan.Candidates) > 0) {
+	if auto && (w.job.Decide || lowSpeech || len(cut.Plan.Candidates) > 0) {
 		w.planned = true
 
 		p.log.InfoContext(ctx, "mediaworker: plan ready, the editor decides before the render", "job_id", w.job.ID,
-			"candidates", len(cut.Plan.Candidates), "caption", w.job.Decide)
+			"candidates", len(cut.Plan.Candidates), "caption", w.job.Decide, "little_speech", lowSpeech)
 	}
 
 	return nil
+}
+
+// plan runs the rough cut in plan-only mode with the edit and maps its errors to the failure codes.
+func (p *Pipeline) plan(ctx context.Context, w *jobWork, edit *roughcut.Edit) (*roughcut.Result, error) {
+	cut, err := p.cutter.Cut(ctx, &roughcut.CutData{
+		Source: w.source, Transcript: w.transcript, OutDir: filepath.Join(w.dir, cutDir), PlanOnly: true,
+		Settings: w.job.Settings, Edit: edit,
+	})
+
+	switch {
+	case errors.Is(err, roughcut.ErrNoAudio):
+		return nil, fail(editjob.NoAudioCode, err)
+	case errors.Is(err, roughcut.ErrNoVideo) || errors.Is(err, roughcut.ErrNoFrameRate):
+		return nil, fail(editjob.BadSourceCode, err)
+	case errors.Is(err, roughcut.ErrInvalidPlan) && w.job.EffectiveStage() == editjob.RenderStage:
+		return nil, fail(editjob.InvalidEditCode, err)
+	case errors.Is(err, roughcut.ErrInvalidPlan):
+		return nil, fail(editjob.NoSpeechCode, err)
+	case err != nil:
+		return nil, err
+	}
+
+	return cut, nil
+}
+
+// workoutEdit is the edit of the safe plan of a source with little speech: the workout mode, nothing cut.
+func workoutEdit() *roughcut.Edit {
+	return &roughcut.Edit{Mode: roughcut.WorkoutMode}
+}
+
+// speechShare is the share of the source a talking-head cut keeps: the speech with its short pauses.
+func speechShare(plan *roughcut.Plan) float64 {
+	if plan.SourceDuration <= 0 {
+		return 1
+	}
+
+	return plan.Duration / plan.SourceDuration
 }
 
 // render cuts, subtitles and exports in one ffmpeg pass: the source is decoded once and the reel encoded once.
@@ -413,8 +462,14 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 
 	w.reel = filepath.Join(w.dir, reelFile)
 
+	// Without the sound of the source its speech is not heard: no speech subtitles, the titles stay.
+	speech := &w.cut.Transcript
+	if w.cut.Render.Mute {
+		speech = &transcription.Result{Language: w.cut.Transcript.Language, Duration: w.cut.Transcript.Duration}
+	}
+
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
-		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: &w.cut.Transcript},
+		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: speech, Titles: subtitleTitles(w.cut.Titles)},
 		VideoPath:           w.source,
 		OutputPath:          w.reel,
 		Fit:                 p.fit,
@@ -433,6 +488,16 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 	}
 
 	return nil
+}
+
+// subtitleTitles are the exercise titles of the cut for the subtitles.
+func subtitleTitles(titles []roughcut.Title) []subtitles.Title {
+	out := make([]subtitles.Title, 0, len(titles))
+	for _, t := range titles {
+		out = append(out, subtitles.Title{Text: t.Text, Start: t.Start, End: t.End})
+	}
+
+	return out
 }
 
 // upload stores the files of the job; the reel goes last, so a reel in S3 always has its plan next to it. The

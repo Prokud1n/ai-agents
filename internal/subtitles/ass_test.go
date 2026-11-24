@@ -225,7 +225,7 @@ func TestBuildASS(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, cues := buildASS(result, &style, tt.accents, tt.karaoke)
+			got, cues := buildASS(result, &style, tt.accents, tt.karaoke, nil)
 
 			assert.Equal(t, tt.cues, cues)
 
@@ -239,4 +239,61 @@ func TestBuildASS(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTitleEvents: exercise titles are drawn in their own style, above the subtitles, in capitals, as plain text:
+// markup is escaped, line breaks collapse; an empty or zero-length title is skipped.
+func TestTitleEvents(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+	lower := DefaultStyle()
+	lower.Title.Uppercase = false
+
+	tests := []struct {
+		name     string
+		style    *Style
+		input    []Title
+		expected string
+	}{
+		{
+			name:     "capitals, escaped markup, one line",
+			style:    &style,
+			input:    []Title{{Text: " Выпады {\\b1} — 12\nраз ", Start: 1, End: 5.5}},
+			expected: "Dialogue: 1,0:00:01.00,0:00:05.50,Title,,0,0,0,,ВЫПАДЫ \\{B1\\} — 12 РАЗ\n",
+		},
+		{
+			name:     "as written when the style says so",
+			style:    &lower,
+			input:    []Title{{Text: "Планка 30 с", Start: 0, End: 2}},
+			expected: "Dialogue: 1,0:00:00.00,0:00:02.00,Title,,0,0,0,,Планка 30 с\n",
+		},
+		{
+			name:  "empty and zero-length titles are skipped",
+			style: &style,
+			input: []Title{{Text: " ", Start: 0, End: 1}, {Text: "Мост", Start: 2, End: 2}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, titleEvents(tt.input, tt.style))
+		})
+	}
+}
+
+// TestBuildASSWithTitles: the Title style sits next to the subtitle styles (on a translucent box at the bottom, clear
+// of the subtitles at the top), and the titles follow the speech events.
+func TestBuildASSWithTitles(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+	ass, cues := buildASS(speech(wPrivetCapExcl), &style, nil, false, []Title{{Text: "Выпады", Start: 0.5, End: 3}})
+
+	assert.Equal(t, 1, cues, "titles are not speech cues")
+	assert.Contains(t, ass, "Style: Title,Fira Sans Extra Condensed ExtraBold,72,&H004BB9F2,&H004BB9F2,&H66000000,"+
+		"&H99000000,0,0,0,0,100,100,0,0,3,14,0,2,140,140,460,1\n")
+	assert.Less(t, strings.Index(ass, ",Main,,"), strings.Index(ass, ",Title,,0,0,0,,ВЫПАДЫ"))
 }

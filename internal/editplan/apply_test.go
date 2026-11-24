@@ -290,7 +290,7 @@ func TestDescribeChangesLimit(t *testing.T) {
 		in.FixWords = append(in.FixWords, roughcut.WordFix{Index: i, Text: "слово"})
 	}
 
-	lines := describeChanges(req, in, &trim{})
+	lines := describeChanges(req, in, &trim{}, nil)
 
 	assert.Len(t, lines, maxChangeLines)
 	assert.Equal(t, "И ещё изменений: 3.", lines[maxChangeLines-1])

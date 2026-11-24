@@ -64,12 +64,15 @@ type Service struct {
 // Result is what Cut produced; Files has the paths of the written files (Video is empty in plan-only mode).
 // Render is how the plan is rendered: with PlanOnly the caller renders it itself in one pass with the subtitles
 // (Segments and Render go to ffmpeg as they are).
+// Titles are the exercise titles of the edit on the timeline of the cut (RemapTitles); Render.Mute silences the
+// source (Edit.Mute).
 type Result struct {
 	Plan       Plan
 	Transcript transcription.Result
 	Log        string
 	Files      Files
 	Render     ffmpeg.RenderOptions
+	Titles     []Title
 }
 
 // Segments are the kept fragments of the plan for ffmpeg.
@@ -150,7 +153,10 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 
 	result := &Result{
 		Plan: plan, Transcript: RemapTranscript(subtitleWords(data.Transcript, plan.Edit), plan.Keep), Log: DecisionsLog(&plan),
-		Render: ffmpeg.RenderOptions{Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info)},
+		Render: ffmpeg.RenderOptions{
+			Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info), Mute: plan.Edit != nil && plan.Edit.Mute,
+		},
+		Titles: RemapTitles(editTitles(plan.Edit), plan.Keep),
 	}
 
 	if err := prepareOutDir(data.OutDir); err != nil {
@@ -445,6 +451,15 @@ func (s *Service) render(ctx context.Context, src, dir string, plan *Plan, opts 
 	}
 
 	return video, nil
+}
+
+// editTitles are the titles of the edit, nil without one.
+func editTitles(edit *Edit) []Title {
+	if edit == nil {
+		return nil
+	}
+
+	return edit.Titles
 }
 
 func planSegments(plan *Plan) []ffmpeg.Segment {

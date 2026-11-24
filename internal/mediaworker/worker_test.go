@@ -377,6 +377,6 @@ func TestWorkerRemovesLeftovers(t *testing.T) {
 func TestCodeOf(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, editjob.NoSpeechCode, CodeOf(errors.Join(errors.New("x"), fail(editjob.NoSpeechCode, errNoWords))))
+	assert.Equal(t, editjob.NoSpeechCode, CodeOf(errors.Join(errors.New("x"), fail(editjob.NoSpeechCode, errNoVideo))))
 	assert.Equal(t, editjob.TemporaryCode, CodeOf(errS3Down))
 }

@@ -25,6 +25,9 @@ type Editor struct {
 	// PollInterval is how often the app checks a job whose result has not come; usually the worker wakes the
 	// task as soon as the result is stored, so this is only a fallback.
 	PollInterval time.Duration `env:"EDITOR_POLL_INTERVAL" envDefault:"1m"`
+	// ReelsMaxDuration is the longest video Instagram publishes as a reel (3 minutes since January 2025); a longer
+	// draft (a workout is not shortened) gets a note in its description, it is not refused. Read by the app only.
+	ReelsMaxDuration time.Duration `env:"EDITOR_REELS_MAX_DURATION" envDefault:"3m"`
 }
 
 // MediaWorker configures the media worker (cmd/media-worker): it edits videos with ffmpeg in a container of its
@@ -40,6 +43,11 @@ type MediaWorker struct {
 	// Fit brings a source that is not 9:16 to the 1080×1920 frame without distortion: pad (default) keeps the whole
 	// picture and fills the rest with black, crop fills the frame and cuts off the edges.
 	Fit string `env:"MEDIA_WORKER_FIT" envDefault:"pad"`
+	// MinSpeechShare: an auto job whose talking-head cut would keep less than this share of the source (the speech
+	// with its short pauses) stops for the editor's decision even without a caption or disputed repeats — it may be
+	// a workout, where cutting the silence cuts the exercises — and its plan is the safe workout one (nothing cut).
+	// 0 turns the check off: then only a source without words is decided. Why 0.6 — docs/SETUP.md.
+	MinSpeechShare float64 `env:"MEDIA_WORKER_MIN_SPEECH_SHARE" envDefault:"0.6"`
 	// HeartbeatFile is touched while the worker is healthy (it reaches Redis); the container healthcheck
 	// (media-worker healthcheck) reads its age. Empty: <WorkDir>/.heartbeat.
 	HeartbeatFile string `env:"MEDIA_WORKER_HEARTBEAT_FILE"`

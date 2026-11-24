@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,7 @@ const (
 	testQueue     = 3 * time.Hour
 	testWorker    = 3 * time.Minute
 	testPoll      = time.Minute
+	testReelsMax  = 3 * time.Minute
 )
 
 var (
@@ -199,6 +201,7 @@ func newTestExecutorWithTech(b *fakeBoard, tech *fakeTech) *Executor {
 func newTestExecutorWith(d *testDeps) *Executor {
 	e := NewExecutor(d.board, d.store, d.decider, d.tech, &config.Editor{
 		JobTimeout: testTimeout, QueueTimeout: testQueue, WorkerWait: testWorker, PollInterval: testPoll,
+		ReelsMaxDuration: testReelsMax,
 	}, slog.New(slog.DiscardHandler))
 	e.now = func() time.Time { return testNow }
 
@@ -859,6 +862,147 @@ func TestExecutorStaleRevision(t *testing.T) {
 			assert.Equal(t, testRevision, decider.requests[0].Revision)
 			require.Len(t, b.submitted, 1)
 			assert.Equal(t, editjob.TextHash(testRevision), b.submitted[0].RevisionHash)
+		})
+	}
+}
+
+// storedWorkoutFiles are the files of a source with little speech: the worker planned it as a workout (nothing cut).
+func storedWorkoutFiles(t *testing.T) map[string][]byte {
+	t.Helper()
+
+	files := storedFiles(t)
+	keys, err := editjob.Files(testStore{}, testSourceKey, 1)
+	require.NoError(t, err)
+
+	plan, err := json.Marshal(workoutPlan())
+	require.NoError(t, err)
+
+	files[keys.Plan] = plan
+
+	return files
+}
+
+func workoutPlan() *roughcut.Plan {
+	plan := testPlan()
+	plan.Keep, plan.Duration, plan.Candidates = []roughcut.Interval{{Start: 0, End: 60}}, 60, nil
+	plan.Mode, plan.Edit = roughcut.WorkoutMode, &roughcut.Edit{Mode: roughcut.WorkoutMode}
+
+	return plan
+}
+
+// plannedWorkout is the board after the worker stopped a source with little speech and no caption for a decision.
+func plannedWorkout() *fakeBoard {
+	planned := pendingJob(time.Hour)
+	planned.Stage = editjob.AutoStage
+
+	return &fakeBoard{job: planned, result: &editjob.Result{JobID: testJobID, Status: editjob.PlannedStatus}}
+}
+
+// TestExecutorDecidesWorkout: a source with little speech and no caption is planned by the worker as a workout; the
+// model is asked (the caption is not needed for that), and its edit — the mode and the exercise titles — is rendered.
+func TestExecutorDecidesWorkout(t *testing.T) {
+	t.Parallel()
+
+	outcome := &editplan.Outcome{
+		Kind: editplan.EditOutcome, Mode: roughcut.WorkoutMode,
+		Edit:   roughcut.Edit{Mode: roughcut.WorkoutMode, Titles: []roughcut.Title{{Text: "Выпады", Start: 3}}},
+		Titles: []string{"0:03 — «Выпады»"},
+	}
+	b, decider := plannedWorkout(), &fakeDecider{outcome: outcome}
+	data := editData()
+	data.Input = ""
+
+	_, err := newTestExecutorWith(&testDeps{board: b, store: testStore{files: storedWorkoutFiles(t)}, decider: decider,
+		tech: &fakeTech{}}).Execute(t.Context(), data)
+
+	var deferred *tasks.DeferredError
+	require.ErrorAs(t, err, &deferred)
+
+	require.Len(t, decider.requests, 1, "the model decides the mode and the titles")
+	assert.Empty(t, decider.requests[0].Caption)
+	assert.Equal(t, roughcut.WorkoutMode, decider.requests[0].Plan.Edit.Mode)
+
+	require.Len(t, b.replaced, 1)
+	assert.Equal(t, &outcome.Edit, b.replaced[0].Edit)
+	assert.Equal(t, &editjob.Summary{
+		Mode: roughcut.WorkoutMode, Changes: []string{titlesHeader, "0:03 — «Выпады»"},
+	}, b.replaced[0].Summary)
+}
+
+// TestExecutorWorkoutWithoutModel: when the model cannot decide on a workout, the planned workout (nothing cut) is
+// rendered with a note, not the talking-head cut and not a failure; a temporary failure is retried by the task first.
+func TestExecutorWorkoutWithoutModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		err         error
+		lastAttempt bool
+		retried     bool
+		reported    bool
+	}{
+		{name: "no API key", err: fmt.Errorf("run: %w", anthropic.ErrAPIKeyMissing), reported: true},
+		{name: "the answer was cut", err: fmt.Errorf("run: %w", agents.ErrMaxTokens), reported: true},
+		{name: "overloaded: retried by the task", err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable}, retried: true},
+		{
+			name: "overloaded on the last attempt", err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable},
+			lastAttempt: true, reported: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			b, tech := plannedWorkout(), &fakeTech{}
+			data := editData()
+			data.LastAttempt = tt.lastAttempt
+
+			_, err := newTestExecutorWith(&testDeps{board: b, store: testStore{files: storedWorkoutFiles(t)},
+				decider: &fakeDecider{err: tt.err}, tech: tech}).Execute(t.Context(), data)
+
+			assert.Equal(t, tt.reported, len(tech.reports) == 1)
+
+			if tt.retried {
+				var temporary *tasks.TemporaryError
+				require.ErrorAs(t, err, &temporary)
+				assert.Empty(t, b.replaced)
+
+				return
+			}
+
+			var deferred *tasks.DeferredError
+			require.ErrorAs(t, err, &deferred)
+			require.Len(t, b.replaced, 1)
+			assert.Equal(t, &roughcut.Edit{Mode: roughcut.WorkoutMode}, b.replaced[0].Edit, "the safe workout plan")
+			assert.Equal(t, roughcut.WorkoutMode, b.replaced[0].Summary.Mode)
+			assert.Equal(t, workoutFallbackNote, b.replaced[0].Summary.Note)
+		})
+	}
+}
+
+// TestExecutorLongReel: a draft longer than Instagram publishes as a reel is delivered with a note, not refused.
+func TestExecutorLongReel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		duration float64
+		note     bool
+	}{
+		{name: "3:20", duration: 200, note: true},
+		{name: "2:59", duration: 179},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			done := &editjob.Result{JobID: testJobID, Status: editjob.DoneStatus, SourceDuration: 240, Duration: tt.duration}
+
+			out, err := newTestExecutor(&fakeBoard{result: done}).Execute(t.Context(), editData())
+			require.NoError(t, err)
+			assert.Equal(t, tt.note, strings.Contains(out.Text, longReelNote(testReelsMax.Seconds())))
 		})
 	}
 }

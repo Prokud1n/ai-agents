@@ -206,6 +206,10 @@ func DecisionsLog(p *Plan) string {
 	fmt.Fprintf(&b, "Порог паузы %.2f с, поля вокруг слов %.2f/%.2f с, сходство дублей %.0f%%\n\n",
 		p.Settings.MaxPause, p.Settings.PadBefore, p.Settings.PadAfter, p.Settings.RetakeSimilarity*percent)
 
+	if p.Mode == WorkoutMode {
+		b.WriteString("Режим: тренировка — паузы, паразиты и неудачные дубли не вырезаются, только по решению монтажёра\n")
+	}
+
 	fmt.Fprintf(&b, "Дубли: %d\n", len(p.Takes))
 
 	for _, t := range p.Takes {
@@ -223,6 +227,7 @@ func DecisionsLog(p *Plan) string {
 
 	if p.Edit != nil {
 		writeCuts(&b, p.Cuts, EditCutReason, "Вырезано по правкам")
+		writeEditExtras(&b, p.Edit)
 		fmt.Fprintf(&b, "\nРешения монтажёра: %d\n", len(p.Edit.Notes))
 
 		for _, note := range p.Edit.Notes {
@@ -255,5 +260,27 @@ func writeCuts(b *strings.Builder, cuts []Cut, reason CutReason, title string) {
 		} else {
 			fmt.Fprintf(b, "- %s–%s (%.2f с)\n", FormatTimecode(c.Start), FormatTimecode(c.End), c.End-c.Start)
 		}
+	}
+}
+
+// writeEditExtras logs the sound and the exercise titles of the edit.
+func writeEditExtras(b *strings.Builder, edit *Edit) {
+	if edit.Mute {
+		b.WriteString("\nЗвук исходника убран, субтитров речи нет\n")
+	}
+
+	if len(edit.Titles) == 0 {
+		return
+	}
+
+	fmt.Fprintf(b, "\nПодписи упражнений: %d\n", len(edit.Titles))
+
+	for _, t := range edit.Titles {
+		end := "до следующей подписи"
+		if t.End > t.Start {
+			end = "до " + FormatTimecode(t.End)
+		}
+
+		fmt.Fprintf(b, "- с %s %s «%s»\n", FormatTimecode(t.Start), end, t.Text)
 	}
 }

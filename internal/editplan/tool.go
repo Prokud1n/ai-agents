@@ -24,8 +24,9 @@ func (*SubmitTool) Name() string {
 }
 
 func (*SubmitTool) Description() string {
-	return "Записывает решение по монтажу рилс: что вырезать, что вернуть, какие спорные повторы вырезать, какие " +
-		"слова исправить в субтитрах — или отказ (cannot — такое не умеешь, unclear — не понял, что менять). " +
+	return "Записывает решение по монтажу рилс: режим (разговорный или тренировка), что вырезать, что вернуть, какие " +
+		"спорные повторы вырезать, какие слова исправить в субтитрах, подписи упражнений, звук исходника — или отказ " +
+		"(cannot — такое не умеешь, unclear — не понял, что менять). " +
 		"Индексы слов — из списка слов в задаче. Вызывай ровно один раз; если решение не прошло проверку, " +
 		"исправь его по ответу и вызови ещё раз."
 }
@@ -110,6 +111,74 @@ const inputSchema = `{
         "required": ["id", "cut", "reason"],
         "additionalProperties": false
       }
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["talk", "workout"],
+      "description": "Режим монтажа. talk — разговорный ролик: паузы, паразиты и неудачные дубли вырезаются. workout — тренировка (показ упражнений, часто молча): ролик остаётся целиком, режется только то, что указано явно. Не указывай, чтобы оставить текущий режим."
+    },
+    "cut_seconds": {
+      "type": "array",
+      "description": "Вырезать отрезки по времени (секунды: для подписи — исходника, для правки — текущего ролика): подготовка, отдых, лишнее между упражнениями.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from": {"type": "number", "minimum": 0},
+          "to": {"type": "number", "minimum": 0}
+        },
+        "required": ["from", "to"],
+        "additionalProperties": false
+      }
+    },
+    "restore_cuts": {
+      "type": "array",
+      "description": "Вернуть вырезанные по времени отрезки прошлых версий: номера из списка «Вырезанные по времени отрезки».",
+      "items": {"type": "integer", "minimum": 0}
+    },
+    "add_titles": {
+      "type": "array",
+      "description": "Добавить подписи упражнений поверх видео («Выпады — 12 раз»). Начало — word (индекс слова, где тренер называет упражнение) или start_seconds; конец — end_seconds или, без него, до следующей подписи. Время не выдумывай: если момент упражнения не понять ни из речи, ни из подписи, перенеси его в untimed_titles.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "minLength": 1, "maxLength": 40},
+          "word": {"type": "integer", "minimum": 0},
+          "start_seconds": {"type": "number", "minimum": 0},
+          "end_seconds": {"type": "number", "minimum": 0}
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      }
+    },
+    "change_titles": {
+      "type": "array",
+      "description": "Изменить подписи упражнений по номеру из списка «Подписи упражнений»: новый текст и/или новое время (заданные поля заменяют старые).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "index": {"type": "integer", "minimum": 0},
+          "text": {"type": "string", "maxLength": 40},
+          "word": {"type": "integer", "minimum": 0},
+          "start_seconds": {"type": "number", "minimum": 0},
+          "end_seconds": {"type": "number", "minimum": 0}
+        },
+        "required": ["index"],
+        "additionalProperties": false
+      }
+    },
+    "remove_titles": {
+      "type": "array",
+      "description": "Убрать подписи упражнений: номера из списка «Подписи упражнений».",
+      "items": {"type": "integer", "minimum": 0}
+    },
+    "untimed_titles": {
+      "type": "array",
+      "description": "Упражнения из подписи тренера, момент которых не удалось определить: подпись не ставится, тренер получит подсказку добавить её правкой с временем.",
+      "items": {"type": "string", "minLength": 1, "maxLength": 40}
+    },
+    "mute": {
+      "type": "boolean",
+      "description": "true — убрать звук исходника (и субтитры речи), например если в зале играла музыка; false — вернуть звук. Не указывай, чтобы оставить как есть."
     },
     "fix_words": {
       "type": "array",

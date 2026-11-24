@@ -14,19 +14,36 @@ const (
 	// maxChangeLines in the description of a draft; the rest is counted.
 	maxChangeLines = 6
 	// maxQuoteRunes of a quoted fragment.
-	maxQuoteRunes = 60
-	tenths        = 10
-	float64Bits   = 64
+	maxQuoteRunes    = 60
+	tenths           = 10
+	secondsPerMinute = 60
+	float64Bits      = 64
 	// sentenceMarks closing a quoted phrase are dropped: «…ровно».
 	sentenceMarks = ".!?,;:"
 )
 
-// describeChanges are the sentences for the trainer about what this decision changed: the trim, the fragments cut
-// and brought back, the takes chosen (a revision; the first version counts the repeats itself) and the corrected
-// words. No indices, times of the source or technical words.
-func describeChanges(req *Request, in *Input, trimmed *trim) []string {
+// Lines about the mode and the sound.
+const (
+	workoutModeLine = "Монтирую как тренировку: паузы и молчаливые отрезки не вырезаю."
+	talkModeLine    = "Монтирую как разговорный ролик: вырезаю паузы, оговорки и неудачные дубли."
+	muteLine        = "Убрал звук исходника и субтитры речи — трек добавьте в Instagram."
+	unmuteLine      = "Вернул звук исходника и субтитры речи."
+)
+
+// describeChanges are the sentences for the trainer about what this decision changed: the mode, the trim, the
+// fragments cut and brought back, the takes chosen (a revision; the first version counts the repeats itself), the
+// corrected words, the exercise titles (a revision; the first version lists them all) and the sound. No indices, times
+// of the source or technical words: times are those of the timeline the trainer gave (the reel of a revision).
+func describeChanges(req *Request, in *Input, trimmed *trim, shown []roughcut.Title) []string {
 	words := req.Transcript.Words
 	lines := make([]string, 0, maxChangeLines)
+	previous := previousEdit(req.Plan)
+
+	if mode := nextMode(req, in); req.IsRevision() && mode != previous.Mode.Effective() {
+		lines = append(lines, map[roughcut.Mode]string{
+			roughcut.WorkoutMode: workoutModeLine, roughcut.TalkMode: talkModeLine,
+		}[mode])
+	}
 
 	if trimmed.start > 0 {
 		lines = append(lines, "Обрезал начало: убрал "+secondsText(trimmed.start, "первую секунду", "первые")+".")
@@ -51,6 +68,16 @@ func describeChanges(req *Request, in *Input, trimmed *trim) []string {
 	for _, f := range in.FixWords {
 		lines = append(lines, fmt.Sprintf("Исправил в субтитрах: «%s» → «%s».",
 			currentWord(req, f.Index), strings.TrimSpace(f.Text)))
+	}
+
+	lines = append(lines, timeCutLines(&previous, in)...)
+
+	if req.IsRevision() {
+		lines = append(lines, titleChangeLines(&previous, in, shown)...)
+	}
+
+	if in.Mute != nil && *in.Mute != previous.Mute {
+		lines = append(lines, map[bool]string{true: muteLine, false: unmuteLine}[*in.Mute])
 	}
 
 	if len(lines) > maxChangeLines {
@@ -99,4 +126,76 @@ func secondsText(seconds float64, one, many string) string {
 	}
 
 	return many + " " + strings.Replace(strconv.FormatFloat(rounded, 'f', -1, float64Bits), ".", ",", 1) + " с"
+}
+
+// timeCutLines: «Вырезал отрезок 0:15–0:20.» for every cut by time, «Вернул вырезанный ранее отрезок (2,5 с).» for every
+// brought back one.
+func timeCutLines(previous *roughcut.Edit, in *Input) []string {
+	lines := make([]string, 0, len(in.CutSeconds)+len(in.RestoreCuts))
+
+	for _, r := range in.CutSeconds {
+		lines = append(lines, fmt.Sprintf("Вырезал отрезок %s–%s.", clock(r.From), clock(r.To)))
+	}
+
+	for _, i := range in.RestoreCuts {
+		iv := previous.CutTime[i]
+		lines = append(lines, "Вернул вырезанный ранее отрезок ("+durationText(iv.End-iv.Start)+").")
+	}
+
+	return lines
+}
+
+// titleChangeLines describe the changes of the exercise titles of a revision; times are on the new reel (shown).
+func titleChangeLines(previous *roughcut.Edit, in *Input, shown []roughcut.Title) []string {
+	lines := make([]string, 0, len(in.AddTitles)+len(in.ChangeTitles)+len(in.RemoveTitles))
+
+	for _, c := range in.ChangeTitles {
+		old := previous.Titles[c.Index]
+
+		text := old.Text
+		if t := strings.TrimSpace(c.Text); t != "" && t != old.Text {
+			lines = append(lines, fmt.Sprintf("Переименовал подпись «%s» → «%s».", old.Text, t))
+			text = t
+		}
+
+		if c.Word != nil || c.Start != nil || c.End != nil {
+			lines = append(lines, fmt.Sprintf("Сдвинул подпись «%s»: теперь с %s.", text, reelClock(shown, text)))
+		}
+	}
+
+	for _, i := range in.RemoveTitles {
+		lines = append(lines, "Убрал подпись «"+previous.Titles[i].Text+"».")
+	}
+
+	for _, a := range in.AddTitles {
+		text := strings.TrimSpace(a.Text)
+		lines = append(lines, fmt.Sprintf("Добавил подпись «%s» с %s.", text, reelClock(shown, text)))
+	}
+
+	return lines
+}
+
+// reelClock is when the title with the text starts in the new reel.
+func reelClock(shown []roughcut.Title, text string) string {
+	for _, t := range shown {
+		if t.Text == text {
+			return clock(t.Start)
+		}
+	}
+
+	return "—"
+}
+
+// clock formats seconds as m:ss.
+func clock(seconds float64) string {
+	total := int(math.Round(max(seconds, 0)))
+
+	return fmt.Sprintf("%d:%02d", total/secondsPerMinute, total%secondsPerMinute)
+}
+
+// durationText: «2,5 с» (tenths, at least 0,1 с).
+func durationText(seconds float64) string {
+	rounded := max(math.Round(seconds*tenths)/tenths, 1.0/tenths)
+
+	return strings.Replace(strconv.FormatFloat(rounded, 'f', -1, float64Bits), ".", ",", 1) + " с"
 }

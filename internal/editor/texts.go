@@ -8,6 +8,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/editjob"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
+	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
 const (
@@ -18,6 +19,8 @@ const (
 	maxCaptionRunes = 300
 	// noCutSeconds: less than this cut is "nothing to cut".
 	noCutSeconds = 0.5
+	// maxTitleLines of the exercise titles listed in the description; the rest is counted.
+	maxTitleLines = 8
 )
 
 // Texts for the trainer. A failure is shown after «Не получилось выполнить задачу.» (tasks).
@@ -41,8 +44,8 @@ const (
 	// cannotRevisionText and unclearRevisionText: a revision the editor cannot do or did not understand (shown after
 	// «Не получилось применить правку.» above the previous draft).
 	// The note ends with «Можно одобрить эту версию или дать правку ещё раз.», so these texts do not ask for it again.
-	cannotRevisionText = "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль и поправить " +
-		"слово в субтитрах."
+	cannotRevisionText = "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль, поправить " +
+		"слово в субтитрах, подписать упражнения и убрать звук."
 	unclearRevisionText = "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или " +
 		"„оставь второй дубль“."
 	// modelFailedText: the decision failed for a technical reason after all the retries of the task.
@@ -62,9 +65,17 @@ const (
 		"смонтирую заново."
 	// captionCannotNote and captionUnclearNote: the first draft is made without the caption's instruction.
 	captionCannotNote = "Подпись как указание к монтажу не применил: такое я пока не умею. Могу обрезать, убрать или " +
-		"вернуть фрагмент, выбрать дубль и поправить слово в субтитрах — ответьте на черновик правкой."
+		"вернуть фрагмент, выбрать дубль, поправить слово в субтитрах, подписать упражнения и убрать звук — ответьте " +
+		"на черновик правкой."
 	captionUnclearNote = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
 		"правка, ответьте на черновик, например: „убери первые 3 секунды“."
+	// workoutFallbackNote: a source with little speech, the decision failed on our side: the whole video is the draft.
+	workoutFallbackNote = "Смонтировал как тренировку, ничего не вырезая: разобрать подпись и речь не получилось из-за " +
+		"технической ошибки. Обрезать, подписать упражнения или убрать звук можно правкой — ответьте на черновик."
+	// titlesHint: a workout without exercise titles.
+	titlesHint = "Подписи упражнений можно добавить правкой с временем, например: „подпиши выпады с 0:15 до 0:45“."
+	// titlesHeader goes before the list of the exercise titles of a workout.
+	titlesHeader = "Подписи упражнений:"
 )
 
 // forVersion is the text of the first version or of a revision.
@@ -131,6 +142,10 @@ func Describe(r *editjob.Result, version int, caption string, summary *editjob.S
 		return describeRevision(r, summary)
 	}
 
+	if summary != nil && summary.Mode == roughcut.WorkoutMode {
+		return describeWorkout(r, caption, summary)
+	}
+
 	lines := make([]string, 0, 3)
 
 	removed := r.SourceDuration - r.Duration
@@ -185,21 +200,38 @@ var captionNotes = map[editplan.OutcomeKind]string{
 }
 
 // firstSummary is the summary of a decided first version: what the caption changed, how the disputed repeats were
-// decided, and why the caption was not applied if it was not.
+// decided, and why the caption was not applied if it was not. A workout gets its mode, its exercise titles (or a hint
+// how to add them) and, when the decision failed, a note that the whole video was kept.
 func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Summary {
 	candidates := len(req.Plan.Candidates)
 	summary := &editjob.Summary{}
+
+	workout := isWorkout(req.Plan)
+	if outcome.Kind == editplan.EditOutcome {
+		workout = outcome.Mode == roughcut.WorkoutMode
+	}
+
+	if workout {
+		summary.Mode = roughcut.WorkoutMode
+	}
 
 	if outcome.Kind != editplan.EditOutcome {
 		if candidates > 0 {
 			summary.Changes = []string{fmt.Sprintf("Спорные повторы оставил в ролике: %d.", candidates)}
 		}
 
-		if strings.TrimSpace(req.Caption) != "" {
+		switch {
+		case workout && outcome.Kind == editplan.FailedOutcome:
+			summary.Note = workoutFallbackNote
+		case strings.TrimSpace(req.Caption) != "":
 			summary.Note = captionNotes[outcome.Kind]
 			if summary.Note == "" {
 				summary.Note = captionUnclearNote
 			}
+		}
+
+		if workout && summary.Note != workoutFallbackNote {
+			summary.Changes = append(summary.Changes, titlesHint)
 		}
 
 		return summary
@@ -212,7 +244,88 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 			outcome.Cut, candidates-outcome.Cut))
 	}
 
+	if workout {
+		summary.Changes = append(summary.Changes, titleLines(outcome)...)
+	}
+
 	return summary
+}
+
+// isWorkout: the plan is in the workout mode (the worker planned a source with little speech so).
+func isWorkout(plan *roughcut.Plan) bool {
+	return plan.Edit != nil && plan.Edit.Mode == roughcut.WorkoutMode
+}
+
+// titleLines list the exercise titles of a workout with their time (at most maxTitleLines), name the exercises the
+// editor could not place in time, or, without titles, say how to add them.
+func titleLines(outcome *editplan.Outcome) []string {
+	var lines []string
+
+	if len(outcome.Titles) > 0 {
+		lines = append(lines, titlesHeader)
+
+		shown := outcome.Titles
+		if len(shown) > maxTitleLines {
+			shown = shown[:maxTitleLines-1]
+		}
+
+		lines = append(lines, shown...)
+
+		if rest := len(outcome.Titles) - len(shown); rest > 0 {
+			lines = append(lines, fmt.Sprintf("И ещё подписей: %d.", rest))
+		}
+	}
+
+	if len(outcome.Untimed) > 0 {
+		names := make([]string, 0, len(outcome.Untimed))
+		for _, name := range outcome.Untimed {
+			names = append(names, "«"+name+"»")
+		}
+
+		return append(lines, untimedNote(names))
+	}
+
+	if len(outcome.Titles) == 0 {
+		lines = append(lines, titlesHint)
+	}
+
+	return lines
+}
+
+// untimedNote: «Не поставил подписи «Выпады», «Планка»: не понял, в какой момент их показать. …»
+func untimedNote(names []string) string {
+	return "Не поставил подписи " + strings.Join(names, ", ") + ": не понял, в какой момент их показать. " +
+		"Добавьте их правкой с временем, например: „подпиши выпады с 0:15 до 0:45“."
+}
+
+// describeWorkout is the description of the first version of a workout: the whole video or what was cut, the changes,
+// the titles, the caption and the note.
+func describeWorkout(r *editjob.Result, caption string, summary *editjob.Summary) string {
+	header := fmt.Sprintf("Черновик тренировки готов: %s — ролик целиком, паузы и молчаливые отрезки не вырезал.",
+		clock(r.Duration))
+
+	if removed := r.SourceDuration - r.Duration; removed >= noCutSeconds {
+		header = fmt.Sprintf("Черновик тренировки готов: было %s, стало %s — паузы и молчаливые отрезки оставил, "+
+			"убрал только указанное (%s).", clock(r.SourceDuration), clock(r.Duration), clock(removed))
+	}
+
+	lines := append([]string{header}, summary.Changes...)
+
+	if text := strings.TrimSpace(caption); text != "" {
+		lines = append(lines, "Ваша подпись к исходнику: «"+truncate(text, maxCaptionRunes)+"»")
+	}
+
+	if summary.Note != "" {
+		lines = append(lines, summary.Note)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// longReelNote: the draft is longer than Instagram publishes as a reel; it is not refused, the trainer decides.
+func longReelNote(limit float64) string {
+	return fmt.Sprintf("Ролик длится дольше %s — Instagram может не опубликовать его как рилс. Если нужно короче, "+
+		"ответьте на черновик, например: „обрежь до %s“.", minutesText(limit), minutesText(limit))
 }
 
 // clock formats seconds as m:ss.
