@@ -21,8 +21,8 @@ var Module = fx.Module("ideas",
 	fx.Provide(newRepo, NewExecutor, asAgentRunner, asCardStore, fx.Private),
 )
 
-// Route sends the marketer's idea tasks to Executor (a part of Module; internal.TestTaskRoutes checks it is in the
-// group).
+// Route sends the marketer's idea tasks to Executor (a part of Module; internal.TestTaskRoutes builds Module and
+// checks the group).
 var Route = fx.Provide(fx.Annotate(newRoute, fx.ResultTags(tasks.RoutesGroup)))
 
 // newRoute sends the marketer's tasks of TaskKind to Executor.

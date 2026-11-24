@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service has `ListForPlan` and `MarkPlanned`. An approved idea whose save failed is restored by the next list. Ideas in
   plain messages without `/idea` are not recognized on purpose. A card keeps its draft text (`idea_cards.content`): an
   idea is made only of the card that is the approved draft in `task_versions`, and a stored version's card is not
-  replaced by a stale run. A forwarded `/idea` is marked as someone else's words in the prompt; forwarded `/idea_done`
+  replaced by a stale run. A forwarded `/idea` is marked as someone else's words in the prompt and flagged in `ideas.forwarded` (the mark is not
+  kept in `source_text`); forwarded `/idea_done`
   and `/idea_drop` are not run. A revision of an idea made before the backlog fails at once with a clear text; a card
   the model could not revise gets its own text. Dates for the trainer are in `TEAM_TIMEZONE` (default
   `Europe/Moscow`; the time zone database is built in).

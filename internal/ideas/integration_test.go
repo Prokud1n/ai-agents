@@ -26,6 +26,7 @@ type ideaTask struct {
 	version int
 	kind    string
 	message int64
+	input   string // testIdeaText when empty
 }
 
 // insertTask writes a task as the task service would have left it and returns its ID.
@@ -36,12 +37,16 @@ func insertTask(t *testing.T, db *postgres.Client, task ideaTask) int64 {
 		task.kind = TaskKind
 	}
 
+	if task.input == "" {
+		task.input = testIdeaText
+	}
+
 	var id int64
 
 	require.NoError(t, db.GetWriteConnection().QueryRow(context.Background(), `
 		INSERT INTO tasks (agent, kind, input, source_chat_id, source_message_id, status, version)
 		VALUES ($1, $2, $3, -100, $4, $5, $6) RETURNING id`,
-		AgentName, task.kind, testIdeaText, task.message, task.status, task.version).Scan(&id))
+		AgentName, task.kind, task.input, task.message, task.status, task.version).Scan(&id))
 
 	return id
 }
@@ -111,6 +116,7 @@ func TestIntegrationSaveApprovedIdea(t *testing.T) {
 	assert.Equal(t, second, idea.Card)
 	assert.Equal(t, 2, idea.TaskVersion)
 	assert.Equal(t, testIdeaText, idea.SourceText)
+	assert.False(t, idea.Forwarded)
 	assert.Equal(t, NewStatus, idea.Status)
 
 	// A repeated press and concurrent ones: the same idea, no duplicate.
@@ -227,6 +233,27 @@ func TestIntegrationStaleCardIsNotSaved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, list)
 	assert.Zero(t, total)
+}
+
+// TestIntegrationForwardedIdea: the forwarded mark of the task input is not a part of the words, it is a flag.
+func TestIntegrationForwardedIdea(t *testing.T) {
+	t.Parallel()
+
+	db := pgtest.Connect(t)
+	s := newTestService(db)
+	ctx := context.Background()
+
+	taskID := insertTask(t, db, ideaTask{
+		status: approvedTask, version: 1, message: 1, input: ForwardedInput("чужая идея про сон"),
+	})
+	require.NoError(t, s.SaveCard(ctx, taskID, 1, new(validCard())))
+	storeVersion(t, db, taskID, 1, FormatCard(new(validCard())))
+
+	idea, created, err := s.SaveApproved(ctx, taskID)
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Equal(t, "чужая идея про сон", idea.SourceText)
+	assert.True(t, idea.Forwarded)
 }
 
 func TestIntegrationIdeaStatuses(t *testing.T) {

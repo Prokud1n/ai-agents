@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +9,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 
+	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editor"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
@@ -62,19 +64,20 @@ func TestApplicationWiresGatewayToTasks(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestTaskRoutes builds the routes the editor and the ideas modules put into tasks.RoutesGroup (editor.Route and
-// ideas.Route are parts of their modules): without the group tag their tasks would silently go to the agents' model.
+// TestTaskRoutes builds the routes put into tasks.RoutesGroup: without the group tag (or the route left out of its
+// module) the tasks would silently go to the agents' model. The real ideas.Module is built with empty dependencies
+// (its constructors do no I/O); the editor's module needs much more, so its part editor.Route is built alone.
 func TestTaskRoutes(t *testing.T) {
 	t.Parallel()
 
-	editorExecutor, ideaExecutor := &editor.Executor{}, &ideas.Executor{}
+	editorExecutor := &editor.Executor{}
 
 	var routes []tasks.Route
 
 	app := fxtest.New(t,
+		ideas.Module,
 		editor.Route,
-		ideas.Route,
-		fx.Supply(editorExecutor, ideaExecutor),
+		fx.Supply(editorExecutor, &postgres.Client{}, &agents.Runtime{}, slog.New(slog.DiscardHandler)),
 		fx.Invoke(fx.Annotate(func(group []tasks.Route) { routes = group }, fx.ParamTags(tasks.RoutesGroup))),
 	)
 	app.RequireStart()
@@ -85,10 +88,9 @@ func TestTaskRoutes(t *testing.T) {
 		byKey[r.Agent+"/"+r.Kind] = r.Executor
 	}
 
-	assert.Equal(t, map[string]tasks.Executor{
-		editor.AgentName + "/":                 editorExecutor,
-		ideas.AgentName + "/" + ideas.TaskKind: ideaExecutor,
-	}, byKey)
+	require.Len(t, byKey, 2)
+	assert.Same(t, editorExecutor, byKey[editor.AgentName+"/"])
+	assert.IsType(t, &ideas.Executor{}, byKey[ideas.AgentName+"/"+ideas.TaskKind])
 
 	_, err := tasks.NewRoutingExecutor(nil, routes)
 	require.NoError(t, err, "the routes do not overlap")

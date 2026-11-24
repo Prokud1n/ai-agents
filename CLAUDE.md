@@ -117,7 +117,7 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   `tasks.RoutesGroup` (`fx.ResultTags`), декорировать `tasks.Executor` не нужно. Маршрут агента и вида задачи важнее
   маршрута агента; пустой `Kind` — все задачи агента. Сейчас: `editor` → `editor.Executor`, `marketer`/`idea` →
   `ideas.Executor`, остальное — `AgentExecutor`. Маршрут модуля — экспортируемая опция (`editor.Route`, `ideas.Route`)
-  внутри его `Module`; `internal.TestTaskRoutes` проверяет, что они попадают в группу. Тест может подменить
+  внутри его `Module`; `internal.TestTaskRoutes` собирает настоящий `ideas.Module` (и `editor.Route`) и проверяет группу. Тест может подменить
   `tasks.Executor` целиком через `fx.Decorate`.
 - Команды тренера — всегда от бота Маркетолога (`gateway.isTeamCommand`, разбор в `teamchat.Handler.handleCommand`):
   `/plan`, `/idea` — задачи; `/status`, `/ideas`, `/idea_done N`, `/idea_drop N`, `/pause` — ответ сразу, без задачи и
@@ -130,7 +130,8 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   собирает `ideas.FormatCard` и он же хранится в `idea_cards.content`. Идея делается только из карточки, чей `content`
   совпадает с одобренной версией в `task_versions` (иначе карточку записал устаревший прогон: `ErrCardMismatch`, лог),
   а карточку версии, уже сохранённой в `task_versions`, upsert не перезаписывает (`ErrVersionStored`). Пересланная
-  `/idea` помечается в Input (`ideas.ForwardedInput`), промпт говорит, что это чужие слова; пересланные
+  `/idea` помечается в Input (`ideas.ForwardedInput`), промпт говорит, что это чужие слова, а в `ideas` метка не попадает
+  в `source_text` — вместо неё флаг `forwarded`; пересланные
   `/idea_done`/`/idea_drop` не выполняются. Правка идеи без карточки прошлой версии (идея до бэклога) —
   `PermanentError` с текстом. Даты для тренера — в `TEAM_TIMEZONE` (`config.Team`, tzdata встроена). `teamchat.Notifier` подписывает «Одобрить» у `idea` как «В бэклог» (`tasks.Draft.Kind`)
   и не пишет «Одобрено.» — номер идеи сообщает `Handler.approveIdea` после `Service.SaveApproved` (вставка из карточки
@@ -139,7 +140,8 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   одобренных задач, сохранение которых упало (`SyncApproved`). Статусы: `new` → `planned` → `done`/`dropped`
   (закрыть можно и из `new`); изменения — `UpdaterFn` под `SELECT … FOR UPDATE`.
   **Для `/plan` (T2.2):** возьми `ideas.Service.ListForPlan(ctx, limit)` (новые, старые первыми), передай их модели как
-  данные (номер, заголовок, суть, формат, хук), после одобрения плана — `MarkPlanned(ctx, ids)` с номерами идей,
+  данные (номер, заголовок, суть, формат, хук; `Idea.SourceText` — слова после `/idea` без метки пересылки,
+  `Idea.Forwarded` — идея пришла пересланным чужим сообщением, так и скажи модели), после одобрения плана — `MarkPlanned(ctx, ids)` с номерами идей,
   попавших в план (закрытые и уже запланированные пропускаются).
 - Закрывающие теги блоков данных в промптах — `pkg/helpers.ClosingTag`/`EscapeClosingTag` (любой регистр, пробелы
   внутри тега: `< /tag >`); своих регулярок не заводи.

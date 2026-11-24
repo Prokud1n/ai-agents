@@ -30,7 +30,8 @@ CREATE TABLE ideas (
     format       text        NOT NULL CHECK (format IN ('talk', 'workout', 'carousel', 'other')),
     format_note  text        NOT NULL DEFAULT '',
     hook         text        NOT NULL,
-    source_text  text        NOT NULL,             -- the trainer's words after /idea
+    source_text  text        NOT NULL,             -- the words after /idea, without the forwarded mark
+    forwarded    boolean     NOT NULL DEFAULT false, -- the /idea came in a forwarded message: someone else's words
     -- new: in the backlog; planned: taken into a content plan (/plan); done: made; dropped: not needed.
     status       text        NOT NULL CHECK (status IN ('new', 'planned', 'done', 'dropped')),
     created_at   timestamptz NOT NULL DEFAULT now(),

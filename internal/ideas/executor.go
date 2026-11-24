@@ -15,7 +15,7 @@ const (
 	// noCardText: the marketer could not make a valid card of a new idea in all the attempts.
 	noCardText = "Маркетолог не смог оформить карточку идеи. Отправьте идею ещё раз командой /idea."
 	// noRevisedCardText: the same for a revision; the previous card comes back with this note.
-	noRevisedCardText = "Маркетолог не смог переделать карточку. Попробуйте сформулировать правку иначе."
+	noRevisedCardText = "Маркетолог не смог переделать карточку."
 	// noPreviousCardText: a revision of an idea made before the backlog (its draft has no card).
 	noPreviousCardText = "Эту идею Маркетолог оформил до появления бэклога, её карточку не переделать. Пришлите идею " +
 		"заново командой /idea."

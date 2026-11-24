@@ -297,7 +297,11 @@ func ideaNumberHint(command gateway.Command) string {
 
 // forwardedCommandText answers a forwarded /idea_done or /idea_drop: it is someone else's message, not run.
 func forwardedCommandText(command gateway.Command) string {
-	return fmt.Sprintf("Пересланные команды не выполняю. Чтобы отметить идею, отправьте /%s N сами.", command)
+	if command == gateway.IdeaDropCommand {
+		return "Пересланные команды не выполняю. Чтобы убрать идею, отправьте /idea_drop N сами."
+	}
+
+	return "Пересланные команды не выполняю. Чтобы отметить идею, отправьте /idea_done N сами."
 }
 
 func ideaNotFoundText(id int64) string {

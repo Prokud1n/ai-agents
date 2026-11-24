@@ -216,7 +216,7 @@ func TestHandlerIdeaCommands(t *testing.T) {
 			backlog: &fakeIdeas{},
 			event:   forwarded(commandEvent(gateway.IdeaDropCommand, "5")),
 			expected: ideaCalls{handler: handlerCalls{texts: []sentText{reply(gateway.MarketerRole,
-				"Пересланные команды не выполняю. Чтобы отметить идею, отправьте /idea_drop N сами.")}}},
+				"Пересланные команды не выполняю. Чтобы убрать идею, отправьте /idea_drop N сами.")}}},
 		},
 		{
 			name:    "no number",

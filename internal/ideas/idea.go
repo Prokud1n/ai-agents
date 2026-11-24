@@ -64,8 +64,9 @@ type Idea struct {
 	TaskID      int64
 	TaskVersion int
 	Card        Card
-	// SourceText is the trainer's words after /idea.
+	// SourceText is the words after /idea; Forwarded: they came in a forwarded message (someone else's words).
 	SourceText string
+	Forwarded  bool
 	Status     Status
 	CreatedAt  time.Time
 	UpdatedAt  time.Time

@@ -19,19 +19,22 @@ func newRepo(db *postgres.Client) *repo {
 	return &repo{db: db}
 }
 
-const ideaColumns = `id, task_id, task_version, title, summary, format, format_note, hook, source_text, status,
-	created_at, updated_at`
+const ideaColumns = `id, task_id, task_version, title, summary, format, format_note, hook, source_text, forwarded,
+	status, created_at, updated_at`
 
 const selectIdea = `SELECT ` + ideaColumns + ` FROM ideas`
 
 // insertApproved makes ideas of the approved idea tasks that have none: the card of the approved (latest) version,
-// the task's input as the trainer's words. The tasks are read from the tasks table: an idea exists only for a task
+// the task's input as the words of the idea (a forwarded idea loses its mark and is flagged). The tasks are read from the tasks table: an idea exists only for a task
 // approved there, and only of the card whose content is the approved draft (task_versions), so a card written by a
-// stale run of the version never reaches the backlog. $1 is the time, $2 the task (NULL: every such task).
+// stale run of the version never reaches the backlog. $1 is the time, $2 the task (NULL: every such task), $3 the
+// forwarded mark (forwardedMark).
 const insertApproved = `
-	INSERT INTO ideas (task_id, task_version, title, summary, format, format_note, hook, source_text, status,
-	                   created_at, updated_at)
-	SELECT c.task_id, c.version, c.title, c.summary, c.format, c.format_note, c.hook, t.input, 'new', $1, $1
+	INSERT INTO ideas (task_id, task_version, title, summary, format, format_note, hook, source_text, forwarded,
+	                   status, created_at, updated_at)
+	SELECT c.task_id, c.version, c.title, c.summary, c.format, c.format_note, c.hook,
+	       CASE WHEN starts_with(t.input, $3) THEN substr(t.input, char_length($3) + 1) ELSE t.input END,
+	       starts_with(t.input, $3), 'new', $1, $1
 	FROM tasks t
 	JOIN idea_cards c ON c.task_id = t.id AND c.version = t.version
 	JOIN task_versions v ON v.task_id = c.task_id AND v.version = c.version AND v.content = c.content
@@ -45,7 +48,7 @@ func scanIdea(row pgx.Row) (Idea, error) {
 	var i Idea
 
 	err := row.Scan(&i.ID, &i.TaskID, &i.TaskVersion, &i.Card.Title, &i.Card.Summary, &i.Card.Format,
-		&i.Card.FormatNote, &i.Card.Hook, &i.SourceText, &i.Status, &i.CreatedAt, &i.UpdatedAt)
+		&i.Card.FormatNote, &i.Card.Hook, &i.SourceText, &i.Forwarded, &i.Status, &i.CreatedAt, &i.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Idea{}, ErrNotFound
 	}
@@ -138,7 +141,7 @@ func (r *repo) GetByTask(ctx context.Context, taskID int64) (Idea, error) {
 // InsertApproved makes the idea of an approved task; false when the task already has one (or is not an approved idea
 // task with a card: the caller tells these apart).
 func (r *repo) InsertApproved(ctx context.Context, taskID int64, now time.Time) (bool, error) {
-	tag, err := r.db.GetWriteConnection().Exec(ctx, insertApproved, now, taskID)
+	tag, err := r.db.GetWriteConnection().Exec(ctx, insertApproved, now, taskID, forwardedMark)
 	if err != nil {
 		return false, fmt.Errorf("failed to insert idea of task %d: %w", taskID, err)
 	}
@@ -168,7 +171,7 @@ func (r *repo) CardMismatch(ctx context.Context, taskID int64) (bool, error) {
 
 // SyncApproved makes the ideas of every approved idea task that has none (its save after the approval failed).
 func (r *repo) SyncApproved(ctx context.Context, now time.Time) (int64, error) {
-	tag, err := r.db.GetWriteConnection().Exec(ctx, insertApproved, now, nil)
+	tag, err := r.db.GetWriteConnection().Exec(ctx, insertApproved, now, nil, forwardedMark)
 	if err != nil {
 		return 0, fmt.Errorf("failed to sync approved ideas: %w", err)
 	}

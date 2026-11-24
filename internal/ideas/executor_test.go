@@ -222,8 +222,7 @@ func TestExecutor(t *testing.T) {
 				var temporary *tasks.TemporaryError
 
 				require.ErrorAs(t, err, &temporary)
-				assert.Equal(t, "Маркетолог не смог переделать карточку. Попробуйте сформулировать правку иначе.",
-					temporary.Message)
+				assert.Equal(t, "Маркетолог не смог переделать карточку.", temporary.Message)
 			},
 		},
 		{
