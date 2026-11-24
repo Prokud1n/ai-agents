@@ -282,9 +282,9 @@ func trimWords(req *Request, trimStart, trimEnd float64) trim {
 }
 
 // timeline places the words: on the source for the first version, on the current reel for a revision.
-func timeline(req *Request) ([]span, float64) {
+func timeline(req *Request) (spans []span, total float64) {
 	words := req.Transcript.Words
-	spans := make([]span, len(words))
+	spans = make([]span, len(words))
 
 	if !req.IsRevision() {
 		for i, w := range words {

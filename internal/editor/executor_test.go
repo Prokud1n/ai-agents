@@ -218,6 +218,9 @@ func revisionData() *tasks.ExecuteData {
 	return data
 }
 
+// leftOneRepeat: the first draft kept the disputed repeat of testPlan.
+const leftOneRepeat = "Спорные повторы оставил в ролике: 1."
+
 // testPlan is the plan the worker stored: 45 s of a 60 s source, one disputed repeat.
 func testPlan() *roughcut.Plan {
 	return &roughcut.Plan{
@@ -538,21 +541,21 @@ func TestExecutorDecidesPlannedJob(t *testing.T) {
 			name:    "the caption cannot be applied: the automatic cut",
 			decider: &fakeDecider{outcome: &editplan.Outcome{Kind: editplan.CannotOutcome, Reason: "музыка"}},
 			expected: &editjob.Summary{
-				Changes: []string{"Спорные повторы оставил в ролике: 1."}, Note: captionCannotNote,
+				Changes: []string{leftOneRepeat}, Note: captionCannotNote,
 			},
 		},
 		{
 			name:    "the model's answer was cut: the automatic cut, a technical note",
 			decider: &fakeDecider{err: fmt.Errorf("run: %w", agents.ErrMaxTokens)},
 			expected: &editjob.Summary{
-				Changes: []string{"Спорные повторы оставил в ролике: 1."}, Note: captionFailedNote,
+				Changes: []string{leftOneRepeat}, Note: captionFailedNote,
 			},
 		},
 		{
 			name:    "the model refused: the automatic cut",
 			decider: &fakeDecider{err: fmt.Errorf("run: %w", agents.ErrRefusal)},
 			expected: &editjob.Summary{
-				Changes: []string{"Спорные повторы оставил в ролике: 1."}, Note: captionUnclearNote,
+				Changes: []string{leftOneRepeat}, Note: captionUnclearNote,
 			},
 		},
 	}

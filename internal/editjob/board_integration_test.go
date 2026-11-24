@@ -339,9 +339,7 @@ func TestIntegrationBoardReplace(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, started, "the render's timeout counts from its own start")
 
-	locked, err = board.Locked(ctx, job.ID)
-	require.NoError(t, err)
-	assert.False(t, locked, "a result means the worker is done: its lock goes too")
+	assertUnlocked(t, board, job.ID)
 
 	stored, found, err := board.Job(ctx, job.ID)
 	require.NoError(t, err)
@@ -357,6 +355,15 @@ func TestIntegrationBoardReplace(t *testing.T) {
 	assert.Equal(t, render.Settings, next.Job.Settings)
 
 	checkRetry(t, board, next, &render)
+}
+
+// assertUnlocked: a replaced result means the worker is done, so its lock goes too.
+func assertUnlocked(t *testing.T, board *Board, id string) {
+	t.Helper()
+
+	locked, err := board.Locked(context.Background(), id)
+	require.NoError(t, err)
+	assert.False(t, locked)
 }
 
 // checkRetry: a render that failed is queued again once, with the same edit and new deadlines.

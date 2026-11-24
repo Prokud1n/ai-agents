@@ -266,13 +266,17 @@ func (r *Runtime) executeTools(
 }
 
 // runTool runs the tool of the block; true when it is a final tool that succeeded.
-func runTool(ctx context.Context, tools []Tool, block *anthropic.ContentBlock) (string, bool, error) {
+func runTool(
+	ctx context.Context,
+	tools []Tool,
+	block *anthropic.ContentBlock,
+) (output string, ends bool, err error) {
 	for _, t := range tools {
 		if t.Name() != block.Name {
 			continue
 		}
 
-		output, err := t.Execute(ctx, block.Input)
+		output, err = t.Execute(ctx, block.Input)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to execute tool %q: %w", block.Name, err)
 		}
