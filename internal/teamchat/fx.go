@@ -35,6 +35,7 @@ type handlerParams struct {
 
 	Lifecycle fx.Lifecycle
 	Config    *config.Telegram
+	Team      *config.Team
 	Service   *tasks.Service
 	Ideas     *ideas.Service
 	Sender    *gateway.Sender
@@ -45,14 +46,19 @@ type handlerParams struct {
 // newHandler registers waiting for the reactions set in the background when the handler is constructed: the
 // gateway that calls the handler is constructed after it, so on stop the gateway stops first and no new
 // reaction starts while they are waited for.
-func newHandler(p handlerParams) *Handler {
-	h := NewHandler(p.Service, p.Sender, p.Files, p.Log)
-	h.ideas = p.Ideas
+func newHandler(p handlerParams) (*Handler, error) {
+	location, err := p.Team.Location()
+	if err != nil {
+		return nil, err
+	}
+
+	h := NewHandler(p.Service, p.Ideas, p.Sender, p.Files, p.Log)
+	h.location = location
 	h.productionTopicID = p.Config.ProductionTopicID
 	h.maxFileSize = p.Config.MaxFileSize
 	p.Lifecycle.Append(fx.Hook{OnStop: h.WaitBackground})
 
-	return h
+	return h, nil
 }
 
 func asMediaStore(s *media.Store) mediaStore {

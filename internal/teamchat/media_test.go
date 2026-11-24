@@ -64,7 +64,7 @@ func TestHandlerAnswersStoredVideoOnStop(t *testing.T) {
 
 	dir := testFilesDir(t)
 	sender := &ctxSender{}
-	h := NewHandler(&fakeService{}, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
+	h := NewHandler(&fakeService{}, nil, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -132,7 +132,7 @@ func TestHandlerWantsMedia(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			h := NewHandler(&fakeService{}, &fakeSender{}, &fakeStore{}, slog.New(slog.DiscardHandler))
+			h := NewHandler(&fakeService{}, nil, &fakeSender{}, &fakeStore{}, slog.New(slog.DiscardHandler))
 
 			assert.Equal(t, tt.expected, h.WantsMedia(tt.input))
 		})
@@ -262,7 +262,7 @@ func TestHandlerMedia(t *testing.T) {
 			}
 
 			sender := &fakeSender{}
-			h := NewHandler(service, sender, store, slog.New(slog.DiscardHandler))
+			h := NewHandler(service, nil, sender, store, slog.New(slog.DiscardHandler))
 			h.productionTopicID, h.maxFileSize = tt.production, 2<<30
 
 			require.NoError(t, h.HandleEvent(t.Context(), tt.event))
@@ -280,7 +280,7 @@ func TestHandlerVideoRedelivery(t *testing.T) {
 
 	dir := testFilesDir(t)
 	store := &fakeStore{}
-	h := NewHandler(&fakeService{}, &fakeSender{}, store, slog.New(slog.DiscardHandler))
+	h := NewHandler(&fakeService{}, nil, &fakeSender{}, store, slog.New(slog.DiscardHandler))
 
 	for range 2 {
 		require.NoError(t, h.HandleEvent(t.Context(),

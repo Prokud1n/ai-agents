@@ -89,12 +89,22 @@ type Handler struct {
 	productionTopicID int64
 	// maxFileSize is TELEGRAM_MAX_FILE_SIZE, for the answer to a larger video; 0: unknown.
 	maxFileSize int64
+	// location is TEAM_TIMEZONE: the dates the trainer reads (/ideas).
+	location *time.Location
 	// background tracks reactions being set; see WaitBackground.
 	background sync.WaitGroup
 }
 
-func NewHandler(service taskService, sender chatSender, files mediaStore, log *slog.Logger) *Handler {
-	return &Handler{tasks: service, sender: sender, files: files, log: log, now: time.Now}
+func NewHandler(
+	service taskService,
+	backlog ideaService,
+	sender chatSender,
+	files mediaStore,
+	log *slog.Logger,
+) *Handler {
+	return &Handler{
+		tasks: service, ideas: backlog, sender: sender, files: files, log: log, now: time.Now, location: time.UTC,
+	}
 }
 
 func (h *Handler) HandleEvent(ctx context.Context, event *gateway.Event) error {
@@ -271,7 +281,12 @@ func (h *Handler) handleCommand(ctx context.Context, event *gateway.Event) error
 			return h.reply(ctx, gateway.MarketerRole, event, emptyIdeaText)
 		}
 
-		// The trainer's words as they are: the idea executor puts them into the prompt as data.
+		// The trainer's words as they are (a forwarded idea is marked): the idea executor puts them into the prompt
+		// as data.
+		if event.Forwarded {
+			idea = ideas.ForwardedInput(idea)
+		}
+
 		return h.createTask(ctx, event, &taskRequest{agent: gateway.MarketerRole, kind: IdeaTaskKind, input: idea})
 	case gateway.IdeasCommand:
 		return h.listIdeas(ctx, event)
@@ -415,6 +430,11 @@ func (h *Handler) approveIdea(
 		h.log.ErrorContext(ctx, "teamchat: failed to save the approved idea", "task_id", cb.TaskID,
 			"version", cb.Version, "error", err)
 
+		// No card to save (an idea made before the backlog, or a card of a stale run): the backlog cannot restore it.
+		if errors.Is(err, ideas.ErrNotFound) || errors.Is(err, ideas.ErrCardMismatch) {
+			return ideaNotSavedAnswer, nil
+		}
+
 		return ideaSaveFailedAnswer, nil
 	}
 
@@ -437,11 +457,15 @@ func (h *Handler) listIdeas(ctx context.Context, event *gateway.Event) error {
 		return h.reply(ctx, gateway.MarketerRole, event, ideasListFailedText)
 	}
 
-	return h.reply(ctx, gateway.MarketerRole, event, formatIdeas(list, total))
+	return h.reply(ctx, gateway.MarketerRole, event, formatIdeas(list, total, h.location))
 }
 
-// closeIdea answers /idea_done N and /idea_drop N.
+// closeIdea answers /idea_done N and /idea_drop N. A forwarded command is not run: it is someone else's message.
 func (h *Handler) closeIdea(ctx context.Context, event *gateway.Event, status ideas.Status) error {
+	if event.Forwarded {
+		return h.reply(ctx, gateway.MarketerRole, event, forwardedCommandText(event.Command))
+	}
+
 	id, ok := parseIdeaNumber(event.Text)
 	if !ok {
 		return h.reply(ctx, gateway.MarketerRole, event, ideaNumberHint(event.Command))

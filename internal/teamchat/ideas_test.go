@@ -16,7 +16,11 @@ import (
 
 const testIdeaID = int64(7)
 
-var testIdeaDate = time.Date(2026, 11, 24, 21, 30, 0, 0, time.UTC)
+// testIdeaDate is late in the evening by UTC and already the next day in Moscow (the team's time zone in the tests).
+var (
+	testIdeaDate = time.Date(2026, 11, 24, 21, 30, 0, 0, time.UTC)
+	moscow       = time.FixedZone("MSK", 3*60*60)
+)
 
 type ideaCalls struct {
 	handler handlerCalls
@@ -34,8 +38,8 @@ func handleIdeas(t *testing.T, service *fakeService, backlog *fakeIdeas, event *
 	}
 
 	sender := &fakeSender{}
-	h := NewHandler(service, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
-	h.ideas = backlog
+	h := NewHandler(service, backlog, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
+	h.location = moscow
 
 	require.NoError(t, h.HandleEvent(t.Context(), event))
 	require.NoError(t, h.WaitBackground(t.Context()))
@@ -113,6 +117,24 @@ func TestHandlerApproveIdea(t *testing.T) {
 			}},
 		},
 		{
+			name:    "no card to save: an idea made before the backlog",
+			service: &fakeService{draftKind: IdeaTaskKind},
+			backlog: &fakeIdeas{saveErr: ideas.ErrNotFound},
+			expected: ideaCalls{
+				handler: handlerCalls{approved: approved, answers: answer(ideaNotSavedAnswer)},
+				saved:   []int64{testTaskID},
+			},
+		},
+		{
+			name:    "the card is not the approved draft",
+			service: &fakeService{draftKind: IdeaTaskKind},
+			backlog: &fakeIdeas{saveErr: ideas.ErrCardMismatch},
+			expected: ideaCalls{
+				handler: handlerCalls{approved: approved, answers: answer(ideaNotSavedAnswer)},
+				saved:   []int64{testTaskID},
+			},
+		},
+		{
 			name:    "save failed after the approval",
 			service: &fakeService{draftKind: IdeaTaskKind},
 			backlog: &fakeIdeas{saveErr: errDatabaseDown},
@@ -151,7 +173,7 @@ func TestHandlerIdeaCommands(t *testing.T) {
 			event:   withTarget(commandEvent(gateway.IdeasCommand, ""), gateway.CopywriterRole),
 			expected: ideaCalls{
 				handler: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, ideasHeader+
-					"\n№2 — Сон и восстановление, 24.11\n\n"+ideasFooter)}},
+					"\n№2 — Сон и восстановление, 25.11\n\n"+ideasFooter)}},
 				limits: []int{ideasListLimit},
 			},
 		},
@@ -181,6 +203,20 @@ func TestHandlerIdeaCommands(t *testing.T) {
 				handler: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, "Идея №5 «Зарядка» убрана из бэклога.")}},
 				closed:  []closeCall{{ID: 5, Status: ideas.DroppedStatus}},
 			},
+		},
+		{
+			name:    "forwarded idea done is not run",
+			backlog: &fakeIdeas{},
+			event:   forwarded(commandEvent(gateway.IdeaDoneCommand, "5")),
+			expected: ideaCalls{handler: handlerCalls{texts: []sentText{reply(gateway.MarketerRole,
+				"Пересланные команды не выполняю. Чтобы отметить идею, отправьте /idea_done N сами.")}}},
+		},
+		{
+			name:    "forwarded idea drop is not run",
+			backlog: &fakeIdeas{},
+			event:   forwarded(commandEvent(gateway.IdeaDropCommand, "5")),
+			expected: ideaCalls{handler: handlerCalls{texts: []sentText{reply(gateway.MarketerRole,
+				"Пересланные команды не выполняю. Чтобы отметить идею, отправьте /idea_drop N сами.")}}},
 		},
 		{
 			name:    "no number",
@@ -253,17 +289,22 @@ func TestFormatIdeas(t *testing.T) {
 		name     string
 		list     []ideas.Idea
 		total    int
+		location *time.Location
 		expected string
 	}{
-		{name: "empty", expected: ideasEmptyText},
+		{name: "empty", location: moscow, expected: ideasEmptyText},
 		{
-			name: "all shown", list: list, total: 2,
-			expected: ideasHeader + "\n№9 — Планка без ошибок, 24.11\n№8 — Завтрак до тренировки, 24.11\n\n" + ideasFooter,
+			name: "all shown", list: list, total: 2, location: moscow,
+			expected: ideasHeader + "\n№9 — Планка без ошибок, 25.11\n№8 — Завтрак до тренировки, 25.11\n\n" + ideasFooter,
 		},
 		{
-			name: "more than the limit", list: list, total: 5,
-			expected: ideasHeader + "\n№9 — Планка без ошибок, 24.11\n№8 — Завтрак до тренировки, 24.11\n…и ещё 3.\n\n" +
+			name: "more than the limit", list: list, total: 5, location: moscow,
+			expected: ideasHeader + "\n№9 — Планка без ошибок, 25.11\n№8 — Завтрак до тренировки, 25.11\n…и ещё 3.\n\n" +
 				ideasFooter,
+		},
+		{
+			name: "the date before midnight in the team's zone", list: list[:1], total: 1, location: time.UTC,
+			expected: ideasHeader + "\n№9 — Планка без ошибок, 24.11\n\n" + ideasFooter,
 		},
 	}
 
@@ -271,7 +312,7 @@ func TestFormatIdeas(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, formatIdeas(tt.list, tt.total))
+			assert.Equal(t, tt.expected, formatIdeas(tt.list, tt.total, tt.location))
 		})
 	}
 }

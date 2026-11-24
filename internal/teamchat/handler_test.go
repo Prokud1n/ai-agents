@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
@@ -340,6 +341,14 @@ func TestHandlerCommands(t *testing.T) {
 			},
 		},
 		{
+			name:  "forwarded idea is marked: the words are not the trainer's",
+			event: forwarded(commandEvent(gateway.IdeaCommand, "чужая идея")),
+			expected: handlerCalls{
+				created:   []tasks.CreateTaskData{taskData(gateway.MarketerRole, IdeaTaskKind, ideas.ForwardedInput("чужая идея"))},
+				reactions: taken(),
+			},
+		},
+		{
 			name:     "idea without text",
 			event:    commandEvent(gateway.IdeaCommand, "  "),
 			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, emptyIdeaText)}},
@@ -367,7 +376,7 @@ func TestHandlerStatusPeriod(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeService{}
-	h := NewHandler(service, &fakeSender{}, &fakeStore{}, slog.New(slog.DiscardHandler))
+	h := NewHandler(service, nil, &fakeSender{}, &fakeStore{}, slog.New(slog.DiscardHandler))
 	h.now = func() time.Time { return testNow }
 
 	require.NoError(t, h.HandleEvent(t.Context(), commandEvent(gateway.StatusCommand, "")))
@@ -523,7 +532,7 @@ func handle(t *testing.T, service *fakeService, sender *fakeSender, event *gatew
 		sender = &fakeSender{}
 	}
 
-	h := NewHandler(service, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
+	h := NewHandler(service, nil, sender, &fakeStore{}, slog.New(slog.DiscardHandler))
 	err := h.HandleEvent(t.Context(), event)
 	require.NoError(t, h.WaitBackground(t.Context()))
 

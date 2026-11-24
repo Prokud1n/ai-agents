@@ -26,14 +26,16 @@ const selectIdea = `SELECT ` + ideaColumns + ` FROM ideas`
 
 // insertApproved makes ideas of the approved idea tasks that have none: the card of the approved (latest) version,
 // the task's input as the trainer's words. The tasks are read from the tasks table: an idea exists only for a task
-// approved there. $1 is the time, $2 the task (NULL: every such task).
+// approved there, and only of the card whose content is the approved draft (task_versions), so a card written by a
+// stale run of the version never reaches the backlog. $1 is the time, $2 the task (NULL: every such task).
 const insertApproved = `
 	INSERT INTO ideas (task_id, task_version, title, summary, format, format_note, hook, source_text, status,
 	                   created_at, updated_at)
 	SELECT c.task_id, c.version, c.title, c.summary, c.format, c.format_note, c.hook, t.input, 'new', $1, $1
 	FROM tasks t
 	JOIN idea_cards c ON c.task_id = t.id AND c.version = t.version
-	WHERE t.status = 'approved' AND t.kind = '` + TaskKind + `'
+	JOIN task_versions v ON v.task_id = c.task_id AND v.version = c.version AND v.content = c.content
+	WHERE t.kind = '` + TaskKind + `' AND t.status = 'approved'
 	  AND ($2::bigint IS NULL OR t.id = $2)
 	  AND NOT EXISTS (SELECT 1 FROM ideas i WHERE i.task_id = t.id)
 	ORDER BY t.updated_at, t.id
@@ -76,21 +78,35 @@ func scanIdeas(rows pgx.Rows) ([]Idea, error) {
 	return list, nil
 }
 
-// SaveCard stores the card of a version; a run of the same version again replaces it.
-func (r *repo) SaveCard(ctx context.Context, taskID int64, version int, card *Card, now time.Time) error {
+// SaveCard stores the card of a version and its draft text; a rerun of the version replaces it while the version is
+// not stored yet. False: the version is already in task_versions (this run is stale), the card is left as it is.
+func (r *repo) SaveCard(
+	ctx context.Context,
+	taskID int64,
+	version int,
+	card *Card,
+	content string,
+	now time.Time,
+) (bool, error) {
 	const upsert = `
-		INSERT INTO idea_cards (task_id, version, title, summary, format, format_note, hook, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+		INSERT INTO idea_cards (task_id, version, title, summary, format, format_note, hook, content, created_at,
+		                        updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 		ON CONFLICT (task_id, version) DO UPDATE
 		SET title = EXCLUDED.title, summary = EXCLUDED.summary, format = EXCLUDED.format,
-		    format_note = EXCLUDED.format_note, hook = EXCLUDED.hook, updated_at = EXCLUDED.updated_at`
+		    format_note = EXCLUDED.format_note, hook = EXCLUDED.hook, content = EXCLUDED.content,
+		    updated_at = EXCLUDED.updated_at
+		WHERE NOT EXISTS (
+			SELECT 1 FROM task_versions v WHERE v.task_id = idea_cards.task_id AND v.version = idea_cards.version
+		)`
 
-	if _, err := r.db.GetWriteConnection().Exec(ctx, upsert, taskID, version, card.Title, card.Summary,
-		string(card.Format), card.FormatNote, card.Hook, now); err != nil {
-		return fmt.Errorf("failed to save idea card of task %d version %d: %w", taskID, version, err)
+	tag, err := r.db.GetWriteConnection().Exec(ctx, upsert, taskID, version, card.Title, card.Summary,
+		string(card.Format), card.FormatNote, card.Hook, content, now)
+	if err != nil {
+		return false, fmt.Errorf("failed to save idea card of task %d version %d: %w", taskID, version, err)
 	}
 
-	return nil
+	return tag.RowsAffected() > 0, nil
 }
 
 func (r *repo) GetCard(ctx context.Context, taskID int64, version int) (Card, error) {
@@ -128,6 +144,26 @@ func (r *repo) InsertApproved(ctx context.Context, taskID int64, now time.Time) 
 	}
 
 	return tag.RowsAffected() > 0, nil
+}
+
+// CardMismatch reports whether the task is an approved idea task whose card of the approved version is not the
+// approved draft (the card of a stale run): such a card is not put into the backlog.
+func (r *repo) CardMismatch(ctx context.Context, taskID int64) (bool, error) {
+	var mismatch bool
+
+	err := r.db.GetReadConnection().QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM tasks t
+			JOIN idea_cards c ON c.task_id = t.id AND c.version = t.version
+			JOIN task_versions v ON v.task_id = c.task_id AND v.version = c.version
+			WHERE t.id = $1 AND t.kind = '`+TaskKind+`' AND t.status = 'approved' AND v.content <> c.content
+		)`, taskID).Scan(&mismatch)
+	if err != nil {
+		return false, fmt.Errorf("failed to check the idea card of task %d: %w", taskID, err)
+	}
+
+	return mismatch, nil
 }
 
 // SyncApproved makes the ideas of every approved idea task that has none (its save after the approval failed).

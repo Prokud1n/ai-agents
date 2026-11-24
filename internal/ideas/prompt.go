@@ -3,6 +3,8 @@ package ideas
 import (
 	"regexp"
 	"strings"
+
+	"github.com/Prokud1n/ai-agents/pkg/helpers"
 )
 
 const (
@@ -13,19 +15,31 @@ const (
 
 // Closing tags of the data blocks in any case and with any spaces, as a model might read them.
 var (
-	ideaClose     = closingTag(ideaTag)
-	previousClose = closingTag(previousTag)
-	revisionClose = closingTag(revisionTag)
+	ideaClose     = helpers.ClosingTag(ideaTag)
+	previousClose = helpers.ClosingTag(previousTag)
+	revisionClose = helpers.ClosingTag(revisionTag)
 )
 
-func closingTag(tag string) *regexp.Regexp {
-	return regexp.MustCompile(`(?i)</\s*` + tag + `\s*>`)
+// forwardedMark starts the task input of an idea forwarded to the group (ForwardedInput): the words are not the
+// trainer's own, and the prompt says so.
+const forwardedMark = "[переслано]\n"
+
+// ForwardedInput is the task input of /idea in a forwarded message.
+func ForwardedInput(text string) string {
+	return forwardedMark + strings.TrimSpace(text)
+}
+
+// splitInput returns the words of the idea and whether they were forwarded.
+func splitInput(input string) (string, bool) {
+	return strings.CutPrefix(input, forwardedMark)
 }
 
 // Request is what the marketer makes a card of.
 type Request struct {
 	// Idea is the trainer's words after /idea.
 	Idea string
+	// Forwarded: the idea came in a forwarded message, the words are someone else's.
+	Forwarded bool
 	// Previous is the card of the previous version and Revision the trainer's revision of it; nil and empty for the
 	// first version.
 	Previous *Card
@@ -39,6 +53,11 @@ func Prompt(req *Request) string {
 
 	b.WriteString("Задача (idea): тренер прислала идею командой /idea. Оформи её карточкой для бэклога и ответь " +
 		"одним вызовом submit_idea — текстом не отвечай.\n\n")
+	if req.Forwarded {
+		b.WriteString("Тренер переслала в группу чужое сообщение с командой /idea: текст ниже — не её слова, а материал, " +
+			"из которого она хочет сделать идею.\n\n")
+	}
+
 	b.WriteString(dataBlock(req.Idea, ideaClose, ideaTag))
 
 	if req.Previous != nil {
@@ -66,7 +85,7 @@ func Prompt(req *Request) string {
 // dataBlock wraps the trimmed text in its tag, breaking every closing tag of the block inside it, so the text
 // cannot end the block early.
 func dataBlock(text string, closing *regexp.Regexp, tag string) string {
-	body := closing.ReplaceAllLiteralString(strings.TrimSpace(text), "<\\/"+tag+">")
+	body := helpers.EscapeClosingTag(text, closing, tag)
 
 	return "<" + tag + ">\n" + body + "\n</" + tag + ">\n"
 }

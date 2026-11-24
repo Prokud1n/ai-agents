@@ -2,6 +2,7 @@ package ideas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -9,8 +10,16 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
-// noCardText is shown to the trainer when the marketer could not make a valid card in all the attempts.
-const noCardText = "Маркетолог не смог оформить карточку идеи. Отправьте идею ещё раз командой /idea."
+// Texts for the trainer when a run makes no card.
+const (
+	// noCardText: the marketer could not make a valid card of a new idea in all the attempts.
+	noCardText = "Маркетолог не смог оформить карточку идеи. Отправьте идею ещё раз командой /idea."
+	// noRevisedCardText: the same for a revision; the previous card comes back with this note.
+	noRevisedCardText = "Маркетолог не смог переделать карточку. Попробуйте сформулировать правку иначе."
+	// noPreviousCardText: a revision of an idea made before the backlog (its draft has no card).
+	noPreviousCardText = "Эту идею Маркетолог оформил до появления бэклога, её карточку не переделать. Пришлите идею " +
+		"заново командой /idea."
+)
 
 type agentRunner interface {
 	Run(ctx context.Context, data *agents.RunAgentData) (*agents.Result, error)
@@ -34,10 +43,15 @@ func NewExecutor(runner agentRunner, cards cardStore, log *slog.Logger) *Executo
 }
 
 func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.Output, error) {
-	req := &Request{Idea: data.Input, Revision: data.Revision}
+	idea, forwarded := splitInput(data.Input)
+	req := &Request{Idea: idea, Forwarded: forwarded, Revision: data.Revision}
 
 	if data.Version > 1 {
 		previous, err := e.cards.GetCard(ctx, data.TaskID, data.Version-1)
+		if errors.Is(err, ErrNotFound) {
+			return tasks.Output{}, &tasks.PermanentError{Message: noPreviousCardText, Err: err}
+		}
+
 		if err != nil {
 			return tasks.Output{}, fmt.Errorf("failed to get the previous idea card: %w", err)
 		}
@@ -78,5 +92,10 @@ func (e *Executor) noCard(ctx context.Context, data *tasks.ExecuteData, result *
 	e.log.WarnContext(ctx, "ideas: the model answered without a card", "task_id", data.TaskID,
 		"version", data.Version, "answer_chars", len([]rune(answer)))
 
-	return &tasks.TemporaryError{Message: noCardText, Err: ErrNoCard}
+	message := noCardText
+	if data.Version > 1 {
+		message = noRevisedCardText
+	}
+
+	return &tasks.TemporaryError{Message: message, Err: ErrNoCard}
 }

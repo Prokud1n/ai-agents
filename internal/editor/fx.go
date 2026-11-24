@@ -15,13 +15,14 @@ import (
 // The editor's tasks go to Executor through a route of tasks.Executor (tasks.RoutesGroup), the rest to the agents as
 // before.
 var Module = fx.Module("editor",
-	fx.Provide(
-		NewExecutor,
-		fx.Annotate(newRoute, fx.ResultTags(tasks.RoutesGroup)),
-	),
+	fx.Provide(NewExecutor),
+	Route,
 	fx.Provide(NewWaker, asBoard, asDoneListener, asStore, asDecider, asTaskWaker, asTechReporter, fx.Private),
 	fx.Invoke(registerWaker),
 )
+
+// Route sends the editor's tasks to Executor (a part of Module; internal.TestTaskRoutes checks it is in the group).
+var Route = fx.Provide(fx.Annotate(newRoute, fx.ResultTags(tasks.RoutesGroup)))
 
 // newRoute sends the editor's tasks to the media worker.
 func newRoute(editor *Executor) tasks.Route {

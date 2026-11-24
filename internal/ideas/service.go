@@ -20,9 +20,19 @@ func NewService(r *repo, log *slog.Logger) *Service {
 	return &Service{repo: r, log: log, now: time.Now}
 }
 
-// SaveCard stores the card of a task version (Executor).
+// SaveCard stores the card of a task version with its draft text (FormatCard) for Executor. A version already stored
+// in the tasks keeps its card: ErrVersionStored.
 func (s *Service) SaveCard(ctx context.Context, taskID int64, version int, card *Card) error {
-	return s.repo.SaveCard(ctx, taskID, version, card, s.now())
+	saved, err := s.repo.SaveCard(ctx, taskID, version, card, FormatCard(card), s.now())
+	if err != nil {
+		return err
+	}
+
+	if !saved {
+		return fmt.Errorf("card of task %d version %d: %w", taskID, version, ErrVersionStored)
+	}
+
+	return nil
 }
 
 // GetCard returns the card of a task version (the previous card of a revision).
@@ -32,7 +42,8 @@ func (s *Service) GetCard(ctx context.Context, taskID int64, version int) (Card,
 
 // SaveApproved puts the card of the approved idea task into the backlog and returns the idea; created is false when
 // the task already has its idea (a repeated press, a redelivery): there is one idea per task. A task that is not an
-// approved idea task with a card of its latest version is ErrNotFound.
+// approved idea task with a card of its latest version is ErrNotFound; a card that is not the approved draft is
+// ErrCardMismatch (logged: it means a stale run wrote the card).
 func (s *Service) SaveApproved(ctx context.Context, taskID int64) (Idea, bool, error) {
 	existing, err := s.repo.GetByTask(ctx, taskID)
 	if err == nil {
@@ -50,7 +61,7 @@ func (s *Service) SaveApproved(ctx context.Context, taskID int64) (Idea, bool, e
 
 	idea, err := s.repo.GetByTask(ctx, taskID)
 	if errors.Is(err, ErrNotFound) {
-		return Idea{}, false, fmt.Errorf("task %d is not an approved idea task with a card: %w", taskID, ErrNotFound)
+		return Idea{}, false, s.notSaved(ctx, taskID)
 	}
 
 	if err != nil {
@@ -63,6 +74,22 @@ func (s *Service) SaveApproved(ctx context.Context, taskID int64) (Idea, bool, e
 	}
 
 	return idea, inserted, nil
+}
+
+// notSaved tells why an approved task got no idea.
+func (s *Service) notSaved(ctx context.Context, taskID int64) error {
+	mismatch, err := s.repo.CardMismatch(ctx, taskID)
+	if err != nil {
+		return err
+	}
+
+	if mismatch {
+		s.log.ErrorContext(ctx, "ideas: the card of the approved version is not the approved draft", "task_id", taskID)
+
+		return fmt.Errorf("task %d: %w", taskID, ErrCardMismatch)
+	}
+
+	return fmt.Errorf("task %d is not an approved idea task with a card: %w", taskID, ErrNotFound)
 }
 
 // ListNew is /ideas: at most limit ideas of the backlog (new), the newest first, and how many there are in all.

@@ -20,7 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/ideas` (new ideas, the newest first, 15 lines and «…и ещё N»), `/idea_done N` and `/idea_drop N` (honest answers to
   an unknown number or an idea closed before). Statuses `new` → `planned` → `done` / `dropped`; for `/plan` (T2.2) the
   service has `ListForPlan` and `MarkPlanned`. An approved idea whose save failed is restored by the next list. Ideas in
-  plain messages without `/idea` are not recognized on purpose.
+  plain messages without `/idea` are not recognized on purpose. A card keeps its draft text (`idea_cards.content`): an
+  idea is made only of the card that is the approved draft in `task_versions`, and a stored version's card is not
+  replaced by a stale run. A forwarded `/idea` is marked as someone else's words in the prompt; forwarded `/idea_done`
+  and `/idea_drop` are not run. A revision of an idea made before the backlog fails at once with a clear text; a card
+  the model could not revise gets its own text. Dates for the trainer are in `TEAM_TIMEZONE` (default
+  `Europe/Moscow`; the time zone database is built in).
 - Workout editing (T3.10). A cut has a mode, kept in `plan.json` (`Edit.Mode`, `Plan.Mode`) and carried over the
   versions: `talk` (as before: pauses, fillers and failed takes are cut) or `workout` — the video stays whole, only what
   the editor cut explicitly goes (words, `Edit.CutTime` fragments by time, trims by time, accepted repeats). The model
@@ -345,6 +350,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Executor routes are a value group: a module provides `tasks.Route{Agent, Kind, Executor}` with
   `tasks.RoutesGroup` instead of decorating `tasks.Executor` (the editor moved to it); a route of an agent and a kind
   wins over a route of the agent. `tasks.Draft` and `tasks.CloseDraftData` carry the task kind.
+- Closing tags of prompt data blocks are matched by one helper (`pkg/helpers.ClosingTag`) in tasks, teamchat, editplan
+  and ideas, now also with spaces inside the tag (`< /trainer_revision >`).
 - `agents.Runtime` marks the end of the first user message with `cache_control` for every agent: runs with several
   turns read the task from the cache, single-turn runs pay the cache write.
 

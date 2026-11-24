@@ -50,6 +50,8 @@ const (
 	videoFileID      = "video-file-id"
 	neverWait        = 300 * time.Millisecond
 	testUserName     = "Анастасия"
+	// integrationTimezone is TEAM_TIMEZONE of the integration tests.
+	integrationTimezone = "Europe/Moscow"
 )
 
 // firstVersion is above the Telegram limit: the draft is sent in two parts.
@@ -237,7 +239,11 @@ func TestIntegrationIdeaBacklog(t *testing.T) {
 
 	api.queue(marketer, telegram.Update{UpdateID: 3, Message: commandMessage(groupID, ideasMsgID, "/ideas")})
 
-	listed := ideasHeader + "\n№1 — Челлендж на 7 дней, " + time.Now().UTC().Format(ideaDateLayout) + "\n\n" + ideasFooter
+	location, err := (&config.Team{Timezone: integrationTimezone}).Location()
+	require.NoError(t, err)
+
+	listed := ideasHeader + "\n№1 — Челлендж на 7 дней, " + time.Now().In(location).Format(ideaDateLayout) + "\n\n" +
+		ideasFooter
 
 	require.Eventually(t, func() bool {
 		return hasText(api, listed)
@@ -418,7 +424,7 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		fx.Supply(
 			gatewayCfg,
 			integrationTasksConfig(prefix),
-			&config.LLM{}, &config.OpenAI{}, &config.Embeddings{},
+			&config.LLM{}, &config.OpenAI{}, &config.Embeddings{}, &config.Team{Timezone: integrationTimezone},
 			slog.New(slog.DiscardHandler),
 			db, rdb,
 		),

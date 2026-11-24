@@ -116,7 +116,9 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   Агентов маршрутизирует `tasks.RoutingExecutor`: модуль отдаёт `tasks.Route{Agent, Kind, Executor}` в fx-группу
   `tasks.RoutesGroup` (`fx.ResultTags`), декорировать `tasks.Executor` не нужно. Маршрут агента и вида задачи важнее
   маршрута агента; пустой `Kind` — все задачи агента. Сейчас: `editor` → `editor.Executor`, `marketer`/`idea` →
-  `ideas.Executor`, остальное — `AgentExecutor`. Тест может подменить `tasks.Executor` целиком через `fx.Decorate`.
+  `ideas.Executor`, остальное — `AgentExecutor`. Маршрут модуля — экспортируемая опция (`editor.Route`, `ideas.Route`)
+  внутри его `Module`; `internal.TestTaskRoutes` проверяет, что они попадают в группу. Тест может подменить
+  `tasks.Executor` целиком через `fx.Decorate`.
 - Команды тренера — всегда от бота Маркетолога (`gateway.isTeamCommand`, разбор в `teamchat.Handler.handleCommand`):
   `/plan`, `/idea` — задачи; `/status`, `/ideas`, `/idea_done N`, `/idea_drop N`, `/pause` — ответ сразу, без задачи и
   модели. Новую команду добавляй константой в `gateway/event.go` и в `isTeamCommand`, тексты — в `teamchat/texts.go`
@@ -125,7 +127,12 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
 - Бэклог идей (`internal/ideas`, T2.4): `/idea <текст>` → задача `marketer`/`idea` (Input — слова тренера как есть) →
   `ideas.Executor`: модель отвечает финальным инструментом `submit_idea` (сессия в контексте — `ideas.WithSession`,
   как у `editplan`), карточка проверяется (`ValidateCard`) и хранится полями в `idea_cards` по версии, текст черновика
-  собирает `ideas.FormatCard`. `teamchat.Notifier` подписывает «Одобрить» у `idea` как «В бэклог» (`tasks.Draft.Kind`)
+  собирает `ideas.FormatCard` и он же хранится в `idea_cards.content`. Идея делается только из карточки, чей `content`
+  совпадает с одобренной версией в `task_versions` (иначе карточку записал устаревший прогон: `ErrCardMismatch`, лог),
+  а карточку версии, уже сохранённой в `task_versions`, upsert не перезаписывает (`ErrVersionStored`). Пересланная
+  `/idea` помечается в Input (`ideas.ForwardedInput`), промпт говорит, что это чужие слова; пересланные
+  `/idea_done`/`/idea_drop` не выполняются. Правка идеи без карточки прошлой версии (идея до бэклога) —
+  `PermanentError` с текстом. Даты для тренера — в `TEAM_TIMEZONE` (`config.Team`, tzdata встроена). `teamchat.Notifier` подписывает «Одобрить» у `idea` как «В бэклог» (`tasks.Draft.Kind`)
   и не пишет «Одобрено.» — номер идеи сообщает `Handler.approveIdea` после `Service.SaveApproved` (вставка из карточки
   одобренной версии, только если задача в `tasks` одобрена; одна идея на `task_id`). Повторное нажатие на уже
   одобренную карточку (конфликт в `tasks`) тоже вызывает `SaveApproved`, а `ListNew`/`ListForPlan` досоздают идеи
@@ -134,6 +141,8 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   **Для `/plan` (T2.2):** возьми `ideas.Service.ListForPlan(ctx, limit)` (новые, старые первыми), передай их модели как
   данные (номер, заголовок, суть, формат, хук), после одобрения плана — `MarkPlanned(ctx, ids)` с номерами идей,
   попавших в план (закрытые и уже запланированные пропускаются).
+- Закрывающие теги блоков данных в промптах — `pkg/helpers.ClosingTag`/`EscapeClosingTag` (любой регистр, пробелы
+  внутри тега: `< /tag >`); своих регулярок не заводи.
 - Порядок остановки fx — обратный порядку регистрации хуков. Хук ожидания фоновой работы регистрируй в конструкторе
   того, кто её запускает (`tasks.provideService`, `teamchat.newHandler`): потребители (шлюз, воркеры) создаются позже
   и останавливаются раньше. Проверка — `teamchat.TestIntegrationStopOrder`.

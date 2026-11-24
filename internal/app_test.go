@@ -3,8 +3,10 @@ package internal
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxtest"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editor"
@@ -54,9 +56,42 @@ func TestApplicationWiresGatewayToTasks(t *testing.T) {
 		fx.Invoke(func(*media.Store) {}),
 		fx.Invoke(func(tasks.Executor, *editor.Executor, *editplan.Decider) {}),
 		fx.Invoke(func(*ideas.Service) {}),
+		fx.Invoke(fx.Annotate(func([]tasks.Route) {}, fx.ParamTags(tasks.RoutesGroup))),
 	)...)
 
 	require.NoError(t, err)
+}
+
+// TestTaskRoutes builds the routes the editor and the ideas modules put into tasks.RoutesGroup (editor.Route and
+// ideas.Route are parts of their modules): without the group tag their tasks would silently go to the agents' model.
+func TestTaskRoutes(t *testing.T) {
+	t.Parallel()
+
+	editorExecutor, ideaExecutor := &editor.Executor{}, &ideas.Executor{}
+
+	var routes []tasks.Route
+
+	app := fxtest.New(t,
+		editor.Route,
+		ideas.Route,
+		fx.Supply(editorExecutor, ideaExecutor),
+		fx.Invoke(fx.Annotate(func(group []tasks.Route) { routes = group }, fx.ParamTags(tasks.RoutesGroup))),
+	)
+	app.RequireStart()
+	app.RequireStop()
+
+	byKey := make(map[string]tasks.Executor, len(routes))
+	for _, r := range routes {
+		byKey[r.Agent+"/"+r.Kind] = r.Executor
+	}
+
+	assert.Equal(t, map[string]tasks.Executor{
+		editor.AgentName + "/":                 editorExecutor,
+		ideas.AgentName + "/" + ideas.TaskKind: ideaExecutor,
+	}, byKey)
+
+	_, err := tasks.NewRoutingExecutor(nil, routes)
+	require.NoError(t, err, "the routes do not overlap")
 }
 
 // TestMediaWorkerHasNoAppSecrets: the media worker's graph builds the worker without the Telegram gateway, the

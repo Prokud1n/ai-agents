@@ -46,6 +46,15 @@ func insertTask(t *testing.T, db *postgres.Client, task ideaTask) int64 {
 	return id
 }
 
+// storeVersion writes a draft version as the task service stores it after the run.
+func storeVersion(t *testing.T, db *postgres.Client, taskID int64, version int, content string) {
+	t.Helper()
+
+	_, err := db.GetWriteConnection().Exec(context.Background(),
+		`INSERT INTO task_versions (task_id, version, content) VALUES ($1, $2, $3)`, taskID, version, content)
+	require.NoError(t, err)
+}
+
 func newTestService(db *postgres.Client) *Service {
 	return NewService(newRepo(db), slog.New(slog.DiscardHandler))
 }
@@ -60,6 +69,7 @@ func approvedIdea(t *testing.T, s *Service, db *postgres.Client, message int64, 
 	card := validCard()
 	card.Title = title
 	require.NoError(t, s.SaveCard(ctx, taskID, 1, &card))
+	storeVersion(t, db, taskID, 1, FormatCard(&card))
 
 	idea, created, err := s.SaveApproved(ctx, taskID)
 	require.NoError(t, err)
@@ -80,11 +90,16 @@ func TestIntegrationSaveApprovedIdea(t *testing.T) {
 	first := validCard()
 	first.Title = "Первая версия"
 	require.NoError(t, s.SaveCard(ctx, taskID, 1, &first))
+	storeVersion(t, db, taskID, 1, FormatCard(&first))
 
 	second := validCard()
 	second.Format, second.FormatNote = OtherFormat, testFormatNote
 	require.NoError(t, s.SaveCard(ctx, taskID, 2, &first))
 	require.NoError(t, s.SaveCard(ctx, taskID, 2, &second)) // a rerun of the version replaces its card
+	storeVersion(t, db, taskID, 2, FormatCard(&second))
+
+	// A stale run of a stored version does not replace its card.
+	require.ErrorIs(t, s.SaveCard(ctx, taskID, 2, &first), ErrVersionStored)
 
 	card, err := s.GetCard(ctx, taskID, 2)
 	require.NoError(t, err)
@@ -154,6 +169,8 @@ func TestIntegrationSaveNotApprovedIdea(t *testing.T) {
 			require.NoError(t, s.SaveCard(ctx, taskID, 1, new(validCard())))
 		}
 
+		storeVersion(t, db, taskID, 1, FormatCard(new(validCard())))
+
 		_, _, err := s.SaveApproved(ctx, taskID)
 		require.ErrorIs(t, err, ErrNotFound, tt.name)
 	}
@@ -174,6 +191,7 @@ func TestIntegrationSyncApproved(t *testing.T) {
 
 	taskID := insertTask(t, db, ideaTask{status: approvedTask, version: 1, message: 1})
 	require.NoError(t, s.SaveCard(ctx, taskID, 1, new(validCard())))
+	storeVersion(t, db, taskID, 1, FormatCard(new(validCard())))
 
 	list, total, err := s.ListNew(ctx, 10)
 	require.NoError(t, err)
@@ -185,6 +203,30 @@ func TestIntegrationSyncApproved(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, created, "the idea is restored once")
 	assert.Equal(t, list[0].ID, idea.ID)
+}
+
+// TestIntegrationStaleCardIsNotSaved: a card that is not the approved draft (a stale run of the version wrote it)
+// never becomes an idea, neither by the approval nor by the list.
+func TestIntegrationStaleCardIsNotSaved(t *testing.T) {
+	t.Parallel()
+
+	db := pgtest.Connect(t)
+	s := newTestService(db)
+	ctx := context.Background()
+
+	taskID := insertTask(t, db, ideaTask{status: approvedTask, version: 1, message: 1})
+	stale := validCard()
+	stale.Title = "Карточка другого прогона"
+	require.NoError(t, s.SaveCard(ctx, taskID, 1, &stale))
+	storeVersion(t, db, taskID, 1, FormatCard(new(validCard())))
+
+	_, _, err := s.SaveApproved(ctx, taskID)
+	require.ErrorIs(t, err, ErrCardMismatch)
+
+	list, total, err := s.ListNew(ctx, 10)
+	require.NoError(t, err)
+	assert.Empty(t, list)
+	assert.Zero(t, total)
 }
 
 func TestIntegrationIdeaStatuses(t *testing.T) {
