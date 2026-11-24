@@ -16,7 +16,10 @@ import (
 // Integration tests run with INTEGRATION=1 (`make test-integration`): pgtest gives each test its own migrated
 // database. Idea tasks are written to the tasks table directly, as the task service leaves them.
 
-const testIdeaText = "челлендж на 7 дней"
+const (
+	testIdeaText = "челлендж на 7 дней"
+	approvedTask = "approved" // tasks.ApprovedStatus
+)
 
 type ideaTask struct {
 	status  string
@@ -52,7 +55,7 @@ func approvedIdea(t *testing.T, s *Service, db *postgres.Client, message int64, 
 	t.Helper()
 
 	ctx := context.Background()
-	taskID := insertTask(t, db, ideaTask{status: "approved", version: 1, message: message})
+	taskID := insertTask(t, db, ideaTask{status: approvedTask, version: 1, message: message})
 
 	card := validCard()
 	card.Title = title
@@ -73,13 +76,13 @@ func TestIntegrationSaveApprovedIdea(t *testing.T) {
 	ctx := context.Background()
 
 	// A card revised once: version 2 is approved.
-	taskID := insertTask(t, db, ideaTask{status: "approved", version: 2, message: 1})
+	taskID := insertTask(t, db, ideaTask{status: approvedTask, version: 2, message: 1})
 	first := validCard()
 	first.Title = "Первая версия"
 	require.NoError(t, s.SaveCard(ctx, taskID, 1, &first))
 
 	second := validCard()
-	second.Format, second.FormatNote = OtherFormat, "сторис с опросом"
+	second.Format, second.FormatNote = OtherFormat, testFormatNote
 	require.NoError(t, s.SaveCard(ctx, taskID, 2, &first))
 	require.NoError(t, s.SaveCard(ctx, taskID, 2, &second)) // a rerun of the version replaces its card
 
@@ -98,21 +101,26 @@ func TestIntegrationSaveApprovedIdea(t *testing.T) {
 	// A repeated press and concurrent ones: the same idea, no duplicate.
 	var wg sync.WaitGroup
 
-	results := make([]Idea, 4)
+	type saved struct {
+		idea    Idea
+		created bool
+		err     error
+	}
+
+	results := make([]saved, 4)
 	for i := range results {
 		wg.Go(func() {
 			again, isNew, err := s.SaveApproved(ctx, taskID)
-			assert.NoError(t, err)
-			assert.False(t, isNew)
-
-			results[i] = again
+			results[i] = saved{idea: again, created: isNew, err: err}
 		})
 	}
 
 	wg.Wait()
 
-	for _, again := range results {
-		assert.Equal(t, idea.ID, again.ID)
+	for i := range results {
+		require.NoError(t, results[i].err)
+		assert.False(t, results[i].created)
+		assert.Equal(t, idea.ID, results[i].idea.ID)
 	}
 
 	list, total, err := s.ListNew(ctx, 10)
@@ -136,8 +144,8 @@ func TestIntegrationSaveNotApprovedIdea(t *testing.T) {
 	}{
 		{name: "awaiting approval", task: ideaTask{status: "awaiting_approval", version: 1, message: 1}, card: true},
 		{name: "rejected", task: ideaTask{status: "rejected", version: 1, message: 2}, card: true},
-		{name: "approved without a card", task: ideaTask{status: "approved", version: 1, message: 3}},
-		{name: "approved task of another kind", task: ideaTask{status: "approved", version: 1, message: 4, kind: "plan"}, card: true},
+		{name: "approved without a card", task: ideaTask{status: approvedTask, version: 1, message: 3}},
+		{name: "approved task of another kind", task: ideaTask{status: approvedTask, version: 1, message: 4, kind: "plan"}, card: true},
 	}
 
 	for _, tt := range tests {
@@ -164,7 +172,7 @@ func TestIntegrationSyncApproved(t *testing.T) {
 	s := newTestService(db)
 	ctx := context.Background()
 
-	taskID := insertTask(t, db, ideaTask{status: "approved", version: 1, message: 1})
+	taskID := insertTask(t, db, ideaTask{status: approvedTask, version: 1, message: 1})
 	require.NoError(t, s.SaveCard(ctx, taskID, 1, new(validCard())))
 
 	list, total, err := s.ListNew(ctx, 10)

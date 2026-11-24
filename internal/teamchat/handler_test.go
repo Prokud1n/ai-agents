@@ -382,7 +382,7 @@ func TestHandlerCallbacks(t *testing.T) {
 	revise := tasks.EncodeCallback(tasks.Callback{TaskID: testTaskID, Version: 2, Action: tasks.ReviseAction})
 
 	answer := func(role gateway.Role, text string) []callbackAnswer {
-		return []callbackAnswer{{Role: role, ID: "cb-1", Text: text}}
+		return []callbackAnswer{{Role: role, ID: testCallbackID, Text: text}}
 	}
 
 	approved := []tasks.ApproveTaskData{{TaskID: testTaskID, Version: 2, UserID: testUserID}}

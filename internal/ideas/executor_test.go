@@ -216,7 +216,7 @@ func TestExecutor(t *testing.T) {
 				var permanent *tasks.PermanentError
 
 				require.ErrorIs(t, err, errNetwork)
-				assert.False(t, errors.As(err, &permanent))
+				assert.NotErrorAs(t, err, &permanent)
 			},
 		},
 		{

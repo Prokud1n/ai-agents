@@ -33,7 +33,7 @@ func (e *CheckError) Error() string {
 	return "invalid idea card: " + e.Message
 }
 
-func (e *CheckError) Unwrap() error {
+func (*CheckError) Unwrap() error {
 	return ErrValidation
 }
 

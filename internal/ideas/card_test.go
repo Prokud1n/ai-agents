@@ -9,6 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testFormatNote names the format of a card of OtherFormat.
+const testFormatNote = "сторис с опросом"
+
 func validCard() Card {
 	return Card{
 		Title:   "Зарядка за 5 минут",
@@ -40,8 +43,8 @@ func TestValidateCard(t *testing.T) {
 		},
 		{
 			name:     "other with a note",
-			input:    func(c *Card) { c.Format, c.FormatNote = OtherFormat, "сторис с опросом" },
-			expected: func(c *Card) { c.Format, c.FormatNote = OtherFormat, "сторис с опросом" },
+			input:    func(c *Card) { c.Format, c.FormatNote = OtherFormat, testFormatNote },
+			expected: func(c *Card) { c.Format, c.FormatNote = OtherFormat, testFormatNote },
 		},
 		{name: "other without a note", input: func(c *Card) { c.Format = OtherFormat }, errText: "format_note пустое"},
 		{name: "empty title", input: func(c *Card) { c.Title = " " }, errText: "title пустое"},
@@ -65,7 +68,7 @@ func TestValidateCard(t *testing.T) {
 		{name: "unknown format", input: func(c *Card) { c.Format = "reels" }, errText: `format "reels" неизвестен`},
 		{
 			name:    "invisible characters",
-			input:   func(c *Card) { c.Hook = "Привет​мир" },
+			input:   func(c *Card) { c.Hook = "Привет\u200bмир" },
 			errText: "hook содержит управляющие или невидимые символы",
 		},
 	}
@@ -102,7 +105,7 @@ func TestFormatCard(t *testing.T) {
 	t.Parallel()
 
 	other := validCard()
-	other.Format, other.FormatNote = OtherFormat, "сторис с опросом"
+	other.Format, other.FormatNote = OtherFormat, testFormatNote
 
 	tests := []struct {
 		name     string

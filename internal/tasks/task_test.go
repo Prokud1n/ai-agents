@@ -261,6 +261,9 @@ func TestUpdateToWoken(t *testing.T) {
 	}
 }
 
+// testIdeaKind is a task kind with its own route.
+const testIdeaKind = "idea"
+
 // routeExecutor answers with its name.
 type routeExecutor string
 
@@ -273,7 +276,7 @@ func TestRoutingExecutor(t *testing.T) {
 
 	executor, err := NewRoutingExecutor(routeExecutor("agents"), []Route{
 		{Agent: testEditor, Executor: routeExecutor("worker")},
-		{Agent: testAgent, Kind: "idea", Executor: routeExecutor("ideas")},
+		{Agent: testAgent, Kind: testIdeaKind, Executor: routeExecutor("ideas")},
 	})
 	require.NoError(t, err)
 
@@ -285,9 +288,9 @@ func TestRoutingExecutor(t *testing.T) {
 	}{
 		{name: "routed agent", agent: testEditor, expected: "worker"},
 		{name: "routed agent, any kind", agent: testEditor, kind: "reels-edit", expected: "worker"},
-		{name: "routed kind", agent: testAgent, kind: "idea", expected: "ideas"},
+		{name: "routed kind", agent: testAgent, kind: testIdeaKind, expected: "ideas"},
 		{name: "other kind of the agent", agent: testAgent, kind: "plan", expected: "agents"},
-		{name: "any other agent", agent: "designer", kind: "idea", expected: "agents"},
+		{name: "any other agent", agent: "designer", kind: testIdeaKind, expected: "agents"},
 	}
 
 	for _, tt := range tests {
@@ -312,7 +315,7 @@ func TestRoutingExecutorRejectsBadRoutes(t *testing.T) {
 			{Agent: testEditor, Executor: routeExecutor("a")}, {Agent: testEditor, Executor: routeExecutor("b")},
 		}},
 		{name: "no executor", input: []Route{{Agent: testEditor}}},
-		{name: "no agent", input: []Route{{Kind: "idea", Executor: routeExecutor("a")}}},
+		{name: "no agent", input: []Route{{Kind: testIdeaKind, Executor: routeExecutor("a")}}},
 	}
 
 	for _, tt := range tests {

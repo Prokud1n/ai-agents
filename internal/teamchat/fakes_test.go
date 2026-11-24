@@ -22,6 +22,7 @@ const (
 	testUserID         = int64(42)
 	testTaskID         = int64(5)
 	testDraftID        = int64(900)
+	testCallbackID     = "cb-1"
 	partLimit          = 100 // fakeSender splits longer texts in two parts
 )
 
@@ -331,7 +332,7 @@ func callbackEvent(role gateway.Role, data string) *gateway.Event {
 		TopicID:    testTopicID,
 		MessageID:  testDraftID,
 		From:       gateway.User{ID: testUserID},
-		Callback:   &gateway.Callback{ID: "cb-1", Data: data},
+		Callback:   &gateway.Callback{ID: testCallbackID, Data: data},
 	}
 }
 

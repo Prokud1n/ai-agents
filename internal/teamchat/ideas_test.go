@@ -61,7 +61,7 @@ func TestHandlerApproveIdea(t *testing.T) {
 	approve := tasks.EncodeCallback(tasks.Callback{TaskID: testTaskID, Version: 2, Action: tasks.ApproveAction})
 	approved := []tasks.ApproveTaskData{{TaskID: testTaskID, Version: 2, UserID: testUserID}}
 	answer := func(text string) []callbackAnswer {
-		return []callbackAnswer{{Role: gateway.MarketerRole, ID: "cb-1", Text: text}}
+		return []callbackAnswer{{Role: gateway.MarketerRole, ID: testCallbackID, Text: text}}
 	}
 
 	tests := []struct {

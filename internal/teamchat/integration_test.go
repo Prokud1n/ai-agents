@@ -49,6 +49,7 @@ const (
 	ideaDoneMsgID    = int64(16)
 	videoFileID      = "video-file-id"
 	neverWait        = 300 * time.Millisecond
+	testUserName     = "Анастасия"
 )
 
 // firstVersion is above the Telegram limit: the draft is sent in two parts.
@@ -135,7 +136,7 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 	// «Одобрить» under version 2.
 	api.queue(marketer, telegram.Update{UpdateID: 3, CallbackQuery: &telegram.CallbackQuery{
 		ID:   env.callbackID,
-		From: telegram.User{ID: testUserID, FirstName: "Анастасия"},
+		From: telegram.User{ID: testUserID, FirstName: testUserName},
 		Message: &telegram.Message{
 			MessageID: second.call.result, From: &marketerBot,
 			Chat:           telegram.Chat{ID: groupID, Type: supergroupType, IsForum: true},
@@ -217,7 +218,7 @@ func TestIntegrationIdeaBacklog(t *testing.T) {
 
 	api.queue(marketer, telegram.Update{UpdateID: 2, CallbackQuery: &telegram.CallbackQuery{
 		ID:   env.callbackID,
-		From: telegram.User{ID: testUserID, FirstName: "Анастасия"},
+		From: telegram.User{ID: testUserID, FirstName: testUserName},
 		Message: &telegram.Message{
 			MessageID: draft.call.result, From: &env.marketerBot,
 			Chat:           telegram.Chat{ID: groupID, Type: supergroupType, IsForum: true},
@@ -555,7 +556,7 @@ func countText(api *fakeBotAPI, text string) int {
 func topicMessage(groupID, messageID int64, text string) *telegram.Message {
 	return &telegram.Message{
 		MessageID:       messageID,
-		From:            &telegram.User{ID: testUserID, FirstName: "Анастасия"},
+		From:            &telegram.User{ID: testUserID, FirstName: testUserName},
 		Date:            time.Now().Unix(),
 		Chat:            telegram.Chat{ID: groupID, Type: supergroupType, IsForum: true},
 		IsTopicMessage:  true,
