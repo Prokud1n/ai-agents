@@ -251,5 +251,5 @@ func TestNewNotifierFollowsGateway(t *testing.T) {
 	lc := fxtest.NewLifecycle(t)
 
 	assert.IsType(t, &tasks.LogNotifier{}, newNotifier(lc, &config.Telegram{}, nil, nil, log), "no tokens: drafts go to the log")
-	assert.IsType(t, &Notifier{}, newNotifier(lc, &config.Telegram{MarketerToken: "1:x"}, nil, nil, log))
+	assert.IsType(t, &Notifier{}, newNotifier(lc, &config.Telegram{MarketerToken: testToken}, nil, nil, log))
 }

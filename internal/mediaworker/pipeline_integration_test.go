@@ -166,7 +166,10 @@ func makeSpeechClip(t *testing.T, path, size string, rate int, hdr bool) {
 		"-f", "lavfi", "-i", audio, "-f", "lavfi", "-i", video, "-c:a", "aac", "-shortest"}
 
 	if hdr {
-		args = append(args, "-c:v", "ffv1", "-pix_fmt", "yuv420p10le",
+		// The tags go on the frames (setparams): ffmpeg 8+ no longer writes -color_primaries/-color_trc of the output
+		// into the stream, the output options stay for older versions.
+		args = append(args, "-vf", "setparams=color_primaries=bt2020:color_trc="+testHLG+":colorspace=bt2020nc",
+			"-c:v", "ffv1", "-pix_fmt", "yuv420p10le",
 			"-color_primaries", "bt2020", "-color_trc", testHLG, "-colorspace", "bt2020nc")
 	} else {
 		args = append(args, "-c:v", "mpeg4")
@@ -216,7 +219,9 @@ func checkReel(t *testing.T, path string, rate int, planned float64) {
 		"-of", "json", path), &probe))
 	require.Len(t, probe.Streams, 2)
 
-	for _, s := range probe.Streams {
+	for i := range probe.Streams {
+		s := &probe.Streams[i] // read only: a stream is too big to copy per iteration
+
 		switch s.CodecType {
 		case "video":
 			assert.Equal(t, "h264", s.CodecName)

@@ -236,18 +236,18 @@ func TestUpdateToWoken(t *testing.T) {
 		expected    time.Time
 		expectedErr error
 	}{
-		{name: "deferred task becomes due", input: Task{ID: 1, Agent: "editor", Status: QueuedStatus, RunAfter: later}, expected: testNow},
-		{name: "a due task stays due", input: Task{ID: 1, Agent: "editor", Status: QueuedStatus, RunAfter: earlier}, expected: earlier},
+		{name: "deferred task becomes due", input: Task{ID: 1, Agent: testEditor, Status: QueuedStatus, RunAfter: later}, expected: testNow},
+		{name: "a due task stays due", input: Task{ID: 1, Agent: testEditor, Status: QueuedStatus, RunAfter: earlier}, expected: earlier},
 		{name: "another agent's task", input: Task{ID: 1, Agent: "copywriter", Status: QueuedStatus, RunAfter: later}, expectedErr: ErrConflict},
-		{name: "running", input: Task{ID: 1, Agent: "editor", Status: RunningStatus}, expectedErr: ErrConflict},
-		{name: "decided", input: Task{ID: 1, Agent: "editor", Status: ApprovedStatus}, expectedErr: ErrConflict},
+		{name: "running", input: Task{ID: 1, Agent: testEditor, Status: RunningStatus}, expectedErr: ErrConflict},
+		{name: "decided", input: Task{ID: 1, Agent: testEditor, Status: ApprovedStatus}, expectedErr: ErrConflict},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			change, err := UpdateToWoken("editor", testNow)(tt.input)
+			change, err := UpdateToWoken(testEditor, testNow)(tt.input)
 			if tt.expectedErr != nil {
 				require.ErrorIs(t, err, tt.expectedErr)
 
@@ -271,14 +271,14 @@ func (e routeExecutor) Execute(context.Context, *ExecuteData) (Output, error) {
 func TestRoutingExecutor(t *testing.T) {
 	t.Parallel()
 
-	executor := NewRoutingExecutor(routeExecutor("agents"), map[string]Executor{"editor": routeExecutor("worker")})
+	executor := NewRoutingExecutor(routeExecutor("agents"), map[string]Executor{testEditor: routeExecutor("worker")})
 
 	tests := []struct {
 		name     string
 		input    string
 		expected string
 	}{
-		{name: "routed agent", input: "editor", expected: "worker"},
+		{name: "routed agent", input: testEditor, expected: "worker"},
 		{name: "any other agent", input: "copywriter", expected: "agents"},
 	}
 

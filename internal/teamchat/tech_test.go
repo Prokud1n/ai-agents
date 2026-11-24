@@ -11,7 +11,10 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 )
 
-const testTechTopicID = int64(11)
+const (
+	testTechTopicID = int64(11)
+	testToken       = "1:x" // any well-formed token: the bot is not started
+)
 
 func TestTechReporter(t *testing.T) {
 	t.Parallel()
@@ -23,12 +26,12 @@ func TestTechReporter(t *testing.T) {
 	}{
 		{
 			name: "to «Техничка» from the editor's bot",
-			cfg:  config.Telegram{EditorToken: "1:x", TechTopicID: testTechTopicID},
+			cfg:  config.Telegram{EditorToken: testToken, TechTopicID: testTechTopicID},
 			expected: []sentText{{Role: gateway.EditorRole, Msg: gateway.OutgoingMessage{
 				TopicID: testTechTopicID, Text: "Монтажёр: задача 5 не выполнена, код fonts.",
 			}}},
 		},
-		{name: "no topic: the log only", cfg: config.Telegram{EditorToken: "1:x"}},
+		{name: "no topic: the log only", cfg: config.Telegram{EditorToken: testToken}},
 		{name: "no gateway: the log only", cfg: config.Telegram{TechTopicID: testTechTopicID}},
 	}
 

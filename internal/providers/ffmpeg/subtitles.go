@@ -32,6 +32,9 @@ const (
 	// the bt709 transfer and matrix, 8-bit 4:2:0. zscale (zimg) reads the input transfer and primaries from the frames.
 	toneMapFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0," +
 		"zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+	// colorTagsFilter tags the frames SDR bt709 at the end of the graph: ffmpeg 8+ takes the stream's color tags from
+	// the frames and no longer writes -color_primaries/-color_trc of the output (those stay for older versions).
+	colorTagsFilter = "setparams=color_primaries=" + bt709 + ":color_trc=" + bt709 + ":colorspace=" + bt709 + ":range=tv"
 
 	cutVideoLabel = "cut"
 	cutAudioLabel = "a"
@@ -264,7 +267,8 @@ func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 		fit = toneMapFilter + "," + fit
 	}
 
-	subtitles := "ass=filename=" + data.SubtitlesName + ":fontsdir=" + data.FontsName + "[" + videoLabel + "]"
+	subtitles := "ass=filename=" + data.SubtitlesName + ":fontsdir=" + data.FontsName + "," + colorTagsFilter +
+		"[" + videoLabel + "]"
 
 	if data.Shade == nil {
 		return input + fit + ",setsar=1," + subtitles, nil

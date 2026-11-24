@@ -37,7 +37,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 			input: func(d BurnSubtitlesData) BurnSubtitlesData { return d },
 			expected: concat(head, []string{
 				"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:out_color_matrix=bt709:out_range=tv," +
-					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts[v]",
+					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
 			}, maps, encode, []string{testOutput}),
 		},
 		{
@@ -49,7 +49,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 			},
 			expected: concat(head, []string{
 				"[0:v]scale=1080:1920:force_original_aspect_ratio=increase:force_divisible_by=2:out_color_matrix=bt709:out_range=tv," +
-					"crop=1080:1920,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts[v]",
+					"crop=1080:1920,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
 			}, maps, encode, []string{testOutput}),
 		},
 		{
@@ -63,7 +63,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 				"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:out_color_matrix=bt709:out_range=tv," +
 					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[base];" +
 					"color=c=black:s=1080x900:r=1:d=1,format=rgba,geq=r=0:g=0:b=0:a='153*if(lt(Y,600),1,(1+cos(PI*(Y-600)/300))/2)'[shade];" +
-					"[base][shade]overlay=x=0:y=0,ass=filename=subtitles.ass:fontsdir=fonts[v]",
+					"[base][shade]overlay=x=0:y=0,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
 			}, maps, encode, []string{testOutput}),
 		},
 		{
@@ -78,7 +78,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[base];" +
 					"color=c=black:s=1080x600:r=1:d=1,format=rgba," +
 					"geq=r=0:g=0:b=0:a='100*if(lt((600-1-Y),400),1,(1+cos(PI*((600-1-Y)-400)/200))/2)'[shade];" +
-					"[base][shade]overlay=x=0:y=1320,ass=filename=subtitles.ass:fontsdir=fonts[v]",
+					"[base][shade]overlay=x=0:y=1320,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
 			}, maps, encode, []string{testOutput}),
 		},
 		{
@@ -92,7 +92,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 				"[0:v]zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0," +
 					"zscale=t=bt709:m=bt709:r=tv,format=yuv420p," +
 					"scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:out_color_matrix=bt709:out_range=tv," +
-					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts[v]",
+					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
 			}, maps, encode, []string{testOutput}),
 		},
 		{
@@ -204,7 +204,7 @@ func TestBurnSubtitlesArgsWithCut(t *testing.T) {
 
 			cut := segmentsGraph(data.Cut.Segments, data.Cut.Options, "cut", "a")
 			assert.Equal(t, cut+";[cut]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:out_color_matrix=bt709:out_range=tv,"+
-				"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts[v]", graph)
+				"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts,"+colorTagsFilter+"[v]", graph)
 			assert.True(t, strings.HasSuffix(cut, "concat=n=2:v=1:a=1[cut][a]"))
 		})
 	}
