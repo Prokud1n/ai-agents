@@ -3,6 +3,7 @@ package teamchat
 import (
 	"context"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -47,6 +48,8 @@ type fakeService struct {
 	findErr      error
 	// draftUnsaved: GetVersion finds the version without stored draft messages.
 	draftUnsaved bool
+	// draftMediaKey makes the found draft a video draft.
+	draftMediaKey string
 }
 
 func (f *fakeService) GetVersion(_ context.Context, taskID int64, version int) (tasks.Version, error) {
@@ -79,7 +82,7 @@ func (f *fakeService) FindByDraftMessage(_ context.Context, _, _ int64) (tasks.T
 	}
 
 	return tasks.Task{ID: testTaskID, Status: status, Version: version},
-		tasks.Version{TaskID: testTaskID, Version: version}, nil
+		tasks.Version{TaskID: testTaskID, Version: version, MediaKey: f.draftMediaKey}, nil
 }
 
 func (f *fakeService) Create(_ context.Context, data *tasks.CreateTaskData) (tasks.Task, bool, error) {
@@ -277,13 +280,49 @@ func source() tasks.Source {
 // testKeyPrefix is the key prefix of fakeStore: the keys are real media keys.
 const testKeyPrefix = "incoming"
 
-// fakeStore records the saved files and their content; err fails every save.
+// fakeStore records the saved files and their content; err fails every save. Download writes the content of
+// reels[key] to a new file in dir (downloadErr fails it).
 type fakeStore struct {
 	mu sync.Mutex
 
-	saved [][]byte
-	files []media.File
-	err   error
+	saved       [][]byte
+	files       []media.File
+	err         error
+	reels       map[string][]byte
+	downloads   []string
+	downloadErr error
+}
+
+func (f *fakeStore) Download(_ context.Context, key, dir string, _ int64) (*media.LocalFile, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.downloads = append(f.downloads, key)
+	if f.downloadErr != nil {
+		return nil, f.downloadErr
+	}
+
+	data, ok := f.reels[key]
+	if !ok {
+		return nil, media.ErrFileNotFound
+	}
+
+	file, err := os.CreateTemp(dir, "media-*.mp4")
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+
+		return nil, err
+	}
+
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+
+	return &media.LocalFile{Path: file.Name(), Size: int64(len(data))}, nil
 }
 
 func (f *fakeStore) Save(_ context.Context, file *media.File, r io.ReadSeeker) (string, error) {

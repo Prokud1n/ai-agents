@@ -28,6 +28,22 @@ type MediaInfo struct {
 	FormatStart float64
 	AudioStart  float64
 	VideoStart  float64
+	// ColorTransfer and ColorPrimaries of the first video stream as ffprobe names them ("arib-std-b67", "bt2020");
+	// empty if not tagged.
+	ColorTransfer  string
+	ColorPrimaries string
+}
+
+// HDR transfer functions of phones: HLG (iPhone, Android) and PQ (HDR10, Dolby Vision base layer).
+const (
+	hlgTransfer = "arib-std-b67"
+	pqTransfer  = "smpte2084"
+)
+
+// HDR reports whether the video is HDR (HLG or PQ): it must be tone mapped to SDR bt709 for an 8-bit export, or its
+// colours come out washed out.
+func (m *MediaInfo) HDR() bool {
+	return m.ColorTransfer == hlgTransfer || m.ColorTransfer == pqTransfer
 }
 
 // Rational is a frame rate as ffprobe gives it: 30000/1001. The zero value is unknown.
@@ -52,10 +68,12 @@ func (r Rational) String() string {
 
 type probeOutput struct {
 	Streams []struct {
-		CodecType    string `json:"codec_type"`
-		AvgFrameRate string `json:"avg_frame_rate"`
-		RFrameRate   string `json:"r_frame_rate"`
-		StartTime    string `json:"start_time"`
+		CodecType      string `json:"codec_type"`
+		AvgFrameRate   string `json:"avg_frame_rate"`
+		RFrameRate     string `json:"r_frame_rate"`
+		StartTime      string `json:"start_time"`
+		ColorTransfer  string `json:"color_transfer"`
+		ColorPrimaries string `json:"color_primaries"`
 	} `json:"streams"`
 	Format struct {
 		Duration  string `json:"duration"`
@@ -84,7 +102,8 @@ func (r *Runner) Probe(ctx context.Context, path string) (MediaInfo, error) {
 }
 
 func probeArgs(input string) []string {
-	return probeEntriesArgs(input, "stream=codec_type,avg_frame_rate,r_frame_rate,start_time:format=duration,start_time", "json")
+	return probeEntriesArgs(input, "stream=codec_type,avg_frame_rate,r_frame_rate,start_time,color_transfer,color_primaries:"+
+		"format=duration,start_time", "json")
 }
 
 func parseProbe(s string) (MediaInfo, error) {
@@ -108,6 +127,7 @@ func parseProbe(s string) (MediaInfo, error) {
 		case st.CodecType == videoCodecType && !info.HasVideo:
 			info.HasVideo = true
 			info.VideoStart = parseStart(st.StartTime)
+			info.ColorTransfer, info.ColorPrimaries = st.ColorTransfer, st.ColorPrimaries
 
 			if info.AvgFrameRate, err = parseRational(st.AvgFrameRate); err != nil {
 				return MediaInfo{}, err

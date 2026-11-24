@@ -116,6 +116,7 @@ func TestBurnSubtitlesPreparesRender(t *testing.T) {
 	assert.Equal(t, FrameWidth, renderer.got.Width)
 	assert.Equal(t, FrameHeight, renderer.got.Height)
 	assert.Equal(t, ffmpeg.PadFitMode, renderer.got.Fit)
+	assert.Nil(t, renderer.got.Cut, "no cut: the whole video")
 	assert.Contains(t, renderer.ass, wPrivetCapExcl)
 	assert.ElementsMatch(t, []string{"Manrope-Bold.ttf", "Fira.OTF"}, renderer.fonts, "only regular font files are copied")
 
@@ -129,6 +130,26 @@ func TestBurnSubtitlesPreparesRender(t *testing.T) {
 	entries, err := os.ReadDir(outDir)
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "no partial file is left")
+}
+
+// TestBurnSubtitlesPassesCut: the rough cut goes to the renderer as it is, for one pass.
+func TestBurnSubtitlesPassesCut(t *testing.T) {
+	t.Parallel()
+
+	fontsDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(fontsDir, "Manrope-Bold.ttf"), []byte("font"), 0o600))
+
+	renderer := &fakeRenderer{report: &ffmpeg.BurnReport{}}
+	cut := &ffmpeg.Cut{Segments: []ffmpeg.Segment{{Start: 0.5, End: 1.5}}, Options: ffmpeg.RenderOptions{Fade: 0.01}}
+
+	_, err := newTestService(t, renderer, &config.Subtitles{FontsDir: fontsDir}).BurnSubtitles(t.Context(), &BurnSubtitlesData{
+		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech(wPrivetCapExcl)},
+		VideoPath:           inputVideo,
+		OutputPath:          filepath.Join(t.TempDir(), outputVideo),
+		Cut:                 cut,
+	})
+	require.NoError(t, err)
+	assert.Same(t, cut, renderer.got.Cut)
 }
 
 func TestBurnSubtitlesFailedRenderLeavesNoOutput(t *testing.T) {

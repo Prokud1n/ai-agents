@@ -24,10 +24,11 @@ const (
 	reactionTimeout = 3 * time.Second
 )
 
-// Task kinds of the team commands; a plain message has no kind.
+// Task kinds of the team commands and of a source video; a plain message has no kind.
 const (
-	PlanTaskKind = "plan"
-	IdeaTaskKind = "idea"
+	PlanTaskKind      = "plan"
+	IdeaTaskKind      = "idea"
+	ReelsEditTaskKind = "reels-edit"
 )
 
 type taskService interface {
@@ -59,8 +60,10 @@ type chatSender interface {
 //   - draft buttons: «Одобрить» and «Отклонить» decide, «Правки» asks to reply to the draft with the revision;
 //     a button counts only on the draft message of its task and version;
 //   - /status, /plan, /idea, /pause are the marketer's; any other command gets the list of commands;
-//   - a video for the editor (topic «Исходники» or a mention of the editor's bot) is stored in S3 and answered
-//     from the editor's bot; the editing (a task for the editor agent) comes later. Voice messages and video notes
+//   - a video for the editor (topic «Исходники» or a mention of the editor's bot) is stored in S3 and becomes the
+//     editor's task (the media worker edits it; the caption is kept as the task input), answered from the editor's
+//     bot. A text message to the editor gets a hint to send a video; a reply to its video draft (and «Правки» under
+//     it) gets an honest answer: revisions of a video by text are the next step. Voice messages and video notes
 //     are not processed on purpose (the trainer dictates text instead), photos and audio files not yet, videos
 //     for other roles are sent to «Исходники»: all of them get an honest answer, and the gateway does not
 //     download them (WantsMedia).
@@ -72,6 +75,10 @@ type Handler struct {
 	files  mediaStore
 	log    *slog.Logger
 	now    func() time.Time
+	// productionTopicID is «Продакшн» (TELEGRAM_TOPIC_PRODUCTION_ID), where video drafts go; 0: not configured.
+	productionTopicID int64
+	// maxFileSize is TELEGRAM_MAX_FILE_SIZE, for the answer to a larger video; 0: unknown.
+	maxFileSize int64
 	// background tracks reactions being set; see WaitBackground.
 	background sync.WaitGroup
 }
@@ -119,6 +126,10 @@ func (h *Handler) handleMessage(ctx context.Context, event *gateway.Event) error
 		return h.reply(ctx, gateway.MarketerRole, event, unknownCommandText)
 	}
 
+	if event.Target == gateway.EditorRole {
+		return h.handleEditorText(ctx, event)
+	}
+
 	if text, ok := stubTexts[event.Target]; ok {
 		return h.reply(ctx, event.Target, event, text)
 	}
@@ -131,6 +142,19 @@ func (h *Handler) handleMessage(ctx context.Context, event *gateway.Event) error
 	}
 
 	return h.createTask(ctx, event, &taskRequest{agent: event.Target, input: messageInput(event)})
+}
+
+// handleEditorText: the editor works with videos. A reply to its draft goes through the revision (a video draft is
+// refused with an honest answer); any other text gets the hint to send a video to «Исходники», without a task.
+func (h *Handler) handleEditorText(ctx context.Context, event *gateway.Event) error {
+	if event.ReplyToMessageID != 0 {
+		handled, err := h.revise(ctx, event)
+		if handled || err != nil {
+			return err
+		}
+	}
+
+	return h.reply(ctx, gateway.EditorRole, event, editorHintText)
 }
 
 // revise takes a reply as a revision of the draft it answers. It reports false when the replied message is
@@ -267,7 +291,8 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 		return h.answer(ctx, event, tasks.UserMessage(err))
 	}
 
-	if err := h.checkButton(ctx, event, cb); err != nil {
+	draft, err := h.checkButton(ctx, event, cb)
+	if err != nil {
 		h.logFailure(ctx, "check button", event, err)
 
 		if errors.Is(err, errDraftSaving) {
@@ -277,7 +302,7 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 		return h.answer(ctx, event, tasks.UserMessage(err))
 	}
 
-	text, err := h.decide(ctx, event, cb)
+	text, err := h.decide(ctx, event, cb, &draft)
 	if err != nil {
 		h.logFailure(ctx, "decide on draft", event, err)
 
@@ -289,22 +314,23 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 
 // checkButton: a button counts only on the draft message of its task and version, so callback data put on
 // another message cannot decide a task. A press that comes before the draft's messages are stored (they are
-// stored right after Telegram answers) is errDraftSaving.
-func (h *Handler) checkButton(ctx context.Context, event *gateway.Event, cb tasks.Callback) error {
+// stored right after Telegram answers) is errDraftSaving. It returns the version of the draft.
+func (h *Handler) checkButton(ctx context.Context, event *gateway.Event, cb tasks.Callback) (tasks.Version, error) {
 	task, v, err := h.tasks.FindByDraftMessage(ctx, event.ChatID, event.MessageID)
 
 	switch {
 	case errors.Is(err, tasks.ErrNotFound) && h.draftNotStored(ctx, cb):
-		return fmt.Errorf("draft of task %d version %d: %w", cb.TaskID, cb.Version, errDraftSaving)
+		return tasks.Version{}, fmt.Errorf("draft of task %d version %d: %w", cb.TaskID, cb.Version, errDraftSaving)
 	case errors.Is(err, tasks.ErrNotFound) || errors.Is(err, tasks.ErrStaleVersion):
-		return fmt.Errorf("message %d is not the draft of the button: %w", event.MessageID, tasks.ErrInvalidCallback)
+		return tasks.Version{}, fmt.Errorf("message %d is not the draft of the button: %w", event.MessageID,
+			tasks.ErrInvalidCallback)
 	case err != nil:
-		return fmt.Errorf("failed to find the draft of the button: %w", err)
+		return tasks.Version{}, fmt.Errorf("failed to find the draft of the button: %w", err)
 	case task.ID != cb.TaskID || v.Version != cb.Version:
-		return fmt.Errorf("button of task %d version %d on the draft of task %d version %d: %w",
+		return tasks.Version{}, fmt.Errorf("button of task %d version %d on the draft of task %d version %d: %w",
 			cb.TaskID, cb.Version, task.ID, v.Version, tasks.ErrInvalidCallback)
 	default:
-		return nil
+		return v, nil
 	}
 }
 
@@ -315,8 +341,14 @@ func (h *Handler) draftNotStored(ctx context.Context, cb tasks.Callback) bool {
 	return err == nil && v.DraftMessageID == nil
 }
 
-// decide applies the pressed action and returns the answer to the press.
-func (h *Handler) decide(ctx context.Context, event *gateway.Event, cb tasks.Callback) (string, error) {
+// decide applies the pressed action and returns the answer to the press. «Правки» under a video draft answer that
+// revisions of a video by text are the next step.
+func (h *Handler) decide(
+	ctx context.Context,
+	event *gateway.Event,
+	cb tasks.Callback,
+	draft *tasks.Version,
+) (string, error) {
 	switch cb.Action {
 	case tasks.ApproveAction:
 		_, err := h.tasks.Approve(ctx, &tasks.ApproveTaskData{TaskID: cb.TaskID, Version: cb.Version, UserID: event.From.ID})
@@ -327,6 +359,10 @@ func (h *Handler) decide(ctx context.Context, event *gateway.Event, cb tasks.Cal
 
 		return rejectedAnswer, err
 	default: // tasks.ReviseAction: the revision comes as a reply to the draft
+		if draft.MediaKey != "" {
+			return tasks.VideoRevisionText, nil
+		}
+
 		return reviseHint, nil
 	}
 }

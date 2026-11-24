@@ -4,22 +4,57 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 
 	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
 )
 
-// Executor runs an agent on a prompt and returns its answer. A *PermanentError gives the run up at once;
-// any other error is retried. An empty answer is an error (checked by the service).
+// Executor runs a task and returns the draft. A *PermanentError gives the run up at once; a *DeferredError puts
+// the task back to the queue without counting the attempt (the work goes on elsewhere); any other error is retried.
+// An empty draft text is an error (checked by the service).
 type Executor interface {
-	Execute(ctx context.Context, data *ExecuteData) (string, error)
+	Execute(ctx context.Context, data *ExecuteData) (Output, error)
 }
 
 type ExecuteData struct {
 	TaskID int64
 	Agent  string
+	Kind   string
+	Input  string
+	Media  []string
+	Source Source
+	// Version is the draft version this run makes: the task's latest version + 1.
+	Version int
+	// Prompt is the agent's input: the task, and for a revision the previous version and the trainer's text.
 	Prompt string
+}
+
+// Output is the draft a run made: its text and, for a video draft, the S3 key of the video (the text is then
+// the video's description).
+type Output struct {
+	Text     string
+	MediaKey string
+}
+
+// RoutingExecutor runs the tasks of the agents in its routes with their own executors (the editor's videos go to
+// the media worker), the rest with the fallback (the agents' runtime).
+type RoutingExecutor struct {
+	fallback Executor
+	routes   map[string]Executor
+}
+
+func NewRoutingExecutor(fallback Executor, routes map[string]Executor) *RoutingExecutor {
+	return &RoutingExecutor{fallback: fallback, routes: maps.Clone(routes)}
+}
+
+func (e *RoutingExecutor) Execute(ctx context.Context, data *ExecuteData) (Output, error) {
+	if executor, ok := e.routes[data.Agent]; ok {
+		return executor.Execute(ctx, data)
+	}
+
+	return e.fallback.Execute(ctx, data)
 }
 
 type agentRunner interface {
@@ -35,13 +70,13 @@ func NewAgentExecutor(runner agentRunner) *AgentExecutor {
 	return &AgentExecutor{runner: runner}
 }
 
-func (e *AgentExecutor) Execute(ctx context.Context, data *ExecuteData) (string, error) {
+func (e *AgentExecutor) Execute(ctx context.Context, data *ExecuteData) (Output, error) {
 	result, err := e.runner.Run(ctx, &agents.RunAgentData{Agent: data.Agent, Input: data.Prompt})
 	if err != nil {
-		return "", classifyAgentError(err)
+		return Output{}, classifyAgentError(err)
 	}
 
-	return result.Text, nil
+	return Output{Text: result.Text}, nil
 }
 
 // classifyAgentError marks errors that a retry cannot fix as permanent, with a message for the trainer.

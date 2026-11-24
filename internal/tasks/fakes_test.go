@@ -44,27 +44,30 @@ type fakeExecutor struct {
 	mu      sync.Mutex
 	results []fakeResult
 	prompts []string
+	data    []ExecuteData
 	hook    func() // called on every run, e.g. to cancel the worker's context mid-run
 }
 
 type fakeResult struct {
 	text      string
+	mediaKey  string // a video draft
 	err       error
 	panicWith string // the executor panics with it
 }
 
-func (e *fakeExecutor) Execute(_ context.Context, data *ExecuteData) (string, error) {
+func (e *fakeExecutor) Execute(_ context.Context, data *ExecuteData) (Output, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	e.prompts = append(e.prompts, data.Prompt)
+	e.data = append(e.data, *data)
 
 	if e.hook != nil {
 		e.hook()
 	}
 
 	if len(e.results) == 0 {
-		return "draft", nil
+		return Output{Text: "draft"}, nil
 	}
 
 	r := e.results[0]
@@ -76,7 +79,14 @@ func (e *fakeExecutor) Execute(_ context.Context, data *ExecuteData) (string, er
 		panic(r.panicWith)
 	}
 
-	return r.text, r.err
+	return Output{Text: r.text, MediaKey: r.mediaKey}, r.err
+}
+
+func (e *fakeExecutor) Data() []ExecuteData {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return append([]ExecuteData(nil), e.data...)
 }
 
 func (e *fakeExecutor) SetResults(hook func(), results ...fakeResult) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/fx/fxtest"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
@@ -247,6 +248,8 @@ func TestNewNotifierFollowsGateway(t *testing.T) {
 
 	log := slog.New(slog.DiscardHandler)
 
-	assert.IsType(t, &tasks.LogNotifier{}, newNotifier(&config.Telegram{}, nil, log), "no tokens: drafts go to the log")
-	assert.IsType(t, &Notifier{}, newNotifier(&config.Telegram{MarketerToken: "1:x"}, nil, log))
+	lc := fxtest.NewLifecycle(t)
+
+	assert.IsType(t, &tasks.LogNotifier{}, newNotifier(lc, &config.Telegram{}, nil, nil, log), "no tokens: drafts go to the log")
+	assert.IsType(t, &Notifier{}, newNotifier(lc, &config.Telegram{MarketerToken: testToken}, nil, nil, log))
 }

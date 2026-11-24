@@ -360,6 +360,9 @@ func TestSendVideoUploadsFile(t *testing.T) {
 		ReplyMarkup: &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
 			{{Text: "Одобрить", CallbackData: "approve:1"}},
 		}},
+		Width:             1080,
+		Height:            1920,
+		SupportsStreaming: true,
 	})
 
 	require.NoError(t, err)
@@ -373,6 +376,9 @@ func TestSendVideoUploadsFile(t *testing.T) {
 	assert.Equal(t, "5", got.fields["message_thread_id"])
 	assert.Equal(t, "Черновик", got.fields["caption"])
 	assert.JSONEq(t, `{"message_id":7}`, got.fields["reply_parameters"])
+	assert.Equal(t, "1080", got.fields["width"])
+	assert.Equal(t, "1920", got.fields["height"])
+	assert.Equal(t, "true", got.fields["supports_streaming"])
 
 	var markup InlineKeyboardMarkup
 	require.NoError(t, json.Unmarshal([]byte(got.fields["reply_markup"]), &markup))

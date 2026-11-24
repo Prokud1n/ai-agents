@@ -139,14 +139,16 @@ func TestParseKey(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			name:     "key made by Key",
-			input:    "incoming/-1001234567890/42/AgADBAADq-_x.mp4",
-			expected: KeyInfo{Prefix: testPrefix, ChatID: testChatID, MessageID: testMessageID, Extension: ".mp4"},
+			name:  "key made by Key",
+			input: "incoming/-1001234567890/42/AgADBAADq-_x.mp4",
+			expected: KeyInfo{
+				Prefix: testPrefix, ChatID: testChatID, MessageID: testMessageID, Name: testUniqueID, Extension: ".mp4",
+			},
 		},
 		{
 			name:     "nested prefix",
 			input:    "dev/incoming/5/1/u.mov",
-			expected: KeyInfo{Prefix: "dev/incoming", ChatID: 5, MessageID: 1, Extension: extMOV},
+			expected: KeyInfo{Prefix: "dev/incoming", ChatID: 5, MessageID: 1, Name: "u", Extension: extMOV},
 		},
 		{name: "dots in the path", input: "incoming/../-100/42/u.mp4", expectedErr: ErrInvalidKey},
 		{name: "no extension", input: "incoming/-100/42/u", expectedErr: ErrInvalidKey},
@@ -169,6 +171,46 @@ func TestParseKey(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, info)
+		})
+	}
+}
+
+func TestResultKey(t *testing.T) {
+	t.Parallel()
+
+	source := KeyInfo{Prefix: testPrefix, ChatID: testChatID, MessageID: testMessageID, Name: testUniqueID, Extension: ".mov"}
+
+	tests := []struct {
+		name        string
+		prefix      string
+		file        string
+		ext         string
+		expected    string
+		expectedErr error
+	}{
+		{
+			name: "reel next to the source", prefix: testResultPrefix, file: testUniqueID + "-v1-reel", ext: mp4Extension,
+			expected: "edits/-1001234567890/42/AgADBAADq-_x-v1-reel.mp4",
+		},
+		{name: "json", prefix: testResultPrefix, file: "u-plan", ext: ".json", expected: "edits/-1001234567890/42/u-plan.json"},
+		{name: "path in the name", prefix: testResultPrefix, file: "a/b", ext: mp4Extension, expectedErr: ErrInvalidFile},
+		{name: "long extension", prefix: testResultPrefix, file: "u", ext: ".mpeg4x", expectedErr: ErrInvalidFile},
+		{name: "invalid prefix", prefix: "Edits", file: "u", ext: mp4Extension, expectedErr: ErrInvalidConfig},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			key, err := ResultKey(tt.prefix, source, tt.file, tt.ext)
+			if tt.expectedErr != nil {
+				require.ErrorIs(t, err, tt.expectedErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, key)
 		})
 	}
 }

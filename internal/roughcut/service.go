@@ -62,11 +62,19 @@ type Service struct {
 }
 
 // Result is what Cut produced; Files has the paths of the written files (Video is empty in plan-only mode).
+// Render is how the plan is rendered: with PlanOnly the caller renders it itself in one pass with the subtitles
+// (Segments and Render go to ffmpeg as they are).
 type Result struct {
 	Plan       Plan
 	Transcript transcription.Result
 	Log        string
 	Files      Files
+	Render     ffmpeg.RenderOptions
+}
+
+// Segments are the kept fragments of the plan for ffmpeg.
+func (r *Result) Segments() []ffmpeg.Segment {
+	return planSegments(&r.Plan)
 }
 
 type Files struct {
@@ -140,7 +148,10 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 
 	s.logPlan(ctx, &plan, data.Plan != nil)
 
-	result := &Result{Plan: plan, Transcript: RemapTranscript(data.Transcript, plan.Keep), Log: DecisionsLog(&plan)}
+	result := &Result{
+		Plan: plan, Transcript: RemapTranscript(data.Transcript, plan.Keep), Log: DecisionsLog(&plan),
+		Render: ffmpeg.RenderOptions{Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info)},
+	}
 
 	if err := prepareOutDir(data.OutDir); err != nil {
 		return nil, err
@@ -155,9 +166,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 		return result, nil
 	}
 
-	result.Files.Video, err = s.render(ctx, data.Source, data.OutDir, &plan, ffmpeg.RenderOptions{
-		Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info),
-	})
+	result.Files.Video, err = s.render(ctx, data.Source, data.OutDir, &plan, result.Render)
 	if err != nil {
 		return nil, err
 	}
@@ -414,14 +423,9 @@ func (s *Service) render(ctx context.Context, src, dir string, plan *Plan, opts 
 		}
 	}()
 
-	segments := make([]ffmpeg.Segment, 0, len(plan.Keep))
-	for _, iv := range plan.Keep {
-		segments = append(segments, ffmpeg.Segment{Start: iv.Start, End: iv.End})
-	}
-
 	tmpVideo := filepath.Join(tmp, VideoFile)
 
-	if err := s.media.RenderSegments(ctx, src, tmpVideo, segments, opts); err != nil {
+	if err := s.media.RenderSegments(ctx, src, tmpVideo, planSegments(plan), opts); err != nil {
 		return "", fmt.Errorf("failed to render video: %w", err)
 	}
 
@@ -431,4 +435,13 @@ func (s *Service) render(ctx context.Context, src, dir string, plan *Plan, opts 
 	}
 
 	return video, nil
+}
+
+func planSegments(plan *Plan) []ffmpeg.Segment {
+	segments := make([]ffmpeg.Segment, 0, len(plan.Keep))
+	for _, iv := range plan.Keep {
+		segments = append(segments, ffmpeg.Segment{Start: iv.Start, End: iv.End})
+	}
+
+	return segments
 }

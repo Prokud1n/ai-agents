@@ -29,6 +29,8 @@ type Draft struct {
 	// ReplyToMessageID is the source message of the task.
 	ReplyToMessageID int64
 	Text             string
+	// MediaKey is the S3 key of the video of a video draft (Text is then its description); empty for a text draft.
+	MediaKey string
 	// Note is shown above the draft when not empty, e.g. why a revision could not be applied.
 	Note    string
 	Buttons []Button
@@ -56,6 +58,8 @@ type CloseDraftData struct {
 	Decision Action
 	// Duplicate: the message repeats a draft already sent by another sender; remove its buttons.
 	Duplicate bool
+	// Video: the draft is a video (it may have been sent to another topic than the task's source).
+	Video bool
 }
 
 // Failure is a task that failed; Message is for the trainer and never has internal error details.
@@ -80,7 +84,7 @@ func NewLogNotifier(log *slog.Logger) *LogNotifier {
 func (n *LogNotifier) SendDraft(ctx context.Context, draft *Draft) (SentDraft, error) {
 	n.log.InfoContext(ctx, "tasks: draft is ready (log notifier)",
 		"task_id", draft.TaskID, "version", draft.Version, "agent", draft.Agent, "chars", len([]rune(draft.Text)),
-		"note", draft.Note)
+		"media_key", draft.MediaKey, "note", draft.Note)
 
 	return SentDraft{}, nil
 }

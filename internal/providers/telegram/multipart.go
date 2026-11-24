@@ -37,6 +37,16 @@ func fileFields(params *SendFileParams) ([]formField, error) {
 		fields = append(fields, formField{name: "parse_mode", value: params.ParseMode})
 	}
 
+	if params.Width > 0 && params.Height > 0 {
+		fields = append(fields,
+			formField{name: "width", value: strconv.Itoa(params.Width)},
+			formField{name: "height", value: strconv.Itoa(params.Height)})
+	}
+
+	if params.SupportsStreaming {
+		fields = append(fields, formField{name: "supports_streaming", value: "true"})
+	}
+
 	if params.ReplyParameters != nil {
 		data, err := json.Marshal(params.ReplyParameters)
 		if err != nil {

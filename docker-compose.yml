@@ -58,6 +58,71 @@ services:
     stop_grace_period: 20s
     restart: unless-stopped
 
+  # Edits the editor's videos (cmd/media-worker) on the media image: ffmpeg parses files from users, so it runs in a
+  # container of its own, without the bot tokens, the Claude API key or the database (only the variables below, no
+  # env_file). Jobs come from the app through Redis, files go through S3. No ports.
+  media-worker:
+    image: ai-agents-media:local
+    build:
+      context: .
+      target: media
+    pull_policy: build
+    entrypoint: ["/app/media-worker"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      APP_STOP_TIMEOUT: ${APP_STOP_TIMEOUT:-15s}
+      REDIS_ADDRESS: ${REDIS_ADDRESS:-redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDIS_DB: ${REDIS_DB:-0}
+      S3_ENDPOINT: ${S3_ENDPOINT:-s3:9000}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
+      S3_BUCKET: ${S3_BUCKET:-media}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_USE_SSL: ${S3_USE_SSL:-false}
+      MEDIA_KEY_PREFIX: ${MEDIA_KEY_PREFIX:-incoming}
+      MEDIA_RESULT_PREFIX: ${MEDIA_RESULT_PREFIX:-edits}
+      MEDIA_UPLOAD_TIMEOUT: ${MEDIA_UPLOAD_TIMEOUT:-10m}
+      # Without the key the worker starts, and every job fails with "editing is not configured".
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      EDITOR_STREAM: ${EDITOR_STREAM:-editor:jobs}
+      MEDIA_WORKER_MAX_SOURCE_DURATION: ${MEDIA_WORKER_MAX_SOURCE_DURATION:-10m}
+      MEDIA_WORKER_MAX_SOURCE_SIZE: ${MEDIA_WORKER_MAX_SOURCE_SIZE:-2147483648}
+      MEDIA_WORKER_FIT: ${MEDIA_WORKER_FIT:-pad}
+      # One render of a 10-minute source within the job; the job itself is bounded by EDITOR_JOB_TIMEOUT (it comes with the job from the app).
+      FFMPEG_TIMEOUT: ${MEDIA_WORKER_FFMPEG_TIMEOUT:-30m}
+      SUBTITLES_STYLE_FILE: ${SUBTITLES_STYLE_FILE:-}
+      # The root filesystem is read-only: the job files, temporary files and the fontconfig cache go to /work.
+      MEDIA_WORKER_DIR: /work
+      TMPDIR: /work
+      XDG_CACHE_HOME: /work/.cache
+    volumes:
+      # Named volume: created owned by the image's nonroot user (from /work in the image); each job's directory is
+      # removed after it, what a killed job leaves is removed on the next start.
+      - media-worker-work:/work
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 2
+    mem_limit: 3g
+    pids_limit: 256
+    depends_on:
+      redis:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+    healthcheck:
+      # Fresh while the worker reaches Redis (a heartbeat file in /work).
+      test: ["CMD", "/app/media-worker", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
   postgres:
     # pgvector/pgvector:0.8.7-pg17
     image: pgvector/pgvector:0.8.7-pg17@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd
@@ -139,3 +204,4 @@ volumes:
   redis-data:
   s3-data:
   telegram-bot-api-data:
+  media-worker-work:
