@@ -16,11 +16,11 @@ const maxAttempts = 2
 
 // Tool answers for the model.
 const (
-	acceptedAnswer = "Принято. Больше ничего не вызывай, ответь одним словом: готово."
-	decidedAnswer  = "Решение уже принято. Больше ничего не вызывай, ответь одним словом: готово."
+	acceptedAnswer = "Принято."
+	decidedAnswer  = "Решение уже принято."
 	retryHint      = " Исправь и вызови submit_edit ещё раз — это последняя попытка. Если не понял, что менять, " +
 		"ответь decision unclear."
-	exhaustedHint = " Попытки исчерпаны: больше ничего не вызывай, ответь одним словом: готово."
+	exhaustedHint = " Попытки исчерпаны."
 	noSessionText = "submit_edit работает только в задаче монтажа."
 	badInputText  = "Вход не разобран: нужен JSON-объект с полями из схемы submit_edit."
 )
@@ -60,7 +60,8 @@ func (s *Session) Outcome() (*Outcome, bool) {
 	return s.outcome, s.outcome != nil
 }
 
-// submit checks the model's input and records the decision; an invalid input is a tool error with the reason.
+// submit checks the model's input and records the decision; an invalid input is a tool error with the reason. The
+// second invalid input ends the decision: its answer is not an error, so the run ends (SubmitTool is final).
 func (s *Session) submit(raw json.RawMessage) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -91,7 +92,7 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 	if s.attempts >= maxAttempts {
 		s.outcome = &Outcome{Kind: InvalidOutcome, Reason: check.Message}
 
-		return "", agents.NewToolError("План не прошёл проверку: " + check.Message + "." + exhaustedHint)
+		return "План не прошёл проверку: " + check.Message + "." + exhaustedHint, nil
 	}
 
 	return "", agents.NewToolError("План не прошёл проверку: " + check.Message + "." + retryHint)

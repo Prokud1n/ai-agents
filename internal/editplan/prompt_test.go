@@ -31,6 +31,17 @@ func TestPrompt(t *testing.T) {
 			absent: []string{captionTag, revisionTag, "Изменения прошлых версий"},
 		},
 		{
+			name: "a plan made before later_words",
+			req: func() *Request {
+				req := testRequest(1, nil)
+				req.Plan.Candidates[0].LaterWords = roughcut.WordRange{}
+
+				return req
+			},
+			expected: []string{"повтор — «держим спину ровно.»; совпало"},
+			absent:   []string{"слова 0–0"},
+		},
+		{
 			name: "first version with a caption",
 			req: func() *Request {
 				req := testRequest(1, nil)
@@ -38,7 +49,7 @@ func TestPrompt(t *testing.T) {
 
 				return req
 			},
-			expected: []string{"Тренер подписала исходник", "<trainer_caption>\nбез первой фразы\n</trainer_caption>"},
+			expected: []string{"Секунды в подписи — по времени исходника.", "<trainer_caption>\nбез первой фразы\n</trainer_caption>"},
 		},
 		{
 			name: "a revision with the previous changes",

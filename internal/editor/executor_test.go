@@ -53,8 +53,21 @@ type fakeBoard struct {
 	noWorker  bool
 	submitted []editjob.Job
 	replaced  []editjob.Job
+	retried   []editjob.Job
 	forgotten []string
 	err       error
+}
+
+// Retry queues the job again in place of a failed result, like the Redis board.
+func (b *fakeBoard) Retry(_ context.Context, job *editjob.Job) (bool, error) {
+	if b.result == nil || b.result.Status != editjob.FailedStatus {
+		return false, nil
+	}
+
+	b.retried = append(b.retried, *job)
+	b.job, b.result = job, nil
+
+	return true, nil
 }
 
 // Replace replaces the job of a planned result, like the Redis board.
@@ -435,6 +448,13 @@ func TestExecutorFailures(t *testing.T) {
 			reported:  "editor: Монтажёр: задача 17 не выполнена, код fonts. Подробности — в логах app и media-worker.",
 		},
 		{
+			name:      "the worker could not build the decided plan: technical",
+			board:     &fakeBoard{result: &editjob.Result{JobID: testJobID, Status: editjob.FailedStatus, Code: editjob.InvalidEditCode}},
+			permanent: technicalText,
+			forgotten: true,
+			reported:  "editor: Монтажёр: задача 17 не выполнена, код invalid_edit. Подробности — в логах app и media-worker.",
+		},
+		{
 			name:      "an unknown code: a neutral text, not «tried several times»",
 			board:     &fakeBoard{result: &editjob.Result{JobID: testJobID, Status: editjob.FailedStatus, Code: "new_code"}},
 			permanent: otherFailureText,
@@ -519,6 +539,13 @@ func TestExecutorDecidesPlannedJob(t *testing.T) {
 			decider: &fakeDecider{outcome: &editplan.Outcome{Kind: editplan.CannotOutcome, Reason: "музыка"}},
 			expected: &editjob.Summary{
 				Changes: []string{"Спорные повторы оставил в ролике: 1."}, Note: captionCannotNote,
+			},
+		},
+		{
+			name:    "the model's answer was cut: the automatic cut, a technical note",
+			decider: &fakeDecider{err: fmt.Errorf("run: %w", agents.ErrMaxTokens)},
+			expected: &editjob.Summary{
+				Changes: []string{"Спорные повторы оставил в ролике: 1."}, Note: captionFailedNote,
 			},
 		},
 		{
@@ -673,15 +700,25 @@ func TestExecutorModelErrors(t *testing.T) {
 		temporary bool
 		reported  bool
 	}{
-		{name: "no API key", err: fmt.Errorf("run: %w", anthropic.ErrAPIKeyMissing), permanent: technicalText, reported: true},
+		{
+			name: "no API key", err: fmt.Errorf("run: %w", anthropic.ErrAPIKeyMissing), permanent: technicalRevisionText,
+			reported: true,
+		},
 		{
 			name: "the key is refused", err: &anthropic.APIError{StatusCode: http.StatusUnauthorized},
-			permanent: technicalText, reported: true,
+			permanent: technicalRevisionText, reported: true,
 		},
 		{name: "overloaded", err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable}, temporary: true},
 		{name: "the network", err: errors.New("connection reset"), temporary: true},
 		{name: "the model refused", err: fmt.Errorf("run: %w", agents.ErrRefusal), permanent: unclearRevisionText},
-		{name: "too many steps", err: fmt.Errorf("run: %w", agents.ErrIterationLimit), permanent: unclearRevisionText},
+		{
+			name: "too many steps: ours, not the trainer's", err: fmt.Errorf("run: %w", agents.ErrIterationLimit),
+			permanent: technicalRevisionText, reported: true,
+		},
+		{
+			name: "the answer was cut", err: fmt.Errorf("run: %w", agents.ErrMaxTokens),
+			permanent: technicalRevisionText, reported: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -698,7 +735,7 @@ func TestExecutorModelErrors(t *testing.T) {
 			if tt.temporary {
 				var temporary *tasks.TemporaryError
 				require.ErrorAs(t, err, &temporary)
-				assert.Equal(t, modelFailedText, temporary.Message)
+				assert.Equal(t, modelFailedRevisionText, temporary.Message)
 			} else {
 				var permanent *tasks.PermanentError
 				require.ErrorAs(t, err, &permanent)
@@ -723,4 +760,38 @@ func TestExecutorStorageError(t *testing.T) {
 
 	var permanent *tasks.PermanentError
 	assert.NotErrorAs(t, err, &permanent)
+}
+
+// TestExecutorRetriesRender: a temporary failure of a decided render queues the same render again with new deadlines
+// (the edit is kept: no new transcription, no new model call); the attempt is counted by the task.
+func TestExecutorRetriesRender(t *testing.T) {
+	t.Parallel()
+
+	render := pendingJob(2 * time.Hour)
+	render.ID, render.Version, render.Stage = "task-17-v2", 2, editjob.RenderStage
+	render.Settings, render.Edit = &testPlan().Settings, &editOutcome().Edit
+	b := &fakeBoard{
+		job:    render,
+		result: &editjob.Result{JobID: render.ID, Status: editjob.FailedStatus, Code: editjob.TemporaryCode},
+	}
+	decider := &fakeDecider{}
+
+	_, err := newTestExecutorWith(&testDeps{board: b, decider: decider, tech: &fakeTech{}}).Execute(t.Context(), revisionData())
+
+	var temporary *tasks.TemporaryError
+	require.ErrorAs(t, err, &temporary)
+	assert.Equal(t, editFailedRevisionText, temporary.Message)
+
+	require.Len(t, b.retried, 1)
+	assert.Equal(t, editjob.RenderStage, b.retried[0].Stage)
+	assert.Equal(t, render.Edit, b.retried[0].Edit, "the same decision")
+	assert.Equal(t, testNow, b.retried[0].CreatedAt)
+	assert.Equal(t, testNow.Add(testQueue), b.retried[0].QueueDeadline)
+	assert.Empty(t, b.forgotten, "the render is kept")
+	assert.Empty(t, decider.requests, "no new model call")
+
+	_, err = newTestExecutorWith(&testDeps{board: b, decider: decider, tech: &fakeTech{}}).Execute(t.Context(), revisionData())
+
+	var deferred *tasks.DeferredError
+	require.ErrorAs(t, err, &deferred, "the next run waits for the queued render")
 }

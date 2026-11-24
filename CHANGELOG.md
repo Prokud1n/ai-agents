@@ -11,13 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The editor (Монтажёр) takes revisions by text, applies the caption and decides disputed repeats (T3.4c). A reply to
   the video draft (and «Правки» → reply) is a new version of the task: the editor's agent (`agents/editor`, Sonnet by
-  `LLM_DEFAULT_MODEL`, local skill `reels-editing`, calls counted in `llm_usage`) decides on the transcript and the
+  `LLM_DEFAULT_MODEL`, the editing rules in its cached role prompt, calls counted in `llm_usage`) decides on the transcript and the
   plan of the previous version and answers with the `submit_edit` tool — a structured edit (cut or bring back words,
-  trim the start or the end by seconds of the reel, keep the second take of a disputed repeat, correct a subtitle
+  trim the start or the end — by seconds of the source for a caption, of the reel for a revision, a word counts by its
+  middle — keep the second take of a disputed repeat, correct a subtitle
   word) or a refusal (`cannot` / `unclear`). `internal/editplan` checks the edit against the transcript and the plan
   (indices, candidate IDs, text limits, at least 1 s left, the revision changes something), sends a failed check back
-  to the model once, and only a checked `roughcut.Edit` goes to the media worker; the trainer's text and the model's
-  answer never do. Revisions add up (`plan.json` keeps the edit, `Plan.Edit`); the new version is rendered from the
+  to the model once, and only a checked `roughcut.Edit` goes to the media worker: word indices, candidate IDs and
+  corrected subtitle words (no control or invisible characters, no markup), plus the model's short notes that go only
+  into `decisions.log`; the trainer's text never does, and no free text reaches ffmpeg or the subtitles. Revisions add up (`plan.json` keeps the edit, `Plan.Edit`); the new version is rendered from the
   stored transcript of the source — **Whisper is not called again** — under its own keys (`…-v2-reel.mp4`), the
   earlier versions stay. The first version: with the trainer's caption or disputed repeats the worker stops after
   the plan (`planned`), the model decides, and the job is replaced by its render (`editjob.Board.Replace`, same job
@@ -25,8 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `decisions.log`. The draft of a new version says what changed («Новая версия рилс: было 0:45, стало 0:42.»,
   «Обрезал начало: убрал первые 3 с.»); a revision the editor cannot do or did not understand gets «Такое я пока не
   умею…» / «Не понял, что именно поменять…» above the previous draft; a caption that cannot be applied leaves the
-  automatic cut with a note. Claude API failures: a refused key is a technical failure («Техничка»), the network and
-  overload are retried by the task.
+  automatic cut with a note. Claude API failures: a refused key, an answer cut by `max_tokens` or too many steps are
+  technical failures («Техничка»), the network and overload are retried by the task; a temporary failure of a
+  decided render queues the same render again (`editjob.Board.Retry`: no new transcription, no new model call). The
+  run ends right after an accepted `submit_edit` (a final tool of `agents.Runtime`), and the first user message is a
+  cache breakpoint for every agent.
 
 - The editor (Монтажёр) in Telegram, a deterministic pipeline (T3.4b): a video in «Исходники» (stored by T3.4a)
   becomes the editor's task (`reels-edit`, the S3 key in `media`, the caption kept as the input and shown in the

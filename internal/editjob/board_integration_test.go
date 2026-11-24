@@ -315,6 +315,11 @@ func TestIntegrationBoardReplace(t *testing.T) {
 
 	_, err = board.MarkStarted(ctx, job.ID, testDeadline)
 	require.NoError(t, err)
+
+	locked, err := board.Lock(ctx, job.ID, testOwner)
+	require.NoError(t, err)
+	require.True(t, locked)
+
 	require.NoError(t, board.Finish(ctx, job, &Result{JobID: job.ID, Status: PlannedStatus, Candidates: 1}))
 	require.NoError(t, board.Ack(ctx, d.MessageID))
 
@@ -334,6 +339,10 @@ func TestIntegrationBoardReplace(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, started, "the render's timeout counts from its own start")
 
+	locked, err = board.Locked(ctx, job.ID)
+	require.NoError(t, err)
+	assert.False(t, locked, "a result means the worker is done: its lock goes too")
+
 	stored, found, err := board.Job(ctx, job.ID)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -346,4 +355,38 @@ func TestIntegrationBoardReplace(t *testing.T) {
 	require.NotNil(t, next.Job)
 	assert.Equal(t, RenderStage, next.Job.Stage)
 	assert.Equal(t, render.Settings, next.Job.Settings)
+
+	checkRetry(t, board, next, &render)
+}
+
+// checkRetry: a render that failed is queued again once, with the same edit and new deadlines.
+func checkRetry(t *testing.T, board *Board, delivery *Delivery, render *Job) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	require.NoError(t, board.Finish(ctx, render, Failed(render.ID, TemporaryCode, testDeadline)))
+	require.NoError(t, board.Ack(ctx, delivery.MessageID))
+
+	again := *render
+	again.QueueDeadline = testDeadline.Add(time.Hour)
+
+	retried, err := board.Retry(ctx, &again)
+	require.NoError(t, err)
+	assert.True(t, retried)
+
+	twice, err := board.Retry(ctx, &again)
+	require.NoError(t, err)
+	assert.False(t, twice, "queued once")
+
+	_, found, err := board.Result(ctx, render.ID)
+	require.NoError(t, err)
+	assert.False(t, found, "the failed result is gone")
+
+	next, err := board.Fetch(ctx, testOwner)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	require.NotNil(t, next.Job)
+	assert.Equal(t, render.Edit, next.Job.Edit, "the same decision")
+	assert.True(t, again.QueueDeadline.Equal(next.Job.QueueDeadline))
 }

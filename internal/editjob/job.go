@@ -72,6 +72,9 @@ const (
 	TimeoutCode FailureCode = "timeout"
 	// QueueTimeoutCode: no worker took the job before its queue deadline (EDITOR_QUEUE_TIMEOUT).
 	QueueTimeoutCode FailureCode = "queue_timeout"
+	// InvalidEditCode: the plan of a render job cannot be built with its edit (the app checked it, so this is a bug
+	// or a change of the transcript): a technical failure, not the trainer's.
+	InvalidEditCode FailureCode = "invalid_edit"
 	// TemporaryCode: the API, the storage or ffmpeg failed; another attempt may succeed.
 	TemporaryCode FailureCode = "temporary"
 )

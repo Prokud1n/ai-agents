@@ -11,7 +11,9 @@
 // after the plan with PlannedStatus and uploads only the transcript, the plan and the log; the app decides with the
 // model and replaces it with a render job. A render job (the decided first version or a revision) reads the stored
 // transcript instead of transcribing the source again and builds the plan with the editor's checked Edit. The worker
-// never sees the trainer's text or the model's answer: only word indices, candidate IDs and corrected words.
+// never sees the trainer's text: the edit is word indices, candidate IDs and corrected subtitle words (checked by the
+// app), plus the model's short notes that go only into decisions.log; no free text reaches ffmpeg or the subtitles
+// but the corrected words.
 package mediaworker
 
 import (
@@ -378,6 +380,8 @@ func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 		return fail(editjob.NoAudioCode, err)
 	case errors.Is(err, roughcut.ErrNoVideo) || errors.Is(err, roughcut.ErrNoFrameRate):
 		return fail(editjob.BadSourceCode, err)
+	case errors.Is(err, roughcut.ErrInvalidPlan) && w.job.EffectiveStage() == editjob.RenderStage:
+		return fail(editjob.InvalidEditCode, err)
 	case errors.Is(err, roughcut.ErrInvalidPlan):
 		return fail(editjob.NoSpeechCode, err)
 	case err != nil:

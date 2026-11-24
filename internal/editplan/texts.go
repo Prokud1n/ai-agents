@@ -24,16 +24,16 @@ const (
 // describeChanges are the sentences for the trainer about what this decision changed: the trim, the fragments cut
 // and brought back, the takes chosen (a revision; the first version counts the repeats itself) and the corrected
 // words. No indices, times of the source or technical words.
-func describeChanges(req *Request, in *Input, trimmed []roughcut.WordRange) []string {
+func describeChanges(req *Request, in *Input, trimmed *trim) []string {
 	words := req.Transcript.Words
 	lines := make([]string, 0, maxChangeLines)
 
-	if in.TrimStart > 0 && len(trimmed) > 0 {
-		lines = append(lines, "Обрезал начало: убрал первые "+secondsText(in.TrimStart)+".")
+	if trimmed.start > 0 {
+		lines = append(lines, "Обрезал начало: убрал "+secondsText(trimmed.start, "первую секунду", "первые")+".")
 	}
 
-	if in.TrimEnd > 0 && len(trimmed) > 0 {
-		lines = append(lines, "Обрезал конец: убрал последние "+secondsText(in.TrimEnd)+".")
+	if trimmed.end > 0 {
+		lines = append(lines, "Обрезал конец: убрал "+secondsText(trimmed.end, "последнюю секунду", "последние")+".")
 	}
 
 	for _, r := range in.Remove {
@@ -50,7 +50,7 @@ func describeChanges(req *Request, in *Input, trimmed []roughcut.WordRange) []st
 
 	for _, f := range in.FixWords {
 		lines = append(lines, fmt.Sprintf("Исправил в субтитрах: «%s» → «%s».",
-			strings.TrimSpace(words[f.Index].Word), strings.TrimSpace(f.Text)))
+			currentWord(req, f.Index), strings.TrimSpace(f.Text)))
 	}
 
 	if len(lines) > maxChangeLines {
@@ -91,9 +91,12 @@ func quote(words []transcription.Word, r roughcut.WordRange) string {
 	return truncate(strings.Join(parts, " "), maxQuoteRunes)
 }
 
-// secondsText: «3 с», «2,5 с».
-func secondsText(seconds float64) string {
-	rounded := math.Round(seconds*tenths) / tenths
+// secondsText: «первую секунду» for a second, otherwise «первые 2,5 с» (tenths, at least 0,1 с).
+func secondsText(seconds float64, one, many string) string {
+	rounded := max(math.Round(seconds*tenths)/tenths, 1.0/tenths)
+	if int(math.Round(rounded*tenths)) == tenths {
+		return one
+	}
 
-	return strings.Replace(strconv.FormatFloat(rounded, 'f', -1, float64Bits), ".", ",", 1) + " с"
+	return many + " " + strings.Replace(strconv.FormatFloat(rounded, 'f', -1, float64Bits), ".", ",", 1) + " с"
 }

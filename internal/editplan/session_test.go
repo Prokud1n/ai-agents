@@ -32,10 +32,10 @@ func TestSubmitTool(t *testing.T) {
 	}{
 		{name: "valid at once", inputs: []string{validInput}, expectedKind: EditOutcome},
 		{name: "valid after one failure", inputs: []string{invalidInput, validInput}, expectedKind: EditOutcome, toolErrors: 1},
-		{name: "invalid twice", inputs: []string{invalidInput, invalidInput}, expectedKind: InvalidOutcome, toolErrors: 2},
+		{name: "invalid twice", inputs: []string{invalidInput, invalidInput}, expectedKind: InvalidOutcome, toolErrors: 1},
 		{
 			name: "unknown fields", inputs: []string{`{"decision": "edit", "reason": "x", "music": "on"}`, `[]`},
-			expectedKind: InvalidOutcome, toolErrors: 2,
+			expectedKind: InvalidOutcome, toolErrors: 1,
 		},
 		{name: "refusal", inputs: []string{`{"decision": "cannot", "reason": "музыка"}`}, expectedKind: CannotOutcome},
 		{name: "later calls do not change the decision", inputs: []string{validInput, invalidInput}, expectedKind: EditOutcome},
@@ -80,9 +80,9 @@ func TestSubmitToolMessages(t *testing.T) {
 	assert.Contains(t, err.Error(), "вне расшифровки")
 	assert.Contains(t, err.Error(), "последняя попытка")
 
-	_, err = tool.Execute(ctx, json.RawMessage(invalidInput))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Попытки исчерпаны")
+	exhausted, err := tool.Execute(ctx, json.RawMessage(invalidInput))
+	require.NoError(t, err, "the decision is made: the run ends")
+	assert.Contains(t, exhausted, "Попытки исчерпаны")
 
 	answer, err := tool.Execute(ctx, json.RawMessage(validInput))
 	require.NoError(t, err)
@@ -93,6 +93,7 @@ func TestSubmitToolMessages(t *testing.T) {
 
 	assert.True(t, json.Valid(tool.InputSchema()))
 	assert.Equal(t, SubmitToolName, tool.Name())
+	assert.True(t, tool.EndsRun())
 }
 
 // fakeRunner plays the model: it calls submit_edit with its inputs (through the run's context), then answers.

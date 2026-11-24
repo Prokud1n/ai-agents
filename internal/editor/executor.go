@@ -55,6 +55,7 @@ const (
 	workerUnavailableCode = "worker_unavailable"
 	resultKeysCode        = "result_keys"
 	modelUnavailableCode  = "model_unavailable"
+	modelFailedCode       = "model_failed"
 )
 
 var (
@@ -68,6 +69,7 @@ var (
 type board interface {
 	Submit(ctx context.Context, job *editjob.Job) (bool, error)
 	Replace(ctx context.Context, job *editjob.Job) (bool, error)
+	Retry(ctx context.Context, job *editjob.Job) (bool, error)
 	Job(ctx context.Context, id string) (editjob.Job, bool, error)
 	Result(ctx context.Context, id string) (editjob.Result, bool, error)
 	Forget(ctx context.Context, id string) error
@@ -266,9 +268,10 @@ func refusal(outcome *editplan.Outcome) error {
 	return fmt.Errorf("%w: %s: %s", errRevisionRefused, outcome.Kind, outcome.Reason)
 }
 
-// decide asks the model. A model that refused, ran out of tokens or steps is an outcome without an edit; the API
-// that refuses the key or the request is a technical failure («Техничка»); anything else (the network, 429, 5xx) is
-// retried by the task.
+// decide asks the model. A model that refused is an outcome without an edit (a revision not understood). A run that
+// failed on our side (max_tokens, too many steps, a broken response) is technical: «Техничка» is told, a revision
+// fails with the technical text, the first version is cut automatically. The API that refuses the key or the request
+// is a technical failure; anything else (the network, 429, 5xx) is retried by the task.
 func (e *Executor) decide(ctx context.Context, data *tasks.ExecuteData, req *editplan.Request) (*editplan.Outcome, error) {
 	outcome, err := e.decider.Decide(ctx, req)
 	if err == nil {
@@ -278,16 +281,24 @@ func (e *Executor) decide(ctx context.Context, data *tasks.ExecuteData, req *edi
 	var apiErr *anthropic.APIError
 
 	switch {
-	case errors.Is(err, agents.ErrRefusal) || errors.Is(err, agents.ErrMaxTokens) ||
-		errors.Is(err, agents.ErrIterationLimit) || errors.Is(err, agents.ErrInvalidResponse):
-		e.log.WarnContext(ctx, "editor: the model did not decide", "task_id", data.TaskID, "error", err)
+	case errors.Is(err, agents.ErrRefusal):
+		e.log.WarnContext(ctx, "editor: the model refused to decide", "task_id", data.TaskID, "error", err)
 
 		return &editplan.Outcome{Kind: editplan.NoAnswerOutcome, Reason: err.Error()}, nil
+	case errors.Is(err, agents.ErrMaxTokens) || errors.Is(err, agents.ErrIterationLimit) ||
+		errors.Is(err, agents.ErrInvalidResponse):
+		if data.Version > 1 {
+			return nil, e.technical(ctx, data, modelFailedCode, err)
+		}
+
+		e.report(ctx, data, modelFailedCode, err)
+
+		return &editplan.Outcome{Kind: editplan.FailedOutcome, Reason: err.Error()}, nil
 	case errors.Is(err, anthropic.ErrAPIKeyMissing) || errors.Is(err, agents.ErrAgentNotFound) ||
 		errors.Is(err, editplan.ErrInvalidRequest) || (errors.As(err, &apiErr) && !apiErr.Retryable()):
 		return nil, e.technical(ctx, data, modelUnavailableCode, err)
 	default:
-		return nil, &tasks.TemporaryError{Message: modelFailedText, Err: err}
+		return nil, &tasks.TemporaryError{Message: forVersion(data.Version, modelFailedText, modelFailedRevisionText), Err: err}
 	}
 }
 
@@ -434,13 +445,19 @@ func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *
 		return tasks.Output{Text: Describe(result, data.Version, data.Input, summary), MediaKey: files.Reel}, nil
 	}
 
-	e.forget(ctx, result.JobID)
-
 	err := fmt.Errorf("edit job %s failed: %s", result.JobID, result.Code)
+	temporary := &tasks.TemporaryError{Message: forVersion(data.Version, editFailedText, editFailedRevisionText), Err: err}
+
+	// A decided render is queued again as it is: no new transcription, no new decision of the model.
+	if result.Code == editjob.TemporaryCode && e.retryRender(ctx, result.JobID) {
+		return tasks.Output{}, temporary
+	}
+
+	e.forget(ctx, result.JobID)
 
 	switch {
 	case result.Code == editjob.TemporaryCode:
-		return tasks.Output{}, &tasks.TemporaryError{Message: editFailedText, Err: err}
+		return tasks.Output{}, temporary
 	case technicalCodes[result.Code]:
 		return tasks.Output{}, e.technical(ctx, data, string(result.Code), err)
 	default:
@@ -448,22 +465,53 @@ func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *
 	}
 }
 
+// retryRender queues the render stage of the job again with new deadlines, in place of its failed result; false
+// when the job is not a render (an auto job starts over) or could not be queued (then it is forgotten).
+func (e *Executor) retryRender(ctx context.Context, id string) bool {
+	job, found, err := e.board.Job(ctx, id)
+	if err != nil || !found || job.Stage != editjob.RenderStage {
+		return false
+	}
+
+	now := e.now()
+	job.CreatedAt, job.QueueDeadline, job.Timeout = now, now.Add(e.queueTimeout), e.jobTimeout
+
+	retried, err := e.board.Retry(ctx, &job)
+	if err != nil {
+		e.log.ErrorContext(ctx, "editor: failed to queue the render again", "error", err, "job_id", id)
+
+		return false
+	}
+
+	if retried {
+		e.log.InfoContext(ctx, "editor: render queued again after a temporary failure", "job_id", id)
+	}
+
+	return retried
+}
+
 // technicalCodes are failures of the setup, not of the video: the trainer gets technicalText, the team the code.
 var technicalCodes = map[editjob.FailureCode]bool{
 	editjob.NotConfiguredCode:         true,
 	editjob.TranscriptionRejectedCode: true,
 	editjob.FontsCode:                 true,
+	editjob.InvalidEditCode:           true,
 }
 
 // technical fails the task with the plain text for the trainer and tells the team the code in «Техничка».
 func (e *Executor) technical(ctx context.Context, data *tasks.ExecuteData, code string, cause error) error {
+	e.report(ctx, data, code, cause)
+
+	return &tasks.PermanentError{Message: forVersion(data.Version, technicalText, technicalRevisionText), Err: cause}
+}
+
+// report logs a technical failure and tells the team the code in «Техничка».
+func (e *Executor) report(ctx context.Context, data *tasks.ExecuteData, code string, cause error) {
 	e.log.ErrorContext(ctx, "editor: editing is unavailable", "task_id", data.TaskID, "code", code, "error", cause)
 
 	if err := e.tech.Report(ctx, AgentName, techReportText(data.TaskID, code)); err != nil {
 		e.log.ErrorContext(ctx, "editor: failed to report to «Техничка»", "error", err, "task_id", data.TaskID)
 	}
-
-	return &tasks.PermanentError{Message: technicalText, Err: cause}
 }
 
 func (e *Executor) forget(ctx context.Context, id string) {

@@ -11,7 +11,8 @@ import (
 const SubmitToolName = "submit_edit"
 
 // SubmitTool is submit_edit: the editor's structured decision, checked against the video of the run's session
-// (WithSession). Outside a session (cmd/agent-run) it answers that it works only in an editing task.
+// (WithSession). Outside a session (cmd/agent-run) it answers that it works only in an editing task. It is a final
+// tool: once it answers without an error the decision is made and the run ends (agents.Runtime).
 type SubmitTool struct{}
 
 func NewSubmitTool() *SubmitTool {
@@ -31,6 +32,11 @@ func (*SubmitTool) Description() string {
 
 func (*SubmitTool) InputSchema() json.RawMessage {
 	return json.RawMessage(inputSchema)
+}
+
+// EndsRun: the decision is in the session, the model's next turn is not needed.
+func (*SubmitTool) EndsRun() bool {
+	return true
 }
 
 func (*SubmitTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
@@ -58,12 +64,12 @@ const inputSchema = `{
     "trim_start_seconds": {
       "type": "number",
       "minimum": 0,
-      "description": "Убрать начало текущего ролика: столько секунд по времени ролика (слова, начатые раньше, вырезаются)."
+      "description": "Убрать начало: столько секунд. Для подписи к исходнику — по времени исходника, для правки — по времени текущего ролика. Вырезаются слова, середина которых попадает в эти секунды."
     },
     "trim_end_seconds": {
       "type": "number",
       "minimum": 0,
-      "description": "Убрать конец текущего ролика: столько последних секунд по времени ролика."
+      "description": "Убрать конец: столько последних секунд. Для подписи к исходнику — по времени исходника, для правки — по времени текущего ролика."
     },
     "remove_words": {
       "type": "array",

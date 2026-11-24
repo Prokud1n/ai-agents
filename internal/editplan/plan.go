@@ -5,8 +5,9 @@
 // cut or bring back, a trim of the start or the end, candidates to cut, corrected subtitle words — or with a refusal
 // (cannot, unclear). The edit is checked against the transcript and the current plan (Apply): the indices exist,
 // the candidates exist, something is left in the reel, the texts fit; the plan is built with it the same way the
-// media worker will build it. Only a checked edit goes to the worker (as roughcut.Edit in the job); the trainer's
-// text and the model's answer never do. An invalid edit goes back to the model with the reason once more.
+// media worker will build it. Only a checked edit goes to the worker (as roughcut.Edit in the job): indices, IDs and
+// corrected subtitle words, plus the model's short notes that go only into decisions.log; the trainer's text never
+// does. An invalid edit goes back to the model with the reason once more.
 //
 // A revision continues the previous version: the new edit is the previous one (roughcut.Plan.Edit) with this change,
 // so the revisions add up.
@@ -65,8 +66,11 @@ const (
 	UnclearOutcome OutcomeKind = "unclear"
 	// InvalidOutcome: the model's edit failed the checks twice.
 	InvalidOutcome OutcomeKind = "invalid"
-	// NoAnswerOutcome: the model finished without calling submit_edit.
+	// NoAnswerOutcome: the model finished without calling submit_edit, or refused to answer.
 	NoAnswerOutcome OutcomeKind = "no_answer"
+	// FailedOutcome: the run failed on our side (the answer cut by max_tokens, too many steps, a broken response):
+	// a technical failure, not the trainer's.
+	FailedOutcome OutcomeKind = "failed"
 )
 
 // Outcome is the editor's decision.

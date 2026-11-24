@@ -27,6 +27,12 @@ type Tool interface {
 	Execute(ctx context.Context, input json.RawMessage) (string, error)
 }
 
+// finalTool is implemented by a tool whose successful call is the answer of the run (the editor's submit_edit, a
+// structured decision): the run ends right after its result, without another model turn to read it.
+type finalTool interface {
+	EndsRun() bool
+}
+
 // toolAvailability is implemented by a tool that may be unavailable in this environment, e.g. without
 // an optional API key. Such a tool stays registered and tells the model it is unavailable when called;
 // the registry warns on start about every agent that lists it, so the tool is never lost silently.

@@ -241,6 +241,28 @@ func TestPipelineRenderWithoutTranscript(t *testing.T) {
 	assert.Zero(t, fakes.transcriber.calls)
 }
 
+// TestPipelineRenderInvalidEdit: a decided edit the plan cannot be built with is the app's fault, not «no speech».
+func TestPipelineRenderInvalidEdit(t *testing.T) {
+	t.Parallel()
+
+	fakes := newPipelineFakes(t)
+	fakes.cutter.err = fmt.Errorf("plan: %w", roughcut.ErrInvalidPlan)
+
+	first, err := editjob.Files(fakes.store, testSourceKey, 1)
+	require.NoError(t, err)
+
+	stored := `{"language":"ru","duration":182,"words":[{"word":"привет","start":0.5,"end":1}]}`
+	require.NoError(t, fakes.store.PutResult(t.Context(), first.Transcript, strings.NewReader(stored), editjob.JSONContentType))
+
+	job := testJob()
+	job.ID, job.Version, job.Stage = editjob.JobID(17, 2), 2, editjob.RenderStage
+	job.Settings = &roughcut.Settings{MaxPause: 0.4, RetakeSimilarity: 0.7}
+
+	_, err = fakes.pipeline(t, t.TempDir()).Run(t.Context(), job)
+	require.Error(t, err)
+	assert.Equal(t, editjob.InvalidEditCode, CodeOf(err))
+}
+
 func TestPipelineFailures(t *testing.T) {
 	t.Parallel()
 

@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
-	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
 const (
@@ -99,9 +98,9 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	trimmed := trimRanges(req.Plan, req.Transcript.Words, in.TrimStart, in.TrimEnd)
+	trimmed := trimWords(req, in.TrimStart, in.TrimEnd)
 
-	edit, err := mergeEdit(req, in, trimmed)
+	edit, err := mergeEdit(req, in, trimmed.ranges)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +121,7 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	cut, kept := countCandidates(in.Candidates)
 
 	return &Outcome{
-		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, trimmed), Cut: cut, Kept: kept,
+		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, &trimmed), Cut: cut, Kept: kept,
 		Duration: plan.Duration, Reason: reason,
 	}, nil
 }
@@ -138,9 +137,9 @@ func checkInput(req *Request, in *Input) error {
 		return checkFailedf("слишком много исправлений: не больше %d в fix_words", maxFixes)
 	case !validSeconds(in.TrimStart) || !validSeconds(in.TrimEnd):
 		return checkFailedf("trim_start_seconds и trim_end_seconds — неотрицательные числа секунд")
-	case in.TrimStart+in.TrimEnd >= req.Plan.Duration:
-		return checkFailedf("обрезка %.1f + %.1f с не меньше всего ролика (%.1f с)", in.TrimStart, in.TrimEnd,
-			req.Plan.Duration)
+	case in.TrimStart+in.TrimEnd >= timelineDuration(req):
+		return checkFailedf("обрезка %.1f + %.1f с не меньше всего видео (%.1f с)", in.TrimStart, in.TrimEnd,
+			timelineDuration(req))
 	}
 
 	for _, ranges := range [][]roughcut.WordRange{in.Remove, in.Restore} {
@@ -156,7 +155,7 @@ func checkInput(req *Request, in *Input) error {
 		return err
 	}
 
-	return checkFixes(words, in.FixWords)
+	return checkFixes(req, in.FixWords)
 }
 
 func validSeconds(s float64) bool {
@@ -186,7 +185,10 @@ func checkCandidates(plan *roughcut.Plan, decisions []CandidateDecision) error {
 	return nil
 }
 
-func checkFixes(words int, fixes []roughcut.WordFix) error {
+// checkFixes: every corrected word exists, once, fits and changes the word as it is now (the transcript or an earlier
+// correction).
+func checkFixes(req *Request, fixes []roughcut.WordFix) error {
+	words := len(req.Transcript.Words)
 	seen := make(map[int]bool, len(fixes))
 
 	for _, f := range fixes {
@@ -200,7 +202,9 @@ func checkFixes(words int, fixes []roughcut.WordFix) error {
 		case text == "" || utf8.RuneCountInString(text) > maxWordRunes:
 			return checkFailedf("исправление слова %d: от 1 до %d символов", f.Index, maxWordRunes)
 		case strings.ContainsFunc(text, forbiddenRune):
-			return checkFailedf("исправление слова %d: без переносов строк и символов { } \\ < >", f.Index)
+			return checkFailedf("исправление слова %d: без переносов строк, невидимых символов и { } \\ < >", f.Index)
+		case text == currentWord(req, f.Index):
+			return checkFailedf("исправление слова %d ничего не меняет: в субтитрах уже «%s»", f.Index, text)
 		}
 
 		seen[f.Index] = true
@@ -209,37 +213,112 @@ func checkFixes(words int, fixes []roughcut.WordFix) error {
 	return nil
 }
 
-// forbiddenRune: control characters and line breaks, and what subtitles or tags could read as markup.
-func forbiddenRune(r rune) bool {
-	return unicode.IsControl(r) || strings.ContainsRune(`{}\<>`, r)
-}
-
-// trimRanges are the words of the reel that start within its first trimStart seconds or end within its last trimEnd
-// seconds, on the timeline of the current plan.
-func trimRanges(plan *roughcut.Plan, words []transcription.Word, trimStart, trimEnd float64) []roughcut.WordRange {
-	if trimStart <= 0 && trimEnd <= 0 {
-		return nil
+// currentWord is the word as the subtitles show it now: an earlier correction, or the transcript.
+func currentWord(req *Request, index int) string {
+	previous := previousEdit(req.Plan)
+	for _, f := range previous.Words {
+		if f.Index == index {
+			return strings.TrimSpace(f.Text)
+		}
 	}
 
-	marked := make([]bool, len(words))
+	return strings.TrimSpace(req.Transcript.Words[index].Word)
+}
+
+// forbiddenRune: control characters and line breaks, invisible format characters (zero width, bidi marks), and
+// what subtitles or tags could read as markup.
+func forbiddenRune(r rune) bool {
+	return invisibleRune(r) || strings.ContainsRune(`{}\<>`, r)
+}
+
+func invisibleRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+}
+
+// trim is what a trim of the start and the end cuts: the words, and the seconds actually cut at the start and at the
+// end of the timeline (up to the end of the last word cut, from the start of the first one).
+type trim struct {
+	ranges     []roughcut.WordRange
+	start, end float64
+}
+
+// span is a word on a timeline; ok is false for a word that is not on it (cut from the reel).
+type span struct {
+	start, end float64
+	ok         bool
+}
+
+// trimWords: a word is trimmed when its middle is within the first trimStart or the last trimEnd seconds. The first
+// version counts on the source (the trainer captioned the source), a revision on the reel the trainer saw.
+func trimWords(req *Request, trimStart, trimEnd float64) trim {
+	if trimStart <= 0 && trimEnd <= 0 {
+		return trim{}
+	}
+
+	spans, total := timeline(req)
+	marked := make([]bool, len(spans))
+
+	var t trim
+
+	for i, sp := range spans {
+		if !sp.ok {
+			continue
+		}
+
+		middle := (sp.start + sp.end) / 2
+
+		if trimStart > 0 && middle < trimStart {
+			marked[i], t.start = true, max(t.start, sp.end)
+		}
+
+		if trimEnd > 0 && middle > total-trimEnd {
+			marked[i], t.end = true, max(t.end, total-sp.start)
+		}
+	}
+
+	t.ranges = ranges(marked)
+
+	return t
+}
+
+// timeline places the words: on the source for the first version, on the current reel for a revision.
+func timeline(req *Request) ([]span, float64) {
+	words := req.Transcript.Words
+	spans := make([]span, len(words))
+
+	if !req.IsRevision() {
+		for i, w := range words {
+			spans[i] = span{start: w.Start, end: w.End, ok: true}
+		}
+
+		return spans, req.Plan.SourceDuration
+	}
+
 	offset := 0.0
 
-	for _, iv := range plan.Keep {
+	for _, iv := range req.Plan.Keep {
 		for i, w := range words {
 			middle := (w.Start + w.End) / 2
 			if middle < iv.Start || middle >= iv.End {
 				continue
 			}
 
-			start := offset + max(w.Start, iv.Start) - iv.Start
-			end := offset + min(w.End, iv.End) - iv.Start
-			marked[i] = (trimStart > 0 && start < trimStart) || (trimEnd > 0 && end > plan.Duration-trimEnd)
+			spans[i] = span{start: offset + max(w.Start, iv.Start) - iv.Start, end: offset + min(w.End, iv.End) - iv.Start, ok: true}
 		}
 
 		offset += iv.End - iv.Start
 	}
 
-	return ranges(marked)
+	return spans, req.Plan.Duration
+}
+
+// timelineDuration is the length of the timeline trims count on.
+func timelineDuration(req *Request) float64 {
+	if req.IsRevision() {
+		return req.Plan.Duration
+	}
+
+	return req.Plan.SourceDuration
 }
 
 // ranges turns marked words into ranges of neighbouring indices.
@@ -450,9 +529,18 @@ func orDash(s string) string {
 	return s
 }
 
-// oneLine collapses whitespace and line breaks and cuts the text to maxReasonRunes.
+// oneLine drops control and invisible characters, collapses whitespace and line breaks and cuts the text to
+// maxReasonRunes.
 func oneLine(text string) string {
-	return truncate(strings.Join(strings.Fields(text), " "), maxReasonRunes)
+	visible := strings.Map(func(r rune) rune {
+		if invisibleRune(r) {
+			return ' '
+		}
+
+		return r
+	}, text)
+
+	return truncate(strings.Join(strings.Fields(visible), " "), maxReasonRunes)
 }
 
 func truncate(text string, limit int) string {

@@ -34,7 +34,7 @@ const (
 	rejectedAnswer = "Отклонено"
 	reviseHint     = "Ответьте на черновик текстом правки"
 	// videoReviseHint: «Правки» under a video draft (a button answer: at most 200 characters).
-	videoReviseHint = "Ответьте на видео текстом правки, например: «убери первые 3 секунды» или «оставь второй дубль»"
+	videoReviseHint = "Ответьте на видео текстом правки, например: «убери первые 3 секунды» или «оставь второй дубль»."
 	// draftSavingAnswer: the button was pressed right after the draft came, before its messages were stored.
 	draftSavingAnswer = "Черновик ещё сохраняется, нажмите ещё раз"
 

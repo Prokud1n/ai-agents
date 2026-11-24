@@ -83,7 +83,7 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 		{
 			name: "a trim longer than the reel", version: 2,
 			input:    edit(func(in *Input) { in.TrimStart, in.TrimEnd = 3, 4 }),
-			expected: "не меньше всего ролика",
+			expected: "не меньше всего видео",
 		},
 		{
 			name: "not a number", version: 2, input: edit(func(in *Input) { in.TrimEnd = math.NaN() }),
@@ -121,6 +121,16 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 			name: "too many ranges", version: 2,
 			input:    edit(func(in *Input) { in.Remove = make([]roughcut.WordRange, maxRanges+1) }),
 			expected: "слишком много отрезков",
+		},
+		{
+			name: "a subtitle word as it is", version: 2,
+			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: "делаем"}} }),
+			expected: "ничего не меняет: в субтитрах уже «делаем»",
+		},
+		{
+			name: "an invisible character in a subtitle word", version: 2,
+			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: "дела\u200bем"}} }),
+			expected: "невидимых символов",
 		},
 		{
 			name: "a revision that changes nothing", version: 2,
@@ -168,6 +178,11 @@ func TestApplyFirstVersion(t *testing.T) {
 		"Повтор 0: первая фраза вырезана, оставлен повтор — сказала заново получше",
 	}, outcome.Edit.Notes)
 
+	trimmed, err := Apply(req, &Input{Decision: EditDecision, Reason: "без начала", TrimStart: 2})
+	require.NoError(t, err)
+	assert.Equal(t, []roughcut.WordRange{{From: 0, To: 2}}, trimmed.Edit.Remove, "the caption counts on the source")
+	assert.Equal(t, []string{"Обрезал начало: убрал первые 1,8 с."}, trimmed.Changes)
+
 	nothing, err := Apply(req, &Input{Decision: EditDecision, Reason: "подпись — описание ролика"})
 	require.NoError(t, err)
 	assert.Equal(t, EditOutcome, nothing.Kind)
@@ -189,20 +204,20 @@ func TestApplyRevision(t *testing.T) {
 		expectedChanges []string
 	}{
 		{
-			name:  "the first second trimmed",
-			input: Input{Decision: EditDecision, TrimStart: 1},
+			name:  "the start of the reel trimmed",
+			input: Input{Decision: EditDecision, TrimStart: 1.5},
 			expectedEdit: roughcut.Edit{
 				Remove: []roughcut.WordRange{{From: 0, To: 2}}, Notes: []string{noReasonNote},
 			},
-			expectedChanges: []string{"Обрезал начало: убрал первые 1 с."},
+			expectedChanges: []string{"Обрезал начало: убрал первые 1,4 с."},
 		},
 		{
 			name:  "the end trimmed",
 			input: Input{Decision: EditDecision, TrimEnd: 1.5},
 			expectedEdit: roughcut.Edit{
-				Remove: []roughcut.WordRange{{From: 7, To: 10}}, Notes: []string{noReasonNote},
+				Remove: []roughcut.WordRange{{From: 8, To: 10}}, Notes: []string{noReasonNote},
 			},
-			expectedChanges: []string{"Обрезал конец: убрал последние 1,5 с."},
+			expectedChanges: []string{"Обрезал конец: убрал последние 1,4 с."},
 		},
 		{
 			name:     "the filler brought back, the previous cut kept",
@@ -243,7 +258,7 @@ func TestApplyRevision(t *testing.T) {
 			},
 			expectedChanges: []string{
 				"Оставил второй дубль фразы «держим спину ровно».",
-				"Исправил в субтитрах: «по» → «по».",
+				"Исправил в субтитрах: «на» → «по».",
 				"Исправил в субтитрах: «десять» → «10».",
 			},
 		},
@@ -275,7 +290,7 @@ func TestDescribeChangesLimit(t *testing.T) {
 		in.FixWords = append(in.FixWords, roughcut.WordFix{Index: i, Text: "слово"})
 	}
 
-	lines := describeChanges(req, in, nil)
+	lines := describeChanges(req, in, &trim{})
 
 	assert.Len(t, lines, maxChangeLines)
 	assert.Equal(t, "И ещё изменений: 3.", lines[maxChangeLines-1])
@@ -288,17 +303,25 @@ func TestSecondsText(t *testing.T) {
 		input    float64
 		expected string
 	}{
-		{input: 3, expected: "3 с"},
-		{input: 2.5, expected: "2,5 с"},
-		{input: 0.04, expected: "0 с"},
-		{input: 1.26, expected: "1,3 с"},
+		{input: 3, expected: "первые 3 с"},
+		{input: 2.5, expected: "первые 2,5 с"},
+		{input: 1.04, expected: "первую секунду"},
+		{input: 0.04, expected: "первые 0,1 с"},
+		{input: 1.26, expected: "первые 1,3 с"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, secondsText(tt.input))
+			assert.Equal(t, tt.expected, secondsText(tt.input, "первую секунду", "первые"))
 		})
 	}
+}
+
+func TestOneLine(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "повтор оставлен намеренно", oneLine("повтор\n оставлен\u200b\u202eнамеренно\x00"))
+	assert.Len(t, []rune(oneLine(strings.Repeat("а", maxReasonRunes*2))), maxReasonRunes+1)
 }

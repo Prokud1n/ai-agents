@@ -153,7 +153,7 @@ func TestRevisionTexts(t *testing.T) {
 
 	for _, text := range []string{
 		cannotRevisionText, unclearRevisionText, modelFailedText, artifactsMissingText, captionCannotNote,
-		captionUnclearNote,
+		captionUnclearNote, captionFailedNote, modelFailedRevisionText, editFailedRevisionText, technicalRevisionText,
 	} {
 		assert.NotContains(t, text, "S3")
 		assert.NotContains(t, text, "Claude")
@@ -162,9 +162,14 @@ func TestRevisionTexts(t *testing.T) {
 	}
 
 	assert.Equal(t, "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль и поправить "+
-		"слово в субтитрах. Напишите правку по-другому — сделаю новую версию.", cannotRevisionText)
-	assert.Equal(t, "Не понял, что именно поменять. Напишите, например: „убери первые 3 секунды“ или "+
+		"слово в субтитрах.", cannotRevisionText)
+	assert.Equal(t, "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или "+
 		"„оставь второй дубль“.", unclearRevisionText)
+
+	for _, text := range []string{modelFailedRevisionText, editFailedRevisionText, technicalRevisionText} {
+		assert.NotContains(t, text, "исходник", "a revision does not ask for the source again")
+		assert.NotContains(t, text, "правк", "the note around it already speaks of the revision")
+	}
 }
 
 func TestFailureText(t *testing.T) {

@@ -40,13 +40,23 @@ const (
 
 	// cannotRevisionText and unclearRevisionText: a revision the editor cannot do or did not understand (shown after
 	// «Не получилось применить правку.» above the previous draft).
+	// The note ends with «Можно одобрить эту версию или дать правку ещё раз.», so these texts do not ask for it again.
 	cannotRevisionText = "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль и поправить " +
-		"слово в субтитрах. Напишите правку по-другому — сделаю новую версию."
-	unclearRevisionText = "Не понял, что именно поменять. Напишите, например: „убери первые 3 секунды“ или " +
+		"слово в субтитрах."
+	unclearRevisionText = "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или " +
 		"„оставь второй дубль“."
 	// modelFailedText: the decision failed for a technical reason after all the retries of the task.
 	modelFailedText = "Не получилось решить, как смонтировать видео, из-за технической ошибки — я уже пробовал " +
-		"несколько раз. Пришлите исходник или правку ещё раз чуть позже."
+		"несколько раз. Пришлите исходник ещё раз чуть позже."
+	// The revision's variants of the technical texts: the source is there, the trainer only gives the revision again.
+	modelFailedRevisionText = "Не смог её разобрать из-за технической ошибки, я уже пробовал несколько раз — " +
+		"попробуйте чуть позже."
+	editFailedRevisionText = "Монтаж новой версии не удался из-за технической ошибки, я уже пробовал несколько раз — " +
+		"попробуйте чуть позже."
+	technicalRevisionText = "Мешает техническая неполадка — я уже передал её технической команде, попробуйте чуть позже."
+	// captionFailedNote: the caption was not applied because the decision failed on our side.
+	captionFailedNote = "Подпись как указание к монтажу не применил из-за технической ошибки. Если нужна правка, " +
+		"ответьте на черновик."
 	// artifactsMissingText: the transcript or the plan of the earlier edit is gone from the storage.
 	artifactsMissingText = "Не нашёл материалы прошлого монтажа этого видео. Пришлите исходник ещё раз — " +
 		"смонтирую заново."
@@ -56,6 +66,15 @@ const (
 	captionUnclearNote = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
 		"правка, ответьте на черновик, например: „убери первые 3 секунды“."
 )
+
+// forVersion is the text of the first version or of a revision.
+func forVersion(version int, first, revision string) string {
+	if version > 1 {
+		return revision
+	}
+
+	return first
+}
 
 // failureText is the trainer's reason of a failed job, by its code (technical codes get technicalText before).
 func (e *Executor) failureText(r *editjob.Result) string {
@@ -159,6 +178,12 @@ func describeRevision(r *editjob.Result, summary *editjob.Summary) string {
 	return strings.Join(lines, "\n")
 }
 
+// captionNotes say why the caption was not applied, by the decision.
+var captionNotes = map[editplan.OutcomeKind]string{
+	editplan.CannotOutcome: captionCannotNote,
+	editplan.FailedOutcome: captionFailedNote,
+}
+
 // firstSummary is the summary of a decided first version: what the caption changed, how the disputed repeats were
 // decided, and why the caption was not applied if it was not.
 func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Summary {
@@ -171,9 +196,9 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 		}
 
 		if strings.TrimSpace(req.Caption) != "" {
-			summary.Note = captionUnclearNote
-			if outcome.Kind == editplan.CannotOutcome {
-				summary.Note = captionCannotNote
+			summary.Note = captionNotes[outcome.Kind]
+			if summary.Note == "" {
+				summary.Note = captionUnclearNote
 			}
 		}
 

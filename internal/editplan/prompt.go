@@ -38,10 +38,11 @@ func Prompt(req *Request) string {
 
 	switch {
 	case req.IsRevision():
-		fmt.Fprintf(&b, "Задача: правка тренера к версии %d черновика рилс. Сделай версию %d.\n", req.Version-1, req.Version)
+		fmt.Fprintf(&b, "Задача: правка тренера к версии %d черновика рилс. Сделай версию %d. Секунды в правке — "+
+			"по времени ролика, который видела тренер.\n", req.Version-1, req.Version)
 	case strings.TrimSpace(req.Caption) != "":
 		b.WriteString("Задача: первый монтаж рилс. Тренер подписала исходник — примени подпись, если это указание " +
-			"к монтажу, и реши спорные повторы.\n")
+			"к монтажу, и реши спорные повторы. Секунды в подписи — по времени исходника.\n")
 	default:
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — реши только спорные повторы.\n")
 	}
@@ -107,9 +108,15 @@ func writeCandidates(b *strings.Builder, plan *roughcut.Plan) {
 
 	for i := range plan.Candidates {
 		c := &plan.Candidates[i]
-		fmt.Fprintf(b, "- id %d: первая фраза — слова %d–%d «%s»; повтор — слова %d–%d «%s»; совпало %.0f%% слов.\n",
-			c.ID, c.EarlierWords.From, c.EarlierWords.To, c.Earlier.Text, c.LaterWords.From, c.LaterWords.To, c.Later.Text,
-			c.Similarity*percent)
+
+		// A plan made before later_words existed has it zero: the repeat is shown without its words.
+		later := fmt.Sprintf("слова %d–%d «%s»", c.LaterWords.From, c.LaterWords.To, c.Later.Text)
+		if c.LaterWords == (roughcut.WordRange{}) {
+			later = "«" + c.Later.Text + "»"
+		}
+
+		fmt.Fprintf(b, "- id %d: первая фраза — слова %d–%d «%s»; повтор — %s; совпало %.0f%% слов.\n",
+			c.ID, c.EarlierWords.From, c.EarlierWords.To, c.Earlier.Text, later, c.Similarity*percent)
 	}
 }
 
