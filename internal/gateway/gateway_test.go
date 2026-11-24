@@ -79,7 +79,7 @@ func startGateway(
 
 	lc := fxtest.NewLifecycle(t)
 	status := NewStatus()
-	newGateway(lc, cfg, testBots(t, cfg), store, handler, status, log)
+	newGateway(lc, cfg, testBots(t, cfg), store, handler, testMenu, status, log)
 	lc.RequireStart()
 
 	return lc, status

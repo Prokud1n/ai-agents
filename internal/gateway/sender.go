@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"unicode/utf16"
@@ -26,6 +27,22 @@ var (
 	ErrUnknownRole = errors.New("unknown bot role")
 	// ErrValidation: the outgoing message is malformed.
 	ErrValidation = errors.New("invalid outgoing telegram message")
+	// ErrNotModified: an edit would leave the message as it is (Telegram refuses such an edit).
+	ErrNotModified = errors.New("telegram message is not modified")
+	// ErrMessageNotFound: the message to edit is deleted (or is not the bot's).
+	ErrMessageNotFound = errors.New("telegram message to edit not found")
+	// ErrNoRights: the bot is not an administrator with the right the call needs (e.g. to pin messages).
+	ErrNoRights = errors.New("telegram bot has no rights for the action")
+)
+
+// Descriptions of Bot API errors that are told apart.
+const (
+	notModifiedDescription = "message is not modified"
+	editNotFound           = "message to edit not found"
+	// pinNotModified: Telegram may refuse to pin a message that is pinned already.
+	pinNotModified      = "not_modified"
+	noRightsDescription = "not enough rights"
+	adminRequired       = "CHAT_ADMIN_REQUIRED"
 )
 
 // Button is an inline keyboard button; Data comes back as Event.Callback.Data (1–64 bytes).
@@ -278,10 +295,70 @@ func (s *Sender) edit(
 	}
 
 	if err := call(client, markup); err != nil {
+		if apiErrorContains(err, notModifiedDescription) {
+			return fmt.Errorf("failed to edit message as %s: %w: %w", role, ErrNotModified, err)
+		}
+
+		if apiErrorContains(err, editNotFound) {
+			return fmt.Errorf("failed to edit message as %s: %w: %w", role, ErrMessageNotFound, err)
+		}
+
 		return fmt.Errorf("failed to edit message as %s: %w", role, err)
 	}
 
 	return nil
+}
+
+// PinMessage pins the message in its topic without a notification. The bot must be an administrator with the right to
+// pin messages; otherwise the error is ErrNoRights.
+func (s *Sender) PinMessage(ctx context.Context, role Role, messageID int64) error {
+	client, err := s.client(role)
+	if err != nil {
+		return err
+	}
+
+	err = client.PinChatMessage(ctx, &telegram.PinChatMessageParams{
+		ChatID: s.groupID, MessageID: messageID, DisableNotification: true,
+	})
+
+	return pinError("pin", role, err)
+}
+
+// UnpinMessage unpins the message; ErrNoRights as for PinMessage.
+func (s *Sender) UnpinMessage(ctx context.Context, role Role, messageID int64) error {
+	client, err := s.client(role)
+	if err != nil {
+		return err
+	}
+
+	err = client.UnpinChatMessage(ctx, &telegram.UnpinChatMessageParams{ChatID: s.groupID, MessageID: messageID})
+
+	return pinError("unpin", role, err)
+}
+
+func pinError(action string, role Role, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var apiErr *telegram.APIError
+	if errors.As(err, &apiErr) && strings.Contains(strings.ToLower(strings.ReplaceAll(apiErr.Description, " ", "_")),
+		pinNotModified) {
+		return nil // pinned already, or not pinned when unpinning: the state is as asked
+	}
+
+	if errors.As(err, &apiErr) && (apiErr.Code == http.StatusForbidden ||
+		strings.Contains(apiErr.Description, noRightsDescription) || strings.Contains(apiErr.Description, adminRequired)) {
+		return fmt.Errorf("failed to %s message as %s: %w: %w", action, role, ErrNoRights, err)
+	}
+
+	return fmt.Errorf("failed to %s message as %s: %w", action, role, err)
+}
+
+func apiErrorContains(err error, text string) bool {
+	var apiErr *telegram.APIError
+
+	return errors.As(err, &apiErr) && strings.Contains(apiErr.Description, text)
 }
 
 // AnswerCallback stops the button's loading indicator; text (optional) is shown as a short notification.

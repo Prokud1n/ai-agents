@@ -165,7 +165,7 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeResult(w, file)
-	case "answerCallbackQuery":
+	case "answerCallbackQuery", "setMyCommands", "deleteMyCommands", "pinChatMessage", "unpinChatMessage":
 		writeResult(w, true)
 	default:
 		f.mu.Lock()

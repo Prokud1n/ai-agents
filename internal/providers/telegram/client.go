@@ -175,6 +175,25 @@ func (c *Client) SetMessageReaction(ctx context.Context, params *SetMessageReact
 	return c.callJSON(ctx, "setMessageReaction", params, c.requestTimeout, true, nil)
 }
 
+// SetMyCommands replaces the bot's command menu in the scope.
+func (c *Client) SetMyCommands(ctx context.Context, params *SetMyCommandsParams) error {
+	return c.callJSON(ctx, "setMyCommands", params, c.requestTimeout, true, nil)
+}
+
+// DeleteMyCommands removes the bot's command menu in the scope: the client falls back to a wider scope.
+func (c *Client) DeleteMyCommands(ctx context.Context, params *DeleteMyCommandsParams) error {
+	return c.callJSON(ctx, "deleteMyCommands", params, c.requestTimeout, true, nil)
+}
+
+// PinChatMessage needs an administrator with the right to pin messages.
+func (c *Client) PinChatMessage(ctx context.Context, params *PinChatMessageParams) error {
+	return c.callJSON(ctx, "pinChatMessage", params, c.requestTimeout, true, nil)
+}
+
+func (c *Client) UnpinChatMessage(ctx context.Context, params *UnpinChatMessageParams) error {
+	return c.callJSON(ctx, "unpinChatMessage", params, c.requestTimeout, true, nil)
+}
+
 func (c *Client) SendVideo(ctx context.Context, params *SendFileParams) (*Message, error) {
 	return c.sendFile(ctx, "sendVideo", "video", params)
 }

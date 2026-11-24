@@ -22,4 +22,5 @@ type App struct {
 	Media      *Media      `env:",init"`
 	Editor     *Editor     `env:",init"`
 	Team       *Team       `env:",init"`
+	Pilot      *Pilot      `env:",init"`
 }

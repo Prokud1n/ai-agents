@@ -45,6 +45,7 @@ type gateway struct {
 	bots           *bots
 	store          stateStore
 	handler        Handler
+	menu           Menu
 	status         *Status
 	routing        *routing
 	filesDir       string
@@ -74,6 +75,7 @@ func newGateway(
 	b *bots,
 	store stateStore,
 	handler Handler,
+	menu Menu,
 	status *Status,
 	log *slog.Logger,
 ) *gateway {
@@ -83,6 +85,7 @@ func newGateway(
 		bots:    b,
 		store:   store,
 		handler: handler,
+		menu:    menu,
 		status:  status,
 		routing: &routing{
 			GroupID:        cfg.GroupID,
@@ -193,8 +196,8 @@ func (g *gateway) stop(ctx context.Context) error {
 	return nil
 }
 
-// runBot connects the bot, calls connected (if any) once it is connected or given up, waits for waitFor
-// (if any) and polls.
+// runBot connects the bot, calls connected (if any) once it is connected or given up, sets up its command menu, waits
+// for waitFor (if any) and polls.
 func (g *gateway) runBot(
 	ctx, handlerCtx context.Context,
 	rt *router,
@@ -214,6 +217,8 @@ func (g *gateway) runBot(
 	if err != nil {
 		return // stopped, or the token is invalid (already logged)
 	}
+
+	g.setupMenu(ctx, b)
 
 	if waitFor != nil {
 		select {

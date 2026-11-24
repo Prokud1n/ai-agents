@@ -179,17 +179,17 @@ func TestHandlerMessages(t *testing.T) {
 		},
 		{
 			name:     "unknown command is not a task",
-			event:    asCommand(messageEvent("/help")),
+			event:    asCommand(messageEvent("/stop")),
 			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
 		},
 		{
 			name:     "unknown command in «Исходники»: the command list, not the editor's stub",
-			event:    asCommand(withTarget(messageEvent("/help"), gateway.EditorRole)),
+			event:    asCommand(withTarget(messageEvent("/stop"), gateway.EditorRole)),
 			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
 		},
 		{
 			name:     "unknown command to a bot is not a task either",
-			event:    asCommand(withTarget(messageEvent("/start@copy_bot"), gateway.CopywriterRole)),
+			event:    asCommand(withTarget(messageEvent("/stop@copy_bot"), gateway.CopywriterRole)),
 			expected: handlerCalls{texts: []sentText{reply(gateway.MarketerRole, unknownCommandText)}},
 		},
 		{

@@ -23,6 +23,13 @@ const PrivateChat = "private"
 // EmojiReaction is ReactionType.Type of an emoji reaction.
 const EmojiReaction = "emoji"
 
+// Scopes of bot commands (BotCommandScope.Type).
+const (
+	DefaultCommandScope       = "default"
+	AllGroupChatsCommandScope = "all_group_chats"
+	ChatCommandScope          = "chat" // ChatID is required
+)
+
 type Update struct {
 	UpdateID      int64          `json:"update_id"`
 	Message       *Message       `json:"message,omitempty"`
@@ -236,6 +243,39 @@ type SendFileParams struct {
 	Width             int
 	Height            int
 	SupportsStreaming bool
+}
+
+// BotCommand is an item of the command menu the client shows when the user types «/».
+type BotCommand struct {
+	Command     string `json:"command"`     // 1-32 characters: lower case letters, digits and underscores
+	Description string `json:"description"` // 1-256 characters
+}
+
+// BotCommandScope is whom the commands are shown to; ChatID only for ChatCommandScope.
+type BotCommandScope struct {
+	Type   string `json:"type"`
+	ChatID int64  `json:"chat_id,omitempty"`
+}
+
+type SetMyCommandsParams struct {
+	Commands []BotCommand     `json:"commands"`
+	Scope    *BotCommandScope `json:"scope,omitempty"`
+}
+
+type DeleteMyCommandsParams struct {
+	Scope *BotCommandScope `json:"scope,omitempty"`
+}
+
+// PinChatMessageParams: in a forum topic the message is pinned in its topic.
+type PinChatMessageParams struct {
+	ChatID              int64 `json:"chat_id"`
+	MessageID           int64 `json:"message_id"`
+	DisableNotification bool  `json:"disable_notification,omitempty"`
+}
+
+type UnpinChatMessageParams struct {
+	ChatID    int64 `json:"chat_id"`
+	MessageID int64 `json:"message_id"`
 }
 
 type getFileParams struct {

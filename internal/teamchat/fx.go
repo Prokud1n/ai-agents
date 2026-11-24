@@ -3,6 +3,7 @@ package teamchat
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"go.uber.org/fx"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/pilot"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -23,11 +25,15 @@ import (
 //
 // Videos are stored with media.Module (needed too), and the editor's reels are taken from it for the drafts;
 // mediaStore is provided outside fx.Private, so a test can replace it with fx.Decorate.
+//
+// The command menu of the group (gateway.Menu) is replaced the same way. The weekly pilot report runs when
+// PILOT_REPORT_WEEKDAY and PILOT_REPORT_TIME are set; the module needs pilot.Module.
 var Module = fx.Options(
 	fx.Module("teamchat",
-		fx.Provide(newHandler, newNotifier, asMediaStore, newTechReporter),
+		fx.Provide(newHandler, newNotifier, asMediaStore, newTechReporter, newWeeklyReport),
+		fx.Invoke(func(*WeeklyReport) {}),
 	),
-	fx.Decorate(useHandler),
+	fx.Decorate(useHandler, useMenu),
 )
 
 type handlerParams struct {
@@ -39,6 +45,8 @@ type handlerParams struct {
 	Ideas     *ideas.Service
 	Sender    *gateway.Sender
 	Files     mediaStore
+	Pilot     *pilot.Service
+	Tech      *TechReporter
 	Log       *slog.Logger
 }
 
@@ -55,6 +63,10 @@ func newHandler(p handlerParams, team *config.Team) (*Handler, error) {
 	h.location = location
 	h.productionTopicID = p.Config.ProductionTopicID
 	h.maxFileSize = p.Config.MaxFileSize
+	h.pilot = p.Pilot
+	h.tech = p.Tech
+	h.admins = adminSet(p.Config.AdminUserIDs)
+	h.greetings = greetings(p.Config)
 	p.Lifecycle.Append(fx.Hook{OnStop: h.WaitBackground})
 
 	return h, nil
@@ -88,6 +100,44 @@ func newNotifier(
 	}
 
 	return n
+}
+
+// useMenu replaces the gateway's empty command menu.
+func useMenu() gateway.Menu {
+	return gateway.Menu{Commands: menuCommands}
+}
+
+// newWeeklyReport schedules the weekly pilot report; without a schedule it does nothing. A schedule set by half or with
+// a typo stops the start.
+func newWeeklyReport(
+	lc fx.Lifecycle,
+	cfg *config.Pilot,
+	team *config.Team,
+	store *pilot.Service,
+	tech *TechReporter,
+	log *slog.Logger,
+) (*WeeklyReport, error) {
+	r := &WeeklyReport{store: store, tech: tech, log: log, now: time.Now}
+
+	if !cfg.ReportEnabled() {
+		log.Info("teamchat: weekly pilot report is off: PILOT_REPORT_WEEKDAY and PILOT_REPORT_TIME are not set")
+
+		return r, nil
+	}
+
+	location, err := team.Location()
+	if err != nil {
+		return nil, err
+	}
+
+	r.schedule, err = parseSchedule(cfg, location)
+	if err != nil {
+		return nil, err
+	}
+
+	lc.Append(fx.Hook{OnStart: r.Start, OnStop: r.Stop})
+
+	return r, nil
 }
 
 // useHandler replaces the gateway's default handler.

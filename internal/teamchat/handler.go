@@ -14,6 +14,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/ideas"
+	"github.com/Prokud1n/ai-agents/internal/pilot"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -52,6 +53,22 @@ type chatSender interface {
 	SendText(ctx context.Context, role gateway.Role, msg *gateway.OutgoingMessage) (int64, error)
 	AnswerCallback(ctx context.Context, role gateway.Role, callbackID, text string) error
 	React(ctx context.Context, role gateway.Role, messageID int64, emoji string) error
+	EditText(ctx context.Context, role gateway.Role, messageID int64, text string, buttons [][]gateway.Button) error
+	PinMessage(ctx context.Context, role gateway.Role, messageID int64) error
+	UnpinMessage(ctx context.Context, role gateway.Role, messageID int64) error
+}
+
+// pilotStore keeps the feedback, counts the metrics of the pilot and remembers the pinned greetings.
+type pilotStore interface {
+	SaveFeedback(ctx context.Context, data *pilot.SaveFeedbackData) (pilot.Feedback, bool, error)
+	Metrics(ctx context.Context, since, until time.Time) (pilot.Metrics, error)
+	OnboardingMessage(ctx context.Context, chatID int64, topic string) (pilot.OnboardingMessage, error)
+	SaveOnboardingMessage(ctx context.Context, msg *pilot.OnboardingMessage) error
+}
+
+// techReporter tells «Техничка» (TechReporter).
+type techReporter interface {
+	Report(ctx context.Context, agent, text string) error
 }
 
 // Handler is the gateway.Handler of the team: it only records work (a task, a decision, a revision) and
@@ -66,8 +83,10 @@ type chatSender interface {
 //     message is a new task;
 //   - draft buttons: «Одобрить» and «Отклонить» decide, «Правки» asks to reply to the draft with the revision;
 //     a button counts only on the draft message of its task and version;
-//   - /status, /plan, /idea, /ideas, /idea_done, /idea_drop, /pause are the marketer's; any other command gets the
-//     list of commands. /idea makes an idea card (a task); «В бэклог» under it puts the card into the backlog (ideas);
+//   - /status, /plan, /idea, /ideas, /idea_done, /idea_drop, /pause, /help (/start), /feedback and /onboard are the
+//     marketer's; any other command gets a pointer to /help. /status adds the metrics of the pilot, /feedback saves the
+//     trainer's feedback (a reply to a draft links it to the task) and copies it to «Техничка», /onboard (admins) pins
+//     the greetings of the topics. /idea makes an idea card (a task); «В бэклог» under it puts the card into the backlog (ideas);
 //     /ideas, /idea_done and /idea_drop answer at once from the backlog, without a task or a model;
 //   - a video for the editor (topic «Исходники» or a mention of the editor's bot) is stored in S3 and becomes the
 //     editor's task (the media worker edits it; the caption is kept as the task input), answered from the editor's
@@ -91,6 +110,14 @@ type Handler struct {
 	maxFileSize int64
 	// location is TEAM_TIMEZONE: the dates the trainer reads (/ideas).
 	location *time.Location
+	// pilot keeps the feedback and the greetings and counts the metrics of /status; without it /status has no metrics.
+	pilot pilotStore
+	// tech gets the copies of the feedback and the failures of /onboard.
+	tech techReporter
+	// admins may run /onboard (TELEGRAM_ADMIN_USER_IDS); empty: everyone the gateway lets in.
+	admins map[int64]struct{}
+	// greetings are pinned by /onboard in the configured topics.
+	greetings []greeting
 	// background tracks reactions being set; see WaitBackground.
 	background sync.WaitGroup
 }
@@ -141,7 +168,8 @@ func (h *Handler) handleMessage(ctx context.Context, event *gateway.Event) error
 	}
 
 	// A command (a bot_command entity at the start, not just a slash: «/2 подхода убрать» is a revision) that
-	// the gateway did not pass as a team command; before the stubs, so /help in «Исходники» gets the list.
+	// the gateway did not pass as a team command; before the stubs, so an unknown command in «Исходники» gets the pointer
+	// to /help, not the editor's hint.
 	if event.IsCommand && !event.Forwarded {
 		return h.reply(ctx, gateway.MarketerRole, event, unknownCommandText)
 	}
@@ -276,18 +304,7 @@ func (h *Handler) handleCommand(ctx context.Context, event *gateway.Event) error
 			agent: gateway.MarketerRole, kind: PlanTaskKind, input: commandInput(event, planTask),
 		})
 	case gateway.IdeaCommand:
-		idea := strings.TrimSpace(event.Text)
-		if idea == "" {
-			return h.reply(ctx, gateway.MarketerRole, event, emptyIdeaText)
-		}
-
-		// The trainer's words as they are (a forwarded idea is marked): the idea executor puts them into the prompt
-		// as data.
-		if event.Forwarded {
-			idea = ideas.ForwardedInput(idea)
-		}
-
-		return h.createTask(ctx, event, &taskRequest{agent: gateway.MarketerRole, kind: IdeaTaskKind, input: idea})
+		return h.idea(ctx, event)
 	case gateway.IdeasCommand:
 		return h.listIdeas(ctx, event)
 	case gateway.IdeaDoneCommand:
@@ -296,18 +313,65 @@ func (h *Handler) handleCommand(ctx context.Context, event *gateway.Event) error
 		return h.closeIdea(ctx, event, ideas.DroppedStatus)
 	case gateway.PauseCommand:
 		return h.reply(ctx, gateway.MarketerRole, event, pauseText)
+	case gateway.HelpCommand, gateway.StartCommand:
+		return h.reply(ctx, gateway.MarketerRole, event, helpText(event.Topic))
+	case gateway.FeedbackCommand:
+		return h.feedback(ctx, event)
+	case gateway.OnboardCommand:
+		return h.onboard(ctx, event)
 	default:
 		return h.reply(ctx, gateway.MarketerRole, event, unknownCommandText)
 	}
 }
 
+// idea makes the idea card task of /idea.
+func (h *Handler) idea(ctx context.Context, event *gateway.Event) error {
+	idea := strings.TrimSpace(event.Text)
+	if idea == "" {
+		return h.reply(ctx, gateway.MarketerRole, event, emptyIdeaText)
+	}
+
+	// The trainer's words as they are (a forwarded idea is marked): the idea executor puts them into the prompt
+	// as data.
+	if event.Forwarded {
+		idea = ideas.ForwardedInput(idea)
+	}
+
+	return h.createTask(ctx, event, &taskRequest{agent: gateway.MarketerRole, kind: IdeaTaskKind, input: idea})
+}
+
+// status answers /status: tasks by status and LLM usage, then the metrics of the pilot for the same 7 days.
 func (h *Handler) status(ctx context.Context, event *gateway.Event) error {
-	report, err := h.tasks.StatusReport(ctx, h.now().Add(-statusPeriod))
+	now := h.now()
+
+	report, err := h.tasks.StatusReport(ctx, now.Add(-statusPeriod))
 	if err != nil {
 		return h.replyError(ctx, gateway.MarketerRole, event, "status report", err)
 	}
 
-	return h.reply(ctx, gateway.MarketerRole, event, formatStatus(&report))
+	text := formatStatus(&report)
+	if metrics := h.pilotMetrics(ctx, now); metrics != "" {
+		text += paragraphBreak + metrics
+	}
+
+	return h.reply(ctx, gateway.MarketerRole, event, text)
+}
+
+// pilotMetrics is the metrics block of /status; "" without the pilot store or when the metrics fail (logged): the rest
+// of /status is still answered.
+func (h *Handler) pilotMetrics(ctx context.Context, now time.Time) string {
+	if h.pilot == nil {
+		return ""
+	}
+
+	metrics, err := h.pilot.Metrics(ctx, now.Add(-statusPeriod), now)
+	if err != nil {
+		h.log.ErrorContext(ctx, "teamchat: failed to count pilot metrics", "error", err)
+
+		return ""
+	}
+
+	return formatPilotMetrics(&metrics, pilotStatusHeader)
 }
 
 // handleCallback applies a draft button. The answer goes from the bot that received the press (the owner of

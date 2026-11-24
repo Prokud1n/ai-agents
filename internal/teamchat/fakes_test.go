@@ -10,6 +10,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/pilot"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -231,11 +232,62 @@ type fakeSender struct {
 	answers   []callbackAnswer
 	reactions []reaction
 	edits     []buttonsEdit
+	textEdits []textEdit
+	pins      []pinCall
 
-	sendErr  error
-	reactErr error
-	editErr  error
-	partsErr error
+	sendErr     error
+	reactErr    error
+	editErr     error
+	partsErr    error
+	editTextErr error
+	pinErr      error
+	// nextID, when set, numbers the sent messages from it instead of answering testDraftID.
+	nextID int64
+}
+
+type textEdit struct {
+	Role      gateway.Role
+	MessageID int64
+	Text      string
+}
+
+type pinCall struct {
+	Role      gateway.Role
+	MessageID int64
+	Unpin     bool
+}
+
+func (f *fakeSender) EditText(
+	_ context.Context,
+	role gateway.Role,
+	messageID int64,
+	text string,
+	_ [][]gateway.Button,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.textEdits = append(f.textEdits, textEdit{Role: role, MessageID: messageID, Text: text})
+
+	return f.editTextErr
+}
+
+func (f *fakeSender) PinMessage(_ context.Context, role gateway.Role, messageID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.pins = append(f.pins, pinCall{Role: role, MessageID: messageID})
+
+	return f.pinErr
+}
+
+func (f *fakeSender) UnpinMessage(_ context.Context, role gateway.Role, messageID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.pins = append(f.pins, pinCall{Role: role, MessageID: messageID, Unpin: true})
+
+	return nil
 }
 
 func (f *fakeSender) SendText(_ context.Context, role gateway.Role, msg *gateway.OutgoingMessage) (int64, error) {
@@ -245,6 +297,12 @@ func (f *fakeSender) SendText(_ context.Context, role gateway.Role, msg *gateway
 	f.texts = append(f.texts, sentText{Role: role, Msg: *msg})
 	if f.sendErr != nil {
 		return 0, f.sendErr
+	}
+
+	if f.nextID != 0 {
+		f.nextID++
+
+		return f.nextID, nil
 	}
 
 	return testDraftID, nil
@@ -420,4 +478,84 @@ func (f *fakeStore) Saved() [][]byte {
 	defer f.mu.Unlock()
 
 	return append([][]byte(nil), f.saved...)
+}
+
+// fakePilot is the pilot store of the handler: it records the saved feedback and greetings.
+type fakePilot struct {
+	mu sync.Mutex
+
+	feedback  []pilot.SaveFeedbackData
+	greetings map[string]pilot.OnboardingMessage
+	since     []time.Time
+
+	exists  bool // SaveFeedback finds the feedback of the message saved before
+	saveErr error
+	metrics pilot.Metrics
+	metErr  error
+}
+
+func (f *fakePilot) SaveFeedback(_ context.Context, data *pilot.SaveFeedbackData) (pilot.Feedback, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.feedback = append(f.feedback, *data)
+	if f.saveErr != nil {
+		return pilot.Feedback{}, false, f.saveErr
+	}
+
+	return pilot.Feedback{
+		ID: int64(len(f.feedback)), AuthorID: data.AuthorID, AuthorName: data.AuthorName, Text: data.Text,
+		Truncated: data.Truncated, TaskID: data.TaskID, TaskVersion: data.TaskVersion, Topic: data.Topic,
+		TopicID: data.TopicID, ChatID: data.ChatID, MessageID: data.MessageID,
+	}, !f.exists, nil
+}
+
+func (f *fakePilot) Metrics(_ context.Context, since, _ time.Time) (pilot.Metrics, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.since = append(f.since, since)
+
+	return f.metrics, f.metErr
+}
+
+func (f *fakePilot) OnboardingMessage(_ context.Context, chatID int64, topic string) (pilot.OnboardingMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	msg, ok := f.greetings[topic]
+	if !ok || msg.ChatID != chatID {
+		return pilot.OnboardingMessage{}, pilot.ErrNotFound
+	}
+
+	return msg, nil
+}
+
+func (f *fakePilot) SaveOnboardingMessage(_ context.Context, msg *pilot.OnboardingMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.greetings == nil {
+		f.greetings = map[string]pilot.OnboardingMessage{}
+	}
+
+	f.greetings[msg.Topic] = *msg
+
+	return nil
+}
+
+// fakeTech records the reports to «Техничка».
+type fakeTech struct {
+	mu      sync.Mutex
+	reports []string
+	err     error
+}
+
+func (f *fakeTech) Report(_ context.Context, _, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.reports = append(f.reports, text)
+
+	return f.err
 }

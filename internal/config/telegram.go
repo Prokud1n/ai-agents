@@ -19,6 +19,8 @@ type Telegram struct {
 	GroupID int64 `env:"TELEGRAM_GROUP_ID"`
 	// AllowedUserIDs: only these users are heard; comma-separated.
 	AllowedUserIDs []int64 `env:"TELEGRAM_ALLOWED_USER_IDS"`
+	// AdminUserIDs may run the service commands (/onboard); comma-separated. Empty: anyone of AllowedUserIDs.
+	AdminUserIDs []int64 `env:"TELEGRAM_ADMIN_USER_IDS"`
 
 	// Forum topic IDs (message_thread_id); 0 means the topic is not configured.
 	PlanningTopicID   int64 `env:"TELEGRAM_TOPIC_PLANNING_ID"`
