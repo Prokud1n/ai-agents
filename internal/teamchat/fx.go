@@ -35,7 +35,6 @@ type handlerParams struct {
 
 	Lifecycle fx.Lifecycle
 	Config    *config.Telegram
-	Team      *config.Team
 	Service   *tasks.Service
 	Ideas     *ideas.Service
 	Sender    *gateway.Sender
@@ -46,8 +45,8 @@ type handlerParams struct {
 // newHandler registers waiting for the reactions set in the background when the handler is constructed: the
 // gateway that calls the handler is constructed after it, so on stop the gateway stops first and no new
 // reaction starts while they are waited for.
-func newHandler(p handlerParams) (*Handler, error) {
-	location, err := p.Team.Location()
+func newHandler(p handlerParams, team *config.Team) (*Handler, error) {
+	location, err := team.Location()
 	if err != nil {
 		return nil, err
 	}

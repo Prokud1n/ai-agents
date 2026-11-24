@@ -3,8 +3,7 @@ package config
 import (
 	"fmt"
 	"time"
-	// The time zone database is built in: the images have no /usr/share/zoneinfo.
-	_ "time/tzdata"
+	_ "time/tzdata" // the time zone database is built in: the images may have no /usr/share/zoneinfo
 )
 
 // Team configures what the team chat shows the trainer.

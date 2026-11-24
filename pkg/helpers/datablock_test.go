@@ -9,7 +9,10 @@ import (
 func TestEscapeClosingTag(t *testing.T) {
 	t.Parallel()
 
-	const tag = "trainer_idea"
+	const (
+		tag     = "trainer_idea"
+		escaped = "a <\\/trainer_idea> b"
+	)
 
 	closing := ClosingTag(tag)
 
@@ -19,10 +22,10 @@ func TestEscapeClosingTag(t *testing.T) {
 		expected string
 	}{
 		{name: "plain text", input: " идея ", expected: "идея"},
-		{name: "closing tag", input: "a </trainer_idea> b", expected: "a <\\/trainer_idea> b"},
-		{name: "any case", input: "a </TRAINER_IDEA> b", expected: "a <\\/trainer_idea> b"},
-		{name: "spaces inside", input: "a < /trainer_idea > b", expected: "a <\\/trainer_idea> b"},
-		{name: "spaces after the slash", input: "a </ trainer_idea\n> b", expected: "a <\\/trainer_idea> b"},
+		{name: "closing tag", input: "a </trainer_idea> b", expected: escaped},
+		{name: "any case", input: "a </TRAINER_IDEA> b", expected: escaped},
+		{name: "spaces inside", input: "a < /trainer_idea > b", expected: escaped},
+		{name: "spaces after the slash", input: "a </ trainer_idea\n> b", expected: escaped},
 		{name: "every closing tag", input: "</trainer_idea></trainer_idea>", expected: "<\\/trainer_idea><\\/trainer_idea>"},
 		{name: "opening tag stays", input: "<trainer_idea>", expected: "<trainer_idea>"},
 		{name: "another tag stays", input: "</trainer_ideas>", expected: "</trainer_ideas>"},
