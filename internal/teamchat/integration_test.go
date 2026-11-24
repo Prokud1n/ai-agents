@@ -19,8 +19,10 @@ import (
 	"go.uber.org/fx/fxevent"
 	"go.uber.org/fx/fxtest"
 
+	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/media"
@@ -42,8 +44,14 @@ const (
 	revisionMsgID    = int64(11)
 	videoMessageID   = int64(12)
 	voiceMessageID   = int64(13)
+	ideaCommandMsgID = int64(14)
+	ideasMsgID       = int64(15)
+	ideaDoneMsgID    = int64(16)
 	videoFileID      = "video-file-id"
 	neverWait        = 300 * time.Millisecond
+	testUserName     = "Анастасия"
+	// integrationTimezone is TEAM_TIMEZONE of the integration tests.
+	integrationTimezone = "Europe/Moscow"
 )
 
 // firstVersion is above the Telegram limit: the draft is sent in two parts.
@@ -130,7 +138,7 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 	// «Одобрить» under version 2.
 	api.queue(marketer, telegram.Update{UpdateID: 3, CallbackQuery: &telegram.CallbackQuery{
 		ID:   env.callbackID,
-		From: telegram.User{ID: testUserID, FirstName: "Анастасия"},
+		From: telegram.User{ID: testUserID, FirstName: testUserName},
 		Message: &telegram.Message{
 			MessageID: second.call.result, From: &marketerBot,
 			Chat:           telegram.Chat{ID: groupID, Type: supergroupType, IsForum: true},
@@ -158,6 +166,94 @@ func TestIntegrationGatewayTaskCycle(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return hasText(api, fmt.Sprintf(revisionFormat, 2)) && hasText(api, approvedText)
 	}, integrationWait, integrationTick, "the decisions are told in the topic")
+}
+
+// testIdeaCard is the card the scripted model makes of an idea.
+const testIdeaCard = `{"title":"Челлендж на 7 дней","summary":"Неделя коротких тренировок дома.",` +
+	`"format":"workout","hook":"Семь дней — и вы не узнаете свою спину."}`
+
+// ideaModel is the marketer's model for idea tasks: it answers with the card through submit_idea.
+type ideaModel struct{}
+
+func (ideaModel) Run(ctx context.Context, _ *agents.RunAgentData) (*agents.Result, error) {
+	if _, err := ideas.NewSubmitTool().Execute(ctx, json.RawMessage(testIdeaCard)); err != nil {
+		return nil, fmt.Errorf("failed to submit the card: %w", err)
+	}
+
+	return &agents.Result{}, nil
+}
+
+func commandMessage(groupID, messageID int64, text string) *telegram.Message {
+	msg := topicMessage(groupID, messageID, text)
+	command, _, _ := strings.Cut(text, " ")
+	msg.Entities = []telegram.MessageEntity{{Type: telegram.BotCommandEntity, Offset: 0, Length: len(command)}}
+
+	return msg
+}
+
+// TestIntegrationIdeaBacklog: /idea → a card from the marketer's bot with «В бэклог» → the press puts it into the
+// backlog and tells its number → /ideas lists it → /idea_done closes it.
+func TestIntegrationIdeaBacklog(t *testing.T) {
+	t.Parallel()
+
+	env := startIntegrationEnv(t)
+	api, groupID, marketer := env.api, env.groupID, env.marketer
+
+	api.queue(marketer, telegram.Update{UpdateID: 1, Message: commandMessage(groupID, ideaCommandMsgID,
+		"/idea челлендж на 7 дней")})
+
+	draft := waitDraft(t, api, 1)
+	assert.Equal(t, marketer, draft.call.token)
+
+	expectedCard := ideas.Card{
+		Title: "Челлендж на 7 дней", Summary: "Неделя коротких тренировок дома.", Format: ideas.WorkoutFormat,
+		Hook: "Семь дней — и вы не узнаете свою спину.",
+	}
+	assert.Equal(t, ideas.FormatCard(&expectedCard), draft.params.Text)
+
+	approve := draft.params.ReplyMarkup.InlineKeyboard[0][0]
+	assert.Equal(t, "В бэклог", approve.Text)
+
+	cb, err := tasks.ParseCallback(approve.CallbackData)
+	require.NoError(t, err)
+	waitDraftStored(t, env, cb.TaskID, 1)
+
+	api.queue(marketer, telegram.Update{UpdateID: 2, CallbackQuery: &telegram.CallbackQuery{
+		ID:   env.callbackID,
+		From: telegram.User{ID: testUserID, FirstName: testUserName},
+		Message: &telegram.Message{
+			MessageID: draft.call.result, From: &env.marketerBot,
+			Chat:           telegram.Chat{ID: groupID, Type: supergroupType, IsForum: true},
+			IsTopicMessage: true, MessageThreadID: testTopicID,
+		},
+		Data: approve.CallbackData,
+	}})
+
+	// The first idea of a fresh database is №1.
+	require.Eventually(t, func() bool {
+		return hasText(api, ideaSavedText(1))
+	}, integrationWait, integrationTick, "the idea number is told")
+
+	waitButtonsRemoved(t, api, draft.call.result)
+	assert.False(t, hasText(api, approvedText), "an approved idea is told by its number, not «Одобрено»")
+
+	api.queue(marketer, telegram.Update{UpdateID: 3, Message: commandMessage(groupID, ideasMsgID, "/ideas")})
+
+	location, err := (&config.Team{Timezone: integrationTimezone}).Location()
+	require.NoError(t, err)
+
+	listed := ideasHeader + "\n№1 — Челлендж на 7 дней, " + time.Now().In(location).Format(ideaDateLayout) + "\n\n" +
+		ideasFooter
+
+	require.Eventually(t, func() bool {
+		return hasText(api, listed)
+	}, integrationWait, integrationTick, "/ideas lists the idea")
+
+	api.queue(marketer, telegram.Update{UpdateID: 4, Message: commandMessage(groupID, ideaDoneMsgID, "/idea_done 1")})
+
+	require.Eventually(t, func() bool {
+		return hasText(api, "Идея №1 «Челлендж на 7 дней» отмечена сделанной.")
+	}, integrationWait, integrationTick, "/idea_done closes the idea")
 }
 
 // TestIntegrationVideoIntake runs a video through the real gateway against the fake Bot API: a video in
@@ -328,7 +424,7 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		fx.Supply(
 			gatewayCfg,
 			integrationTasksConfig(prefix),
-			&config.LLM{}, &config.OpenAI{}, &config.Embeddings{},
+			&config.LLM{}, &config.OpenAI{}, &config.Embeddings{}, &config.Team{Timezone: integrationTimezone},
 			slog.New(slog.DiscardHandler),
 			db, rdb,
 		),
@@ -337,8 +433,19 @@ func startIntegrationEnv(t *testing.T) *integrationEnv {
 		llmusage.Module,
 		gateway.Module,
 		tasks.Module,
+		ideas.Module,
 		Module,
-		fx.Decorate(func() tasks.Executor { return env.executor }),
+		// The agents are scripted; idea tasks go to the real idea executor with a scripted model.
+		fx.Decorate(func(backlog *ideas.Service, log *slog.Logger) (tasks.Executor, error) {
+			executor, err := tasks.NewRoutingExecutor(env.executor, []tasks.Route{{
+				Agent: ideas.AgentName, Kind: ideas.TaskKind, Executor: ideas.NewExecutor(ideaModel{}, backlog, log),
+			}})
+			if err != nil {
+				return nil, err
+			}
+
+			return executor, nil
+		}),
 		// Videos go to a fake store: S3 of the compose stack is not reachable from the tests.
 		fx.Decorate(func() mediaStore { return env.store }),
 		fx.Populate(&env.service),
@@ -455,7 +562,7 @@ func countText(api *fakeBotAPI, text string) int {
 func topicMessage(groupID, messageID int64, text string) *telegram.Message {
 	return &telegram.Message{
 		MessageID:       messageID,
-		From:            &telegram.User{ID: testUserID, FirstName: "Анастасия"},
+		From:            &telegram.User{ID: testUserID, FirstName: testUserName},
 		Date:            time.Now().Unix(),
 		Chat:            telegram.Chat{ID: groupID, Type: supergroupType, IsForum: true},
 		IsTopicMessage:  true,
@@ -489,7 +596,9 @@ func cleanGatewayKeys(t *testing.T, rdb *redis.Client, base, groupID int64, call
 			keys = append(keys, "telegram:offset:"+strconv.FormatInt(base+int64(i)+1, 10))
 		}
 
-		for _, id := range []int64{ideaMessageID, revisionMsgID, videoMessageID, voiceMessageID} {
+		for _, id := range []int64{
+			ideaMessageID, revisionMsgID, videoMessageID, voiceMessageID, ideaCommandMsgID, ideasMsgID, ideaDoneMsgID,
+		} {
 			keys = append(keys, "telegram:seen:message:"+strconv.FormatInt(groupID, 10)+":"+strconv.FormatInt(id, 10))
 		}
 

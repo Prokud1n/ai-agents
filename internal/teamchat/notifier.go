@@ -25,6 +25,9 @@ const (
 	revisionFormat  = "Принял правку, готовлю версию %d."
 	versionHeader   = "Версия "
 	failureFallback = "Не получилось выполнить задачу."
+	// ideaApproveLabel is «Одобрить» of an idea card: the approved card goes to the backlog.
+	ideaApproveLabel = "В бэклог"
+	rejectedIdeaText = "Отклонено: в бэклог идея не попала."
 )
 
 type draftSender interface {
@@ -60,7 +63,7 @@ func (n *Notifier) SendDraft(ctx context.Context, draft *tasks.Draft) (tasks.Sen
 		TopicID: draft.TopicID,
 		ReplyTo: draft.ReplyToMessageID,
 		Text:    draftText(draft),
-		Buttons: buttonRows(draft.Buttons),
+		Buttons: buttonRows(labelButtons(draft.Kind, draft.Buttons)),
 	})
 	if err != nil {
 		// The parts sent before the failure: the task service keeps them as old messages of the version.
@@ -174,11 +177,41 @@ func buttonRows(buttons []tasks.Button) [][]gateway.Button {
 	return [][]gateway.Button{row}
 }
 
+// labelButtons names the buttons of a task kind its own way: «Одобрить» of an idea card is «В бэклог».
+func labelButtons(kind string, buttons []tasks.Button) []tasks.Button {
+	labeled := make([]tasks.Button, 0, len(buttons))
+
+	for _, b := range buttons {
+		if kind == IdeaTaskKind && isApprove(b.CallbackData) {
+			b.Text = ideaApproveLabel
+		}
+
+		labeled = append(labeled, b)
+	}
+
+	return labeled
+}
+
+func isApprove(callbackData string) bool {
+	cb, err := tasks.ParseCallback(callbackData)
+
+	return err == nil && cb.Action == tasks.ApproveAction
+}
+
+// decisionText is the message about the decision; none for an approved idea card: the handler tells its number.
 func decisionText(data *tasks.CloseDraftData) string {
 	switch data.Decision {
 	case tasks.ApproveAction:
+		if data.Kind == IdeaTaskKind {
+			return ""
+		}
+
 		return approvedText
 	case tasks.RejectAction:
+		if data.Kind == IdeaTaskKind {
+			return rejectedIdeaText
+		}
+
 		return rejectedText
 	case tasks.ReviseAction:
 		return fmt.Sprintf(revisionFormat, data.Version+1)

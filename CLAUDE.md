@@ -52,7 +52,7 @@ docker compose logs -f media-worker                     # шаги монтаж�
 | Бинарь | Сборка | Что внутри |
 |---|---|---|
 | `main.go` (сервис) | `internal/app.go: DeclareApplicationOptions` | все провайдеры + health/readiness + agents + gateway + tasks + teamchat + HTTP-сервер (последним) |
-| `cmd/agent-run` | `DeclareAgentRunOptions` | postgres + anthropic + embeddings + llmusage + knowledge + kbtool + agents, без HTTP |
+| `cmd/agent-run` | `DeclareAgentRunOptions` | postgres + anthropic + embeddings + llmusage + knowledge + kbtool + editplan + ideas.ToolModule + agents, без HTTP |
 | `cmd/kb` | `internal/kb.go: DeclareKBOptions` / `RunKB` | postgres + embeddings + knowledge + kbcli |
 | `cmd/transcribe` | `internal/transcribe.go` | ffmpeg + whisper + transcription; логи в stderr, JSON в stdout |
 | `cmd/roughcut` | `internal/roughcut.go` | ffmpeg + whisper + transcription + roughcut; логи в stderr, файлы в `-out` |
@@ -113,8 +113,38 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   обратно — `media.Store.Download`) и становится задачей Монтажёра. Голосовые и видеокружки принципиально
   не обрабатываются (тренер диктует текст), фото и аудио — пока; на всё это честный ответ без скачивания.
 - `tasks.Executor` возвращает `tasks.Output` (текст и, для видео-черновика, ключ видео в S3 — `task_versions.media_key`).
-  Агентов маршрутизирует `tasks.RoutingExecutor`: модуль `editor` декорирует `tasks.Executor` **на верхнем уровне**
-  (как `teamchat`), задачи `editor` идут в `editor.Executor`, остальные — в `AgentExecutor`.
+  Агентов маршрутизирует `tasks.RoutingExecutor`: модуль отдаёт `tasks.Route{Agent, Kind, Executor}` в fx-группу
+  `tasks.RoutesGroup` (`fx.ResultTags`), декорировать `tasks.Executor` не нужно. Маршрут агента и вида задачи важнее
+  маршрута агента; пустой `Kind` — все задачи агента. Сейчас: `editor` → `editor.Executor`, `marketer`/`idea` →
+  `ideas.Executor`, остальное — `AgentExecutor`. Маршрут модуля — экспортируемая опция (`editor.Route`, `ideas.Route`)
+  внутри его `Module`; `internal.TestTaskRoutes` собирает настоящий `ideas.Module` (и `editor.Route`) и проверяет группу. Тест может подменить
+  `tasks.Executor` целиком через `fx.Decorate`.
+- Команды тренера — всегда от бота Маркетолога (`gateway.isTeamCommand`, разбор в `teamchat.Handler.handleCommand`):
+  `/plan`, `/idea` — задачи; `/status`, `/ideas`, `/idea_done N`, `/idea_drop N`, `/pause` — ответ сразу, без задачи и
+  модели. Новую команду добавляй константой в `gateway/event.go` и в `isTeamCommand`, тексты — в `teamchat/texts.go`
+  (на «вы», без технических деталей) и в `unknownCommandText`. `setMyCommands` не вызывается: меню команд в Telegram
+  не регистрируется.
+- Бэклог идей (`internal/ideas`, T2.4): `/idea <текст>` → задача `marketer`/`idea` (Input — слова тренера как есть) →
+  `ideas.Executor`: модель отвечает финальным инструментом `submit_idea` (сессия в контексте — `ideas.WithSession`,
+  как у `editplan`), карточка проверяется (`ValidateCard`) и хранится полями в `idea_cards` по версии, текст черновика
+  собирает `ideas.FormatCard` и он же хранится в `idea_cards.content`. Идея делается только из карточки, чей `content`
+  совпадает с одобренной версией в `task_versions` (иначе карточку записал устаревший прогон: `ErrCardMismatch`, лог),
+  а карточку версии, уже сохранённой в `task_versions`, upsert не перезаписывает (`ErrVersionStored`). Пересланная
+  `/idea` помечается в Input (`ideas.ForwardedInput`), промпт говорит, что это чужие слова, а в `ideas` метка не попадает
+  в `source_text` — вместо неё флаг `forwarded`; пересланные
+  `/idea_done`/`/idea_drop` не выполняются. Правка идеи без карточки прошлой версии (идея до бэклога) —
+  `PermanentError` с текстом. Даты для тренера — в `TEAM_TIMEZONE` (`config.Team`, tzdata встроена). `teamchat.Notifier` подписывает «Одобрить» у `idea` как «В бэклог» (`tasks.Draft.Kind`)
+  и не пишет «Одобрено.» — номер идеи сообщает `Handler.approveIdea` после `Service.SaveApproved` (вставка из карточки
+  одобренной версии, только если задача в `tasks` одобрена; одна идея на `task_id`). Повторное нажатие на уже
+  одобренную карточку (конфликт в `tasks`) тоже вызывает `SaveApproved`, а `ListNew`/`ListForPlan` досоздают идеи
+  одобренных задач, сохранение которых упало (`SyncApproved`). Статусы: `new` → `planned` → `done`/`dropped`
+  (закрыть можно и из `new`); изменения — `UpdaterFn` под `SELECT … FOR UPDATE`.
+  **Для `/plan` (T2.2):** возьми `ideas.Service.ListForPlan(ctx, limit)` (новые, старые первыми), передай их модели как
+  данные (номер, заголовок, суть, формат, хук; `Idea.SourceText` — слова после `/idea` без метки пересылки,
+  `Idea.Forwarded` — идея пришла пересланным чужим сообщением, так и скажи модели), после одобрения плана — `MarkPlanned(ctx, ids)` с номерами идей,
+  попавших в план (закрытые и уже запланированные пропускаются).
+- Закрывающие теги блоков данных в промптах — `pkg/helpers.ClosingTag`/`EscapeClosingTag` (любой регистр, пробелы
+  внутри тега: `< /tag >`); своих регулярок не заводи.
 - Порядок остановки fx — обратный порядку регистрации хуков. Хук ожидания фоновой работы регистрируй в конструкторе
   того, кто её запускает (`tasks.provideService`, `teamchat.newHandler`): потребители (шлюз, воркеры) создаются позже
   и останавливаются раньше. Проверка — `teamchat.TestIntegrationStopOrder`.

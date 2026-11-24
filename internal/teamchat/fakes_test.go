@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
@@ -21,6 +22,7 @@ const (
 	testUserID         = int64(42)
 	testTaskID         = int64(5)
 	testDraftID        = int64(900)
+	testCallbackID     = "cb-1"
 	partLimit          = 100 // fakeSender splits longer texts in two parts
 )
 
@@ -50,6 +52,8 @@ type fakeService struct {
 	draftUnsaved bool
 	// draftMediaKey makes the found draft a video draft.
 	draftMediaKey string
+	// draftKind is the kind of the found draft's task.
+	draftKind string
 }
 
 func (f *fakeService) GetVersion(_ context.Context, taskID int64, version int) (tasks.Version, error) {
@@ -81,7 +85,7 @@ func (f *fakeService) FindByDraftMessage(_ context.Context, _, _ int64) (tasks.T
 		version = 2
 	}
 
-	return tasks.Task{ID: testTaskID, Status: status, Version: version},
+	return tasks.Task{ID: testTaskID, Kind: f.draftKind, Status: status, Version: version},
 		tasks.Version{TaskID: testTaskID, Version: version, MediaKey: f.draftMediaKey}, nil
 }
 
@@ -134,6 +138,66 @@ func (f *fakeService) StatusReport(_ context.Context, since time.Time) (tasks.St
 	f.since = append(f.since, since)
 
 	return f.report, f.statusErr
+}
+
+// fakeIdeas is the backlog for the handler: it records the calls and returns the set results.
+type fakeIdeas struct {
+	mu sync.Mutex
+
+	saved  []int64
+	closed []closeCall
+	limits []int
+
+	idea      ideas.Idea // SaveApproved and Close return it
+	existed   bool       // SaveApproved finds the idea saved before
+	saveErr   error
+	list      []ideas.Idea
+	total     int
+	listErr   error
+	closeErr  error
+	closeIdea *ideas.Idea // Close returns it instead of idea (with closeErr: the idea as it is)
+}
+
+type closeCall struct {
+	ID     int64
+	Status ideas.Status
+}
+
+func (f *fakeIdeas) SaveApproved(_ context.Context, taskID int64) (ideas.Idea, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.saved = append(f.saved, taskID)
+	if f.saveErr != nil {
+		return ideas.Idea{}, false, f.saveErr
+	}
+
+	return f.idea, !f.existed, nil
+}
+
+func (f *fakeIdeas) ListNew(_ context.Context, limit int) ([]ideas.Idea, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.limits = append(f.limits, limit)
+
+	return f.list, f.total, f.listErr
+}
+
+func (f *fakeIdeas) Close(_ context.Context, id int64, status ideas.Status) (ideas.Idea, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.closed = append(f.closed, closeCall{ID: id, Status: status})
+
+	if f.closeIdea != nil {
+		return *f.closeIdea, f.closeErr
+	}
+
+	idea := f.idea
+	idea.ID, idea.Status = id, status
+
+	return idea, f.closeErr
 }
 
 type sentText struct {
@@ -268,7 +332,7 @@ func callbackEvent(role gateway.Role, data string) *gateway.Event {
 		TopicID:    testTopicID,
 		MessageID:  testDraftID,
 		From:       gateway.User{ID: testUserID},
-		Callback:   &gateway.Callback{ID: "cb-1", Data: data},
+		Callback:   &gateway.Callback{ID: testCallbackID, Data: data},
 	}
 }
 

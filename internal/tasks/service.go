@@ -406,7 +406,7 @@ func (s *Service) closeDraftData(
 	}
 
 	return &CloseDraftData{
-		TaskID: task.ID, Version: version, Agent: task.Agent, ChatID: task.Source.ChatID,
+		TaskID: task.ID, Version: version, Agent: task.Agent, Kind: task.Kind, ChatID: task.Source.ChatID,
 		TopicID: task.Source.TopicID, MessageID: *v.DraftMessageID, Decision: decision, Video: v.MediaKey != "",
 	}, true
 }
@@ -515,6 +515,7 @@ func (s *Service) sendDraft(ctx context.Context, d *delivery) (SentDraft, error)
 		TaskID:           d.Task.ID,
 		Version:          d.Version,
 		Agent:            d.Task.Agent,
+		Kind:             d.Task.Kind,
 		ChatID:           d.Task.Source.ChatID,
 		TopicID:          d.Task.Source.TopicID,
 		ReplyToMessageID: d.Task.Source.MessageID,
@@ -588,7 +589,7 @@ func (s *Service) closeDuplicate(ctx context.Context, d *delivery, sent *SentDra
 	}
 
 	err := s.notifier.CloseDraft(ctx, &CloseDraftData{
-		TaskID: d.Task.ID, Version: d.Version, Agent: d.Task.Agent, ChatID: d.Task.Source.ChatID,
+		TaskID: d.Task.ID, Version: d.Version, Agent: d.Task.Agent, Kind: d.Task.Kind, ChatID: d.Task.Source.ChatID,
 		TopicID: d.Task.Source.TopicID, MessageID: messageID, Duplicate: true, Video: d.MediaKey != "",
 	})
 	if err != nil {

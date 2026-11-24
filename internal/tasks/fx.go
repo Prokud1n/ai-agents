@@ -11,16 +11,19 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 )
 
-// Module provides the task service and starts the workers. It needs a Notifier: in the application
+// Module provides the task service and starts the workers. Tasks run with the agents' runtime unless a module routes
+// them to its own executor (Route in RoutesGroup). It needs a Notifier: in the application
 // teamchat.Module provides it (Telegram, or the log without bot tokens); LogNotifierModule only logs.
 var Module = fx.Module("tasks",
 	fx.Provide(
 		provideService,
-		fx.Annotate(NewAgentExecutor, fx.As(new(Executor))),
+		// Executor is the routing executor: Routes of other modules (RoutesGroup), the agents for the rest.
+		fx.Annotate(newExecutor, fx.ParamTags("", RoutesGroup)),
 	),
 	fx.Provide(
 		newRepo,
 		newRedisQueue,
+		NewAgentExecutor,
 		NewPool,
 		asEnqueuer,
 		asWorkerQueue,

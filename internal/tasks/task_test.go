@@ -261,6 +261,9 @@ func TestUpdateToWoken(t *testing.T) {
 	}
 }
 
+// testIdeaKind is a task kind with its own route.
+const testIdeaKind = "idea"
+
 // routeExecutor answers with its name.
 type routeExecutor string
 
@@ -271,24 +274,56 @@ func (e routeExecutor) Execute(context.Context, *ExecuteData) (Output, error) {
 func TestRoutingExecutor(t *testing.T) {
 	t.Parallel()
 
-	executor := NewRoutingExecutor(routeExecutor("agents"), map[string]Executor{testEditor: routeExecutor("worker")})
+	executor, err := NewRoutingExecutor(routeExecutor("agents"), []Route{
+		{Agent: testEditor, Executor: routeExecutor("worker")},
+		{Agent: testAgent, Kind: testIdeaKind, Executor: routeExecutor("ideas")},
+	})
+	require.NoError(t, err)
 
 	tests := []struct {
 		name     string
-		input    string
+		agent    string
+		kind     string
 		expected string
 	}{
-		{name: "routed agent", input: testEditor, expected: "worker"},
-		{name: "any other agent", input: "copywriter", expected: "agents"},
+		{name: "routed agent", agent: testEditor, expected: "worker"},
+		{name: "routed agent, any kind", agent: testEditor, kind: "reels-edit", expected: "worker"},
+		{name: "routed kind", agent: testAgent, kind: testIdeaKind, expected: "ideas"},
+		{name: "other kind of the agent", agent: testAgent, kind: "plan", expected: "agents"},
+		{name: "any other agent", agent: "designer", kind: testIdeaKind, expected: "agents"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			out, err := executor.Execute(t.Context(), &ExecuteData{Agent: tt.input})
+			out, err := executor.Execute(t.Context(), &ExecuteData{Agent: tt.agent, Kind: tt.kind})
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, out.Text)
+		})
+	}
+}
+
+func TestRoutingExecutorRejectsBadRoutes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input []Route
+	}{
+		{name: "duplicate", input: []Route{
+			{Agent: testEditor, Executor: routeExecutor("a")}, {Agent: testEditor, Executor: routeExecutor("b")},
+		}},
+		{name: "no executor", input: []Route{{Agent: testEditor}}},
+		{name: "no agent", input: []Route{{Kind: testIdeaKind, Executor: routeExecutor("a")}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewRoutingExecutor(routeExecutor("agents"), tt.input)
+			require.ErrorIs(t, err, ErrValidation)
 		})
 	}
 }
@@ -628,7 +663,7 @@ func TestClassifyAgentError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := classifyAgentError(tt.input)
+			err := ClassifyAgentError(tt.input)
 
 			require.ErrorIs(t, err, tt.input)
 
@@ -651,7 +686,7 @@ func TestFailureReason(t *testing.T) {
 		input    error
 		expected string
 	}{
-		{name: "permanent", input: classifyAgentError(agents.ErrRefusal), expected: "Агент отказался выполнять задачу. Переформулируйте запрос."},
+		{name: "permanent", input: ClassifyAgentError(agents.ErrRefusal), expected: "Агент отказался выполнять задачу. Переформулируйте запрос."},
 		{name: "timeout", input: fmt.Errorf("run: %w", context.DeadlineExceeded), expected: "Агент не уложился в отведённое время."},
 		{name: "panic", input: fmt.Errorf("run: %w: nil map", errExecutorPanic), expected: "Внутренняя ошибка при запуске агента."},
 		{

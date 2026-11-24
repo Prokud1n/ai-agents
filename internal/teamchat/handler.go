@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -27,7 +28,7 @@ const (
 // Task kinds of the team commands and of a source video; a plain message has no kind.
 const (
 	PlanTaskKind      = "plan"
-	IdeaTaskKind      = "idea"
+	IdeaTaskKind      = ideas.TaskKind
 	ReelsEditTaskKind = "reels-edit"
 )
 
@@ -39,6 +40,12 @@ type taskService interface {
 	StatusReport(ctx context.Context, since time.Time) (tasks.StatusReport, error)
 	FindByDraftMessage(ctx context.Context, chatID, messageID int64) (tasks.Task, tasks.Version, error)
 	GetVersion(ctx context.Context, taskID int64, version int) (tasks.Version, error)
+}
+
+type ideaService interface {
+	SaveApproved(ctx context.Context, taskID int64) (ideas.Idea, bool, error)
+	ListNew(ctx context.Context, limit int) ([]ideas.Idea, int, error)
+	Close(ctx context.Context, id int64, status ideas.Status) (ideas.Idea, error)
 }
 
 type chatSender interface {
@@ -59,7 +66,9 @@ type chatSender interface {
 //     message is a new task;
 //   - draft buttons: «Одобрить» and «Отклонить» decide, «Правки» asks to reply to the draft with the revision;
 //     a button counts only on the draft message of its task and version;
-//   - /status, /plan, /idea, /pause are the marketer's; any other command gets the list of commands;
+//   - /status, /plan, /idea, /ideas, /idea_done, /idea_drop, /pause are the marketer's; any other command gets the
+//     list of commands. /idea makes an idea card (a task); «В бэклог» under it puts the card into the backlog (ideas);
+//     /ideas, /idea_done and /idea_drop answer at once from the backlog, without a task or a model;
 //   - a video for the editor (topic «Исходники» or a mention of the editor's bot) is stored in S3 and becomes the
 //     editor's task (the media worker edits it; the caption is kept as the task input), answered from the editor's
 //     bot. A text message to the editor gets a hint to send a video; a reply to its video draft is a revision (the
@@ -71,6 +80,7 @@ type chatSender interface {
 // Errors of the task service reach the trainer as tasks.UserMessage; details go to the log only.
 type Handler struct {
 	tasks  taskService
+	ideas  ideaService
 	sender chatSender
 	files  mediaStore
 	log    *slog.Logger
@@ -79,12 +89,22 @@ type Handler struct {
 	productionTopicID int64
 	// maxFileSize is TELEGRAM_MAX_FILE_SIZE, for the answer to a larger video; 0: unknown.
 	maxFileSize int64
+	// location is TEAM_TIMEZONE: the dates the trainer reads (/ideas).
+	location *time.Location
 	// background tracks reactions being set; see WaitBackground.
 	background sync.WaitGroup
 }
 
-func NewHandler(service taskService, sender chatSender, files mediaStore, log *slog.Logger) *Handler {
-	return &Handler{tasks: service, sender: sender, files: files, log: log, now: time.Now}
+func NewHandler(
+	service taskService,
+	backlog ideaService,
+	sender chatSender,
+	files mediaStore,
+	log *slog.Logger,
+) *Handler {
+	return &Handler{
+		tasks: service, ideas: backlog, sender: sender, files: files, log: log, now: time.Now, location: time.UTC,
+	}
 }
 
 func (h *Handler) HandleEvent(ctx context.Context, event *gateway.Event) error {
@@ -256,13 +276,24 @@ func (h *Handler) handleCommand(ctx context.Context, event *gateway.Event) error
 			agent: gateway.MarketerRole, kind: PlanTaskKind, input: commandInput(event, planTask),
 		})
 	case gateway.IdeaCommand:
-		if strings.TrimSpace(event.Text) == "" {
+		idea := strings.TrimSpace(event.Text)
+		if idea == "" {
 			return h.reply(ctx, gateway.MarketerRole, event, emptyIdeaText)
 		}
 
-		return h.createTask(ctx, event, &taskRequest{
-			agent: gateway.MarketerRole, kind: IdeaTaskKind, input: commandInput(event, ideaTask),
-		})
+		// The trainer's words as they are (a forwarded idea is marked): the idea executor puts them into the prompt
+		// as data.
+		if event.Forwarded {
+			idea = ideas.ForwardedInput(idea)
+		}
+
+		return h.createTask(ctx, event, &taskRequest{agent: gateway.MarketerRole, kind: IdeaTaskKind, input: idea})
+	case gateway.IdeasCommand:
+		return h.listIdeas(ctx, event)
+	case gateway.IdeaDoneCommand:
+		return h.closeIdea(ctx, event, ideas.DoneStatus)
+	case gateway.IdeaDropCommand:
+		return h.closeIdea(ctx, event, ideas.DroppedStatus)
 	case gateway.PauseCommand:
 		return h.reply(ctx, gateway.MarketerRole, event, pauseText)
 	default:
@@ -291,7 +322,7 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 		return h.answer(ctx, event, tasks.UserMessage(err))
 	}
 
-	draft, err := h.checkButton(ctx, event, cb)
+	task, draft, err := h.checkButton(ctx, event, cb)
 	if err != nil {
 		h.logFailure(ctx, "check button", event, err)
 
@@ -302,7 +333,7 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 		return h.answer(ctx, event, tasks.UserMessage(err))
 	}
 
-	text, err := h.decide(ctx, event, cb, &draft)
+	text, err := h.decide(ctx, event, cb, &task, &draft)
 	if err != nil {
 		h.logFailure(ctx, "decide on draft", event, err)
 
@@ -314,24 +345,30 @@ func (h *Handler) handleCallback(ctx context.Context, event *gateway.Event) erro
 
 // checkButton: a button counts only on the draft message of its task and version, so callback data put on
 // another message cannot decide a task. A press that comes before the draft's messages are stored (they are
-// stored right after Telegram answers) is errDraftSaving. It returns the version of the draft.
-func (h *Handler) checkButton(ctx context.Context, event *gateway.Event, cb tasks.Callback) (tasks.Version, error) {
+// stored right after Telegram answers) is errDraftSaving. It returns the task (as it was before the press) and the
+// version of the draft.
+func (h *Handler) checkButton(
+	ctx context.Context,
+	event *gateway.Event,
+	cb tasks.Callback,
+) (tasks.Task, tasks.Version, error) {
 	task, v, err := h.tasks.FindByDraftMessage(ctx, event.ChatID, event.MessageID)
 
 	switch {
 	case errors.Is(err, tasks.ErrNotFound) && h.draftNotStored(ctx, cb):
-		return tasks.Version{}, fmt.Errorf("draft of task %d version %d: %w", cb.TaskID, cb.Version, errDraftSaving)
+		err = fmt.Errorf("draft of task %d version %d: %w", cb.TaskID, cb.Version, errDraftSaving)
 	case errors.Is(err, tasks.ErrNotFound) || errors.Is(err, tasks.ErrStaleVersion):
-		return tasks.Version{}, fmt.Errorf("message %d is not the draft of the button: %w", event.MessageID,
-			tasks.ErrInvalidCallback)
+		err = fmt.Errorf("message %d is not the draft of the button: %w", event.MessageID, tasks.ErrInvalidCallback)
 	case err != nil:
-		return tasks.Version{}, fmt.Errorf("failed to find the draft of the button: %w", err)
+		err = fmt.Errorf("failed to find the draft of the button: %w", err)
 	case task.ID != cb.TaskID || v.Version != cb.Version:
-		return tasks.Version{}, fmt.Errorf("button of task %d version %d on the draft of task %d version %d: %w",
+		err = fmt.Errorf("button of task %d version %d on the draft of task %d version %d: %w",
 			cb.TaskID, cb.Version, task.ID, v.Version, tasks.ErrInvalidCallback)
 	default:
-		return v, nil
+		return task, v, nil
 	}
+
+	return tasks.Task{}, tasks.Version{}, err
 }
 
 // draftNotStored reports whether the version of the button exists and its draft messages are not stored yet.
@@ -342,15 +379,20 @@ func (h *Handler) draftNotStored(ctx context.Context, cb tasks.Callback) bool {
 }
 
 // decide applies the pressed action and returns the answer to the press. «Правки» asks for a reply with the
-// revision; under a video draft the hint says what the editor can change.
+// revision; under a video draft the hint says what the editor can change. An approved idea card goes to the backlog.
 func (h *Handler) decide(
 	ctx context.Context,
 	event *gateway.Event,
 	cb tasks.Callback,
+	task *tasks.Task,
 	draft *tasks.Version,
 ) (string, error) {
 	switch cb.Action {
 	case tasks.ApproveAction:
+		if task.Kind == IdeaTaskKind {
+			return h.approveIdea(ctx, event, cb, task)
+		}
+
 		_, err := h.tasks.Approve(ctx, &tasks.ApproveTaskData{TaskID: cb.TaskID, Version: cb.Version, UserID: event.From.ID})
 
 		return approvedAnswer, err
@@ -364,6 +406,84 @@ func (h *Handler) decide(
 		}
 
 		return reviseHint, nil
+	}
+}
+
+// approveIdea approves the idea card and puts it into the backlog. A repeated press on an approved card (the task
+// service refuses it as a conflict) puts it into the backlog too: one idea per task, so the press only finishes a save
+// that failed before. A failed save is told to the trainer: the backlog restores the idea on the next /ideas.
+func (h *Handler) approveIdea(
+	ctx context.Context,
+	event *gateway.Event,
+	cb tasks.Callback,
+	task *tasks.Task,
+) (string, error) {
+	_, err := h.tasks.Approve(ctx, &tasks.ApproveTaskData{TaskID: cb.TaskID, Version: cb.Version, UserID: event.From.ID})
+
+	approvedBefore := task.Status == tasks.ApprovedStatus && task.Version == cb.Version
+	if err != nil && (!errors.Is(err, tasks.ErrConflict) || !approvedBefore) {
+		return "", err
+	}
+
+	idea, created, err := h.ideas.SaveApproved(ctx, cb.TaskID)
+	if err != nil {
+		h.log.ErrorContext(ctx, "teamchat: failed to save the approved idea", "task_id", cb.TaskID,
+			"version", cb.Version, "error", err)
+
+		// No card to save (an idea made before the backlog, or a card of a stale run): the backlog cannot restore it.
+		if errors.Is(err, ideas.ErrNotFound) || errors.Is(err, ideas.ErrCardMismatch) {
+			return ideaNotSavedAnswer, nil
+		}
+
+		return ideaSaveFailedAnswer, nil
+	}
+
+	if created {
+		// The number in the topic: the trainer closes the idea by it later. The press is answered anyway.
+		if err := h.reply(ctx, gateway.MarketerRole, event, ideaSavedText(idea.ID)); err != nil {
+			h.log.WarnContext(ctx, "teamchat: failed to tell the idea number", "idea_id", idea.ID, "error", err)
+		}
+	}
+
+	return ideaSavedAnswer(idea.ID), nil
+}
+
+// listIdeas answers /ideas with the backlog.
+func (h *Handler) listIdeas(ctx context.Context, event *gateway.Event) error {
+	list, total, err := h.ideas.ListNew(ctx, ideasListLimit)
+	if err != nil {
+		h.log.ErrorContext(ctx, "teamchat: failed to list ideas", "event", event, "error", err)
+
+		return h.reply(ctx, gateway.MarketerRole, event, ideasListFailedText)
+	}
+
+	return h.reply(ctx, gateway.MarketerRole, event, formatIdeas(list, total, h.location))
+}
+
+// closeIdea answers /idea_done N and /idea_drop N. A forwarded command is not run: it is someone else's message.
+func (h *Handler) closeIdea(ctx context.Context, event *gateway.Event, status ideas.Status) error {
+	if event.Forwarded {
+		return h.reply(ctx, gateway.MarketerRole, event, forwardedCommandText(event.Command))
+	}
+
+	id, ok := parseIdeaNumber(event.Text)
+	if !ok {
+		return h.reply(ctx, gateway.MarketerRole, event, ideaNumberHint(event.Command))
+	}
+
+	idea, err := h.ideas.Close(ctx, id, status)
+
+	switch {
+	case err == nil:
+		return h.reply(ctx, gateway.MarketerRole, event, ideaClosedText(&idea))
+	case errors.Is(err, ideas.ErrNotFound):
+		return h.reply(ctx, gateway.MarketerRole, event, ideaNotFoundText(id))
+	case errors.Is(err, ideas.ErrClosed):
+		return h.reply(ctx, gateway.MarketerRole, event, ideaAlreadyClosedText(&idea))
+	default:
+		h.log.ErrorContext(ctx, "teamchat: failed to close the idea", "idea_id", id, "status", status, "error", err)
+
+		return h.reply(ctx, gateway.MarketerRole, event, ideaCloseFailedText)
 	}
 }
 

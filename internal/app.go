@@ -13,6 +13,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
 	"github.com/Prokud1n/ai-agents/internal/health"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/knowledge"
 	"github.com/Prokud1n/ai-agents/internal/knowledge/kbtool"
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
@@ -47,6 +48,8 @@ func DeclareApplicationOptions() []fx.Option {
 		kbtool.Module,
 		// The editor's decisions: the submit_edit tool of agents/editor and the Decider
 		editplan.Module,
+		// The marketer's idea cards: the submit_idea tool of agents/marketer
+		ideas.ToolModule,
 		agents.Module,
 		// Incoming videos of the team chat in S3
 		media.Module,
@@ -54,6 +57,8 @@ func DeclareApplicationOptions() []fx.Option {
 		gateway.Module,
 		// Task workers
 		tasks.Module,
+		// The idea backlog: /idea tasks go to its executor, approved cards become ideas
+		ideas.Module,
 		// Gateway ⇄ tasks: group events become tasks, drafts go to the group (to the log without bot tokens)
 		teamchat.Module,
 		// The editor's tasks go to the media worker (cmd/media-worker) through Redis: the app runs no ffmpeg
@@ -66,7 +71,7 @@ func DeclareApplicationOptions() []fx.Option {
 }
 
 // DeclareAgentRunOptions builds the agent-run CLI: agents, the Claude API client, usage accounting and
-// the agents' tools (the knowledge base, the editor's submit_edit), without the HTTP server and other dependencies.
+// the agents' tools (the knowledge base, the editor's submit_edit, the marketer's submit_idea), without the HTTP server and other dependencies.
 func DeclareAgentRunOptions() []fx.Option {
 	return append(declareBaseOptions(),
 		postgres.Module,
@@ -76,6 +81,7 @@ func DeclareAgentRunOptions() []fx.Option {
 		knowledge.Module,
 		kbtool.Module,
 		editplan.Module,
+		ideas.ToolModule,
 		agents.Module,
 	)
 }

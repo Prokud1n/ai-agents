@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 
 	"github.com/Prokud1n/ai-agents/internal/agents"
@@ -44,23 +43,65 @@ type Output struct {
 	MediaKey string
 }
 
-// RoutingExecutor runs the tasks of the agents in its routes with their own executors (the editor's videos go to
-// the media worker), the rest with the fallback (the agents' runtime).
-type RoutingExecutor struct {
-	fallback Executor
-	routes   map[string]Executor
+// RoutesGroup is the fx value group of executor routes: a module sends its tasks to its own executor by providing a
+// Route annotated with fx.ResultTags(tasks.RoutesGroup); the rest of the tasks go to the agents' runtime.
+const RoutesGroup = `group:"tasks_routes"`
+
+// Route sends the tasks of an agent (of one kind, or of every kind when Kind is empty) to the executor.
+type Route struct {
+	Agent    string
+	Kind     string
+	Executor Executor
 }
 
-func NewRoutingExecutor(fallback Executor, routes map[string]Executor) *RoutingExecutor {
-	return &RoutingExecutor{fallback: fallback, routes: maps.Clone(routes)}
+type routeKey struct {
+	agent string
+	kind  string
+}
+
+// RoutingExecutor runs the tasks in its routes with their own executors (the editor's videos go to the media worker,
+// the marketer's ideas to the idea executor), the rest with the fallback (the agents' runtime). A route of the task's
+// agent and kind wins over a route of the agent.
+type RoutingExecutor struct {
+	fallback Executor
+	routes   map[routeKey]Executor
+}
+
+func NewRoutingExecutor(fallback Executor, routes []Route) (*RoutingExecutor, error) {
+	byKey := make(map[routeKey]Executor, len(routes))
+
+	for _, r := range routes {
+		key := routeKey{agent: r.Agent, kind: r.Kind}
+		if _, ok := byKey[key]; ok || r.Executor == nil || r.Agent == "" {
+			return nil, fmt.Errorf("route of agent %q kind %q is duplicated or empty: %w", r.Agent, r.Kind, ErrValidation)
+		}
+
+		byKey[key] = r.Executor
+	}
+
+	return &RoutingExecutor{fallback: fallback, routes: byKey}, nil
 }
 
 func (e *RoutingExecutor) Execute(ctx context.Context, data *ExecuteData) (Output, error) {
-	if executor, ok := e.routes[data.Agent]; ok {
+	if executor, ok := e.routes[routeKey{agent: data.Agent, kind: data.Kind}]; ok {
+		return executor.Execute(ctx, data)
+	}
+
+	if executor, ok := e.routes[routeKey{agent: data.Agent}]; ok {
 		return executor.Execute(ctx, data)
 	}
 
 	return e.fallback.Execute(ctx, data)
+}
+
+// newExecutor is the tasks' Executor: the routes of the modules, the agents' runtime for the rest.
+func newExecutor(agent *AgentExecutor, routes []Route) (Executor, error) {
+	executor, err := NewRoutingExecutor(agent, routes)
+	if err != nil {
+		return nil, err
+	}
+
+	return executor, nil
 }
 
 type agentRunner interface {
@@ -79,14 +120,15 @@ func NewAgentExecutor(runner agentRunner) *AgentExecutor {
 func (e *AgentExecutor) Execute(ctx context.Context, data *ExecuteData) (Output, error) {
 	result, err := e.runner.Run(ctx, &agents.RunAgentData{Agent: data.Agent, Input: data.Prompt})
 	if err != nil {
-		return Output{}, classifyAgentError(err)
+		return Output{}, ClassifyAgentError(err)
 	}
 
 	return Output{Text: result.Text}, nil
 }
 
-// classifyAgentError marks errors that a retry cannot fix as permanent, with a message for the trainer.
-func classifyAgentError(err error) error {
+// ClassifyAgentError marks errors of an agent run that a retry cannot fix as permanent, with a message for the
+// trainer; other errors are wrapped and retried.
+func ClassifyAgentError(err error) error {
 	var apiErr *anthropic.APIError
 
 	switch {

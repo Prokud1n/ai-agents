@@ -185,8 +185,11 @@ func TestRegisterToolsValidNames(t *testing.T) {
 	assert.Len(t, byName, 2)
 }
 
-// submitEditTool is editplan.SubmitToolName.
-const submitEditTool = "submit_edit"
+// submitEditTool is editplan.SubmitToolName, submitIdeaTool is ideas.SubmitToolName.
+const (
+	submitEditTool = "submit_edit"
+	submitIdeaTool = "submit_idea"
+)
 
 // TestExampleAgent keeps the template in agents/_example valid with the real shared skills. Templates
 // ("_" prefix) are not loaded as agents, so the template is loaded directly. Its tool is the knowledge base
@@ -221,7 +224,7 @@ func TestExampleAgent(t *testing.T) {
 	assert.Equal(t, 1, overridden, "the template shows a shared skill with an override")
 
 	registry, err := LoadRegistry(agentsDir, skillsDir,
-		[]Tool{&fakeTool{name: knowledgeSearchTool}, &fakeTool{name: submitEditTool}})
+		[]Tool{&fakeTool{name: knowledgeSearchTool}, &fakeTool{name: submitEditTool}, &fakeTool{name: submitIdeaTool}})
 	require.NoError(t, err)
 	assert.NotContains(t, registry.Names(), exampleAgent, "templates are not loaded as agents")
 }
@@ -229,14 +232,14 @@ func TestExampleAgent(t *testing.T) {
 // TestRepositoryAgents loads the real agents/ with the real shared skills. The team agents are named after
 // the gateway roles that run agents (the designer is not connected yet: teamchat answers for it with a fixed text).
 // The editor decides on the cut with editplan's submit_edit (a fake with the same name stands for it: the agents
-// package cannot import editplan) and its own skill.
+// package cannot import editplan) and its own skill; the marketer makes idea cards with ideas' submit_idea.
 func TestRepositoryAgents(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := filepath.Join("..", "..")
 
 	registry, err := LoadRegistry(filepath.Join(repoRoot, agentsSubdir), filepath.Join(repoRoot, skillsDirName),
-		[]Tool{&fakeTool{name: knowledgeSearchTool}, &fakeTool{name: submitEditTool}})
+		[]Tool{&fakeTool{name: knowledgeSearchTool}, &fakeTool{name: submitEditTool}, &fakeTool{name: submitIdeaTool}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"copywriter", "editor", "marketer"}, registry.Names())
 
@@ -244,7 +247,7 @@ func TestRepositoryAgents(t *testing.T) {
 		name          string
 		expectedTools []string
 	}{
-		{name: "marketer", expectedTools: []string{knowledgeSearchTool}},
+		{name: "marketer", expectedTools: []string{knowledgeSearchTool, submitIdeaTool}},
 		{name: "copywriter", expectedTools: []string{knowledgeSearchTool}},
 		{name: "editor", expectedTools: []string{submitEditTool}},
 	}

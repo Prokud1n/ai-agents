@@ -12,23 +12,21 @@ import (
 
 // Module runs the editor's tasks through the media worker; it needs editjob.Module, editplan.Module, media.Module and
 // tasks.Module.
-// tasks.Executor is decorated: the editor's tasks go to Executor, the rest to the agents as before.
-//
-// The decoration is outside fx.Module on purpose (as in teamchat): a decorator applies to its own scope and the scopes
-// below it, so only at the level of the application options does it reach tasks.Module.
-var Module = fx.Options(
-	fx.Module("editor",
-		// Executor is visible to the application: the decorator of tasks.Executor below takes it.
-		fx.Provide(NewExecutor),
-		fx.Provide(NewWaker, asBoard, asDoneListener, asStore, asDecider, asTaskWaker, asTechReporter, fx.Private),
-		fx.Invoke(registerWaker),
-	),
-	fx.Decorate(routeExecutor),
+// The editor's tasks go to Executor through a route of tasks.Executor (tasks.RoutesGroup), the rest to the agents as
+// before.
+var Module = fx.Module("editor",
+	fx.Provide(NewExecutor),
+	Route,
+	fx.Provide(NewWaker, asBoard, asDoneListener, asStore, asDecider, asTaskWaker, asTechReporter, fx.Private),
+	fx.Invoke(registerWaker),
 )
 
-// routeExecutor sends the editor's tasks to the media worker.
-func routeExecutor(base tasks.Executor, editor *Executor) tasks.Executor {
-	return tasks.NewRoutingExecutor(base, map[string]tasks.Executor{AgentName: editor})
+// Route sends the editor's tasks to Executor (a part of Module; internal.TestTaskRoutes checks it is in the group).
+var Route = fx.Provide(fx.Annotate(newRoute, fx.ResultTags(tasks.RoutesGroup)))
+
+// newRoute sends the editor's tasks to the media worker.
+func newRoute(editor *Executor) tasks.Route {
+	return tasks.Route{Agent: AgentName, Executor: editor}
 }
 
 // registerWaker: the waker is constructed after the task service and stops before it.

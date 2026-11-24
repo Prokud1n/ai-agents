@@ -8,11 +8,12 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
-// Module connects the gateway and the tasks; it needs gateway.Module and tasks.Module and replaces
+// Module connects the gateway and the tasks; it needs gateway.Module, tasks.Module and ideas.Module and replaces
 // tasks.LogNotifierModule. Events of the gateway go to Handler instead of gateway.AckHandler. tasks.Notifier
 // is Notifier when the gateway is on (bot tokens are set), otherwise tasks.LogNotifier: without Telegram the
 // app starts as before and drafts go to the log.
@@ -35,6 +36,7 @@ type handlerParams struct {
 	Lifecycle fx.Lifecycle
 	Config    *config.Telegram
 	Service   *tasks.Service
+	Ideas     *ideas.Service
 	Sender    *gateway.Sender
 	Files     mediaStore
 	Log       *slog.Logger
@@ -43,13 +45,19 @@ type handlerParams struct {
 // newHandler registers waiting for the reactions set in the background when the handler is constructed: the
 // gateway that calls the handler is constructed after it, so on stop the gateway stops first and no new
 // reaction starts while they are waited for.
-func newHandler(p handlerParams) *Handler {
-	h := NewHandler(p.Service, p.Sender, p.Files, p.Log)
+func newHandler(p handlerParams, team *config.Team) (*Handler, error) {
+	location, err := team.Location()
+	if err != nil {
+		return nil, err
+	}
+
+	h := NewHandler(p.Service, p.Ideas, p.Sender, p.Files, p.Log)
+	h.location = location
 	h.productionTopicID = p.Config.ProductionTopicID
 	h.maxFileSize = p.Config.MaxFileSize
 	p.Lifecycle.Append(fx.Hook{OnStop: h.WaitBackground})
 
-	return h
+	return h, nil
 }
 
 func asMediaStore(s *media.Store) mediaStore {

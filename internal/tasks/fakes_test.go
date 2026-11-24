@@ -20,6 +20,7 @@ var errTemporary = errors.New("claude api is overloaded")
 
 const (
 	testAgent    = "copywriter"
+	testTaskKind = "reels-script"
 	testVersion1 = "Версия один"
 	testVersion2 = "Версия два"
 	staleRunID   = "old"
@@ -376,7 +377,7 @@ func (env *testEnv) waitBackground(t *testing.T) {
 func testTaskData(messageID int64) *CreateTaskData {
 	return &CreateTaskData{
 		Agent:    testAgent,
-		Kind:     "reels-script",
+		Kind:     testTaskKind,
 		Input:    "Сценарий про утреннюю зарядку",
 		Media:    []string{"voice/1.ogg"},
 		Source:   Source{ChatID: -100123, TopicID: 7, MessageID: messageID},

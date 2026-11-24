@@ -1,15 +1,20 @@
 package internal
 
 import (
+	"log/slog"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxtest"
 
+	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editor"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/mediaworker"
 	"github.com/Prokud1n/ai-agents/internal/providers/anthropic"
@@ -52,9 +57,43 @@ func TestApplicationWiresGatewayToTasks(t *testing.T) {
 		fx.Invoke(func(gateway.Handler, tasks.Notifier, *teamchat.Handler) {}),
 		fx.Invoke(func(*media.Store) {}),
 		fx.Invoke(func(tasks.Executor, *editor.Executor, *editplan.Decider) {}),
+		fx.Invoke(func(*ideas.Service) {}),
+		fx.Invoke(fx.Annotate(func([]tasks.Route) {}, fx.ParamTags(tasks.RoutesGroup))),
 	)...)
 
 	require.NoError(t, err)
+}
+
+// TestTaskRoutes builds the routes put into tasks.RoutesGroup: without the group tag (or the route left out of its
+// module) the tasks would silently go to the agents' model. The real ideas.Module is built with empty dependencies
+// (its constructors do no I/O); the editor's module needs much more, so its part editor.Route is built alone.
+func TestTaskRoutes(t *testing.T) {
+	t.Parallel()
+
+	editorExecutor := &editor.Executor{}
+
+	var routes []tasks.Route
+
+	app := fxtest.New(t,
+		ideas.Module,
+		editor.Route,
+		fx.Supply(editorExecutor, &postgres.Client{}, &agents.Runtime{}, slog.New(slog.DiscardHandler)),
+		fx.Invoke(fx.Annotate(func(group []tasks.Route) { routes = group }, fx.ParamTags(tasks.RoutesGroup))),
+	)
+	app.RequireStart()
+	app.RequireStop()
+
+	byKey := make(map[string]tasks.Executor, len(routes))
+	for _, r := range routes {
+		byKey[r.Agent+"/"+r.Kind] = r.Executor
+	}
+
+	require.Len(t, byKey, 2)
+	assert.Same(t, editorExecutor, byKey[editor.AgentName+"/"])
+	assert.IsType(t, &ideas.Executor{}, byKey[ideas.AgentName+"/"+ideas.TaskKind])
+
+	_, err := tasks.NewRoutingExecutor(nil, routes)
+	require.NoError(t, err, "the routes do not overlap")
 }
 
 // TestMediaWorkerHasNoAppSecrets: the media worker's graph builds the worker without the Telegram gateway, the
