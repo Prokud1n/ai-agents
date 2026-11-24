@@ -3,7 +3,7 @@
 --   message is the idempotency key: a redelivered /feedback is not saved twice.
 -- * pilot_reports: the weeks whose report went to «Техничка»; a restart does not send it twice.
 -- * onboarding_messages: the pinned greeting of each topic (/onboard): a repeated /onboard edits it instead of
---   posting a duplicate.
+--   posting a duplicate, and does not pin it again once it is pinned.
 
 CREATE TABLE feedback (
     id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -33,8 +33,10 @@ CREATE TABLE pilot_reports (
 CREATE TABLE onboarding_messages (
     chat_id    bigint      NOT NULL,
     topic      text        NOT NULL,                  -- gateway.Topic
+    topic_id   bigint      NOT NULL,                  -- message_thread_id: a greeting of another topic is sent anew
     role       text        NOT NULL,                  -- the bot that sent the greeting: only it can edit it
     message_id bigint      NOT NULL,
+    pinned     boolean     NOT NULL DEFAULT false,    -- pinned already: an edit needs no new pin (no service message)
     updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (chat_id, topic)
 );

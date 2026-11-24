@@ -226,3 +226,59 @@ func TestWeeklyReportStops(t *testing.T) {
 	require.NoError(t, r.Start(t.Context()))
 	require.NoError(t, r.Stop(t.Context()))
 }
+
+// TestScheduleDueAcrossDaylightSaving: the report stays at 10:00 local time when the clocks change (Berlin: the last
+// Sundays of March and October 2026).
+func TestScheduleDueAcrossDaylightSaving(t *testing.T) {
+	t.Parallel()
+
+	berlin, err := (&config.Team{Timezone: "Europe/Berlin"}).Location()
+	require.NoError(t, err)
+
+	monday := weeklySchedule{weekday: time.Monday, hour: 10, location: berlin}
+	sunday := weeklySchedule{weekday: time.Sunday, hour: 10, location: berlin}
+
+	tests := []struct {
+		name         string
+		schedule     weeklySchedule
+		now          time.Time
+		expectedLast time.Time // in UTC
+		expectedNext time.Time
+	}{
+		{
+			name: "spring: the Sunday the clocks go forward, Monday before is CET, Monday after is CEST", schedule: monday,
+			now:          time.Date(2026, 3, 29, 12, 0, 0, 0, berlin),
+			expectedLast: time.Date(2026, 3, 23, 9, 0, 0, 0, time.UTC),
+			expectedNext: time.Date(2026, 3, 30, 8, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "spring: the report on the day of the change is at 10:00 CEST", schedule: sunday,
+			now:          time.Date(2026, 3, 29, 12, 0, 0, 0, berlin),
+			expectedLast: time.Date(2026, 3, 29, 8, 0, 0, 0, time.UTC),
+			expectedNext: time.Date(2026, 4, 5, 8, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "autumn: the report on the day of the change is at 10:00 CET", schedule: sunday,
+			now:          time.Date(2026, 10, 25, 12, 0, 0, 0, berlin),
+			expectedLast: time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC),
+			expectedNext: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "autumn: before the time on the day of the change the last one is a week ago, in CEST", schedule: sunday,
+			now:          time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC),
+			expectedLast: time.Date(2026, 10, 18, 8, 0, 0, 0, time.UTC),
+			expectedNext: time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			last, next := tt.schedule.lastDue(tt.now), tt.schedule.nextDue(tt.now)
+
+			assert.True(t, tt.expectedLast.Equal(last), "last: %s", last.UTC())
+			assert.True(t, tt.expectedNext.Equal(next), "next: %s", next.UTC())
+		})
+	}
+}

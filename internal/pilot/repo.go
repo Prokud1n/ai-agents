@@ -131,7 +131,9 @@ func (r *repo) CountFeedback(ctx context.Context, since, until time.Time) (int, 
 // TaskRows returns the tasks created in the period with the time of their first version.
 func (r *repo) TaskRows(ctx context.Context, since, until time.Time) ([]TaskRow, error) {
 	rows, err := r.db.GetReadConnection().Query(ctx, `
-		SELECT t.agent, t.kind, t.status, t.version, t.created_at, v.created_at
+		SELECT t.agent, t.kind, t.status, t.version,
+			(SELECT count(*) FROM task_feedback f WHERE f.task_id = t.id AND f.kind = 'revise'),
+			t.created_at, v.created_at
 		FROM tasks t
 		LEFT JOIN task_versions v ON v.task_id = t.id AND v.version = 1
 		WHERE t.created_at >= $1 AND t.created_at < $2
@@ -145,7 +147,8 @@ func (r *repo) TaskRows(ctx context.Context, since, until time.Time) ([]TaskRow,
 
 	for rows.Next() {
 		var row TaskRow
-		if err := rows.Scan(&row.Agent, &row.Kind, &row.Status, &row.Version, &row.CreatedAt, &row.FirstDraftAt); err != nil {
+		if err := rows.Scan(&row.Agent, &row.Kind, &row.Status, &row.Version, &row.Revisions, &row.CreatedAt,
+			&row.FirstDraftAt); err != nil {
 			return nil, fmt.Errorf("failed to scan task of the period: %w", err)
 		}
 
@@ -183,8 +186,9 @@ func (r *repo) OnboardingMessage(ctx context.Context, chatID int64, topic string
 	msg := OnboardingMessage{ChatID: chatID, Topic: topic}
 
 	err := r.db.GetReadConnection().QueryRow(ctx,
-		`SELECT role, message_id FROM onboarding_messages WHERE chat_id = $1 AND topic = $2`, chatID, topic,
-	).Scan(&msg.Role, &msg.MessageID)
+		`SELECT topic_id, role, message_id, pinned FROM onboarding_messages WHERE chat_id = $1 AND topic = $2`,
+		chatID, topic,
+	).Scan(&msg.TopicID, &msg.Role, &msg.MessageID, &msg.Pinned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OnboardingMessage{}, fmt.Errorf("greeting of topic %s: %w", topic, ErrNotFound)
 	}
@@ -198,9 +202,11 @@ func (r *repo) OnboardingMessage(ctx context.Context, chatID int64, topic string
 
 func (r *repo) SaveOnboardingMessage(ctx context.Context, msg *OnboardingMessage) error {
 	_, err := r.db.GetWriteConnection().Exec(ctx, `
-		INSERT INTO onboarding_messages (chat_id, topic, role, message_id) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (chat_id, topic) DO UPDATE SET role = $3, message_id = $4, updated_at = now()`,
-		msg.ChatID, msg.Topic, msg.Role, msg.MessageID)
+		INSERT INTO onboarding_messages (chat_id, topic, topic_id, role, message_id, pinned)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (chat_id, topic) DO UPDATE
+		SET topic_id = $3, role = $4, message_id = $5, pinned = $6, updated_at = now()`,
+		msg.ChatID, msg.Topic, msg.TopicID, msg.Role, msg.MessageID, msg.Pinned)
 	if err != nil {
 		return fmt.Errorf("failed to save greeting: %w", err)
 	}

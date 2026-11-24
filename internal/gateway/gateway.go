@@ -196,8 +196,8 @@ func (g *gateway) stop(ctx context.Context) error {
 	return nil
 }
 
-// runBot connects the bot, calls connected (if any) once it is connected or given up, sets up its command menu, waits
-// for waitFor (if any) and polls.
+// runBot connects the bot, calls connected (if any) once it is connected or given up, sets up its command menu in the
+// background, waits for waitFor (if any) and polls.
 func (g *gateway) runBot(
 	ctx, handlerCtx context.Context,
 	rt *router,
@@ -218,7 +218,9 @@ func (g *gateway) runBot(
 		return // stopped, or the token is invalid (already logged)
 	}
 
-	g.setupMenu(ctx, b)
+	// The menu is set up beside polling: a slow Bot API call does not delay the messages. The goroutine is one of the
+	// pollers, so the stop waits for it (ctx ends it).
+	g.pollers.Go(func() { g.setupMenu(ctx, b) })
 
 	if waitFor != nil {
 		select {

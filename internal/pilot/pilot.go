@@ -32,12 +32,15 @@ type Feedback struct {
 	CreatedAt time.Time
 }
 
-// OnboardingMessage is the pinned greeting of a topic: the bot (role) that sent it and its message.
+// OnboardingMessage is the pinned greeting of a topic: the bot (role) that sent it, its message and forum topic, and
+// whether it is pinned.
 type OnboardingMessage struct {
 	ChatID    int64
 	Topic     string
+	TopicID   int64
 	Role      string
 	MessageID int64
+	Pinned    bool
 }
 
 // TaskRow is a task of the period as the metrics need it.
@@ -46,6 +49,9 @@ type TaskRow struct {
 	Kind    string
 	Status  tasks.Status
 	Version int // the latest version: the approved one for an approved task
+	// Revisions is how many revisions the trainer asked for (task_feedback of kind revise); a failed revision keeps the
+	// version, so the version does not count them.
+	Revisions int
 	// CreatedAt of the task and of its first version (nil: no draft yet).
 	CreatedAt    time.Time
 	FirstDraftAt *time.Time

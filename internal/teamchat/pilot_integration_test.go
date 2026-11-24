@@ -87,7 +87,7 @@ func TestIntegrationFeedback(t *testing.T) {
 	api.queue(marketer, telegram.Update{UpdateID: 4, Message: commandMessage(groupID, feedbackStatusMsgID, "/status")})
 
 	require.Eventually(t, func() bool {
-		return containsText(api, pilotStatusHeader+"\n— Маркетолог: задач 1, одобрено 0, отклонено 0.\nОтзывов: 2.")
+		return containsText(api, pilotStatusHeader+"\n— Маркетолог: задач 1, одобрено 0, отклонено 0, сбоев 0.\nОтзывов: 2.")
 	}, integrationWait, integrationTick, "/status shows the metrics of the pilot")
 }
 
@@ -130,7 +130,7 @@ func TestIntegrationOnboarding(t *testing.T) {
 	}{
 		planningGreeting:   {token: marketer, topic: testTopicID},
 		sourcesGreeting:    {token: env.editor, topic: testSourcesTopicID},
-		productionGreeting: {token: marketer, topic: testProductionTopic},
+		productionGreeting: {token: env.editor, topic: testProductionTopic},
 	}
 
 	for _, c := range api.callsOf("sendMessage") {
@@ -161,7 +161,7 @@ func TestIntegrationOnboarding(t *testing.T) {
 	}
 
 	assert.Len(t, api.callsOf("editMessageText"), 3, "the greetings are edited")
-	assert.Len(t, api.callsOf("pinChatMessage"), 6, "and pinned again")
+	assert.Len(t, api.callsOf("pinChatMessage"), 3, "and not pinned again: no service messages in the topics")
 	assert.Empty(t, api.callsOf("unpinChatMessage"))
 }
 

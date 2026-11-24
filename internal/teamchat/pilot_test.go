@@ -194,10 +194,13 @@ func TestHandlerFeedback(t *testing.T) {
 			expected: pilotCalls{texts: []sentText{reply(gateway.MarketerRole, forwardedFeedbackText)}},
 		},
 		{
-			name:     "redelivered: saved before, no second answer",
-			store:    &fakePilot{exists: true},
-			event:    named(commandEvent(gateway.FeedbackCommand, greatFeedback)),
-			expected: pilotCalls{feedback: saved(0, 0, greatFeedback, false)},
+			name:  "redelivered: saved before, thanked again without a second copy",
+			store: &fakePilot{exists: true},
+			event: named(commandEvent(gateway.FeedbackCommand, greatFeedback)),
+			expected: pilotCalls{
+				feedback: saved(0, 0, greatFeedback, false),
+				texts:    []sentText{reply(gateway.MarketerRole, feedbackThanksText)},
+			},
 		},
 		{
 			name:  "save failed",
@@ -242,12 +245,12 @@ func TestGreetings(t *testing.T) {
 	}{
 		{name: "no topics", input: &config.Telegram{}, expected: []greeting{}},
 		{
-			name:  "every trainer's topic: «Исходники» from the editor, the rest from the marketer; no «Техничка»",
+			name:  "every trainer's topic: «Планёрка» from the marketer, the rest from the editor; no «Техничка»",
 			input: &config.Telegram{PlanningTopicID: 2, SourcesTopicID: 3, ProductionTopicID: 4, TechTopicID: 5},
 			expected: []greeting{
 				{topic: gateway.PlanningTopic, topicID: 2, role: gateway.MarketerRole, text: planningGreeting},
 				{topic: gateway.SourcesTopic, topicID: 3, role: gateway.EditorRole, text: sourcesGreeting},
-				{topic: gateway.ProductionTopic, topicID: 4, role: gateway.MarketerRole, text: productionGreeting},
+				{topic: gateway.ProductionTopic, topicID: 4, role: gateway.EditorRole, text: productionGreeting},
 			},
 		},
 		{
@@ -292,11 +295,18 @@ func TestHandlerOnboardPublishesThenEdits(t *testing.T) {
 	assert.Equal(t, []pinCall{{Role: gateway.MarketerRole, MessageID: 301}, {Role: gateway.MarketerRole, MessageID: 302}},
 		sender.pins, "the marketer pins both")
 	assert.Equal(t, map[string]pilot.OnboardingMessage{
-		string(gateway.PlanningTopic): {ChatID: testChatID, Topic: string(gateway.PlanningTopic), Role: string(gateway.MarketerRole), MessageID: 301},
-		string(gateway.SourcesTopic):  {ChatID: testChatID, Topic: string(gateway.SourcesTopic), Role: string(gateway.EditorRole), MessageID: 302},
+		string(gateway.PlanningTopic): {
+			ChatID: testChatID, Topic: string(gateway.PlanningTopic), TopicID: 2, Role: string(gateway.MarketerRole),
+			MessageID: 301, Pinned: true,
+		},
+		string(gateway.SourcesTopic): {
+			ChatID: testChatID, Topic: string(gateway.SourcesTopic), TopicID: 3, Role: string(gateway.EditorRole),
+			MessageID: 302, Pinned: true,
+		},
 	}, store.greetings)
 
-	// The second /onboard edits the same messages: no duplicates in the topics.
+	// The second /onboard edits the same messages: no duplicates in the topics and no new pins (each pin is a service
+	// message in the topic).
 	sender.texts, sender.pins = nil, nil
 	sender.editTextErr = gateway.ErrNotModified
 
@@ -307,9 +317,29 @@ func TestHandlerOnboardPublishesThenEdits(t *testing.T) {
 		{Role: gateway.MarketerRole, MessageID: 301, Text: planningGreeting},
 		{Role: gateway.EditorRole, MessageID: 302, Text: sourcesGreeting},
 	}, sender.textEdits)
+	assert.Empty(t, sender.pins, "pinned already")
+	assert.Empty(t, tech.reports)
+}
+
+// TestHandlerOnboardPinsAfterFailedPin: a greeting whose pin failed is edited and pinned by the next /onboard.
+func TestHandlerOnboardPinsAfterFailedPin(t *testing.T) {
+	t.Parallel()
+
+	sender := &fakeSender{nextID: 300, pinErr: gateway.ErrNoRights}
+	store := &fakePilot{}
+	h := onboardHandler(sender, store, &fakeTech{})
+
+	require.NoError(t, h.HandleEvent(t.Context(), commandEvent(gateway.OnboardCommand, "")))
+	assert.False(t, store.greetings[string(gateway.PlanningTopic)].Pinned)
+
+	sender.texts, sender.pins, sender.pinErr = nil, nil, nil
+
+	require.NoError(t, h.HandleEvent(t.Context(), commandEvent(gateway.OnboardCommand, "")))
+
+	assert.Len(t, sender.texts, 1, "only the answer: the greetings are edited")
 	assert.Equal(t, []pinCall{{Role: gateway.MarketerRole, MessageID: 301}, {Role: gateway.MarketerRole, MessageID: 302}},
 		sender.pins)
-	assert.Empty(t, tech.reports)
+	assert.True(t, store.greetings[string(gateway.PlanningTopic)].Pinned)
 }
 
 func TestHandlerOnboardDeletedGreeting(t *testing.T) {
@@ -317,9 +347,15 @@ func TestHandlerOnboardDeletedGreeting(t *testing.T) {
 
 	sender := &fakeSender{nextID: 400, editTextErr: gateway.ErrMessageNotFound}
 	store := &fakePilot{greetings: map[string]pilot.OnboardingMessage{
-		string(gateway.PlanningTopic): {ChatID: testChatID, Topic: string(gateway.PlanningTopic), Role: string(gateway.MarketerRole), MessageID: 10},
-		// «Исходники» was greeted by another bot: only a new message can be edited later.
-		string(gateway.SourcesTopic): {ChatID: testChatID, Topic: string(gateway.SourcesTopic), Role: string(gateway.MarketerRole), MessageID: 11},
+		string(gateway.PlanningTopic): {
+			ChatID: testChatID, Topic: string(gateway.PlanningTopic), TopicID: 2, Role: string(gateway.MarketerRole),
+			MessageID: 10, Pinned: true,
+		},
+		// «Исходники» moved to another forum topic in the config: the greeting is sent anew.
+		string(gateway.SourcesTopic): {
+			ChatID: testChatID, Topic: string(gateway.SourcesTopic), TopicID: 99, Role: string(gateway.EditorRole),
+			MessageID: 11, Pinned: true,
+		},
 	}}
 	h := onboardHandler(sender, store, &fakeTech{})
 
@@ -331,6 +367,7 @@ func TestHandlerOnboardDeletedGreeting(t *testing.T) {
 	}, sender.pins, "the new greetings replace the old pins")
 	assert.Equal(t, []textEdit{{Role: gateway.MarketerRole, MessageID: 10, Text: planningGreeting}}, sender.textEdits)
 	assert.Equal(t, int64(402), store.greetings[string(gateway.SourcesTopic)].MessageID)
+	assert.Equal(t, int64(3), store.greetings[string(gateway.SourcesTopic)].TopicID)
 }
 
 func TestHandlerOnboardRefusals(t *testing.T) {
@@ -448,7 +485,7 @@ func TestHandlerStatusWithMetrics(t *testing.T) {
 			expected: "Задачи:\n— в очереди: 1\n\nРасход LLM за 7 дней: $0.00, вызовов: 0\n\n" +
 				"Итоги пилота за 7 дней (задачи, созданные за это время):\n" +
 				"— Монтажёр: задач 4, одобрено 2 (с первой версии 1 — 50%, правок до одобрения в среднем 1), " +
-				"отклонено 1. Первый черновик: медиана 20 мин, максимум 1 ч 15 мин.\nОтзывов: 2.",
+				"отклонено 1, сбоев 0. Первый черновик: медиана 20 мин, максимум 1 ч 15 мин.\nОтзывов: 2.",
 		},
 		{
 			name:     "metrics failed: the status still answers",
@@ -484,20 +521,25 @@ func TestFormatAgentMetrics(t *testing.T) {
 		{
 			name:     "nothing approved: no breakdown; the draft time only for the editor",
 			input:    pilot.AgentMetrics{Agent: string(gateway.CopywriterRole), Created: 2, Rejected: 1, FirstDrafts: 2, MedianFirstDraft: time.Minute},
-			expected: "Копирайтер: задач 2, одобрено 0, отклонено 1.",
+			expected: "Копирайтер: задач 2, одобрено 0, отклонено 1, сбоев 0.",
 		},
 		{
 			name:     "average revisions with a decimal",
 			input:    pilot.AgentMetrics{Agent: string(gateway.MarketerRole), Created: 2, Approved: 2, Revisions: 3},
-			expected: "Маркетолог: задач 2, одобрено 2 (с первой версии 0 — 0%, правок до одобрения в среднем 1,5), отклонено 0.",
+			expected: "Маркетолог: задач 2, одобрено 2 (с первой версии 0 — 0%, правок до одобрения в среднем 1,5), отклонено 0, сбоев 0.",
 		},
 		{
 			name:  "editor drafts faster than a minute",
 			input: pilot.AgentMetrics{Agent: editorAgent, Created: 1, Approved: 1, ApprovedFirst: 1, FirstDrafts: 1, MedianFirstDraft: 30 * time.Second, MaxFirstDraft: 2 * time.Hour},
 			expected: "Монтажёр: задач 1, одобрено 1 (с первой версии 1 — 100%, правок до одобрения в среднем 0), " +
-				"отклонено 0. Первый черновик: медиана меньше минуты, максимум 2 ч.",
+				"отклонено 0, сбоев 0. Первый черновик: медиана меньше минуты, максимум 2 ч.",
 		},
-		{name: "unknown agent by its name", input: pilot.AgentMetrics{Agent: "seo", Created: 1}, expected: "seo: задач 1, одобрено 0, отклонено 0."},
+		{name: "unknown agent by its name", input: pilot.AgentMetrics{Agent: "seo", Created: 1}, expected: "seo: задач 1, одобрено 0, отклонено 0, сбоев 0."},
+		{
+			name:     "idea cards apart, with failures",
+			input:    pilot.AgentMetrics{Agent: pilot.IdeasGroup, Created: 3, Failed: 2},
+			expected: "Идеи (/idea): задач 3, одобрено 0, отклонено 0, сбоев 2.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -505,6 +547,59 @@ func TestFormatAgentMetrics(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.expected, formatAgentMetrics(&tt.input))
+		})
+	}
+}
+
+// TestFormatWeeklyReportFitsOneMessage: the longest week — every group with big numbers and the feedback read at most,
+// each at the cut length — is one Telegram message; the feedback that does not fit is counted.
+func TestFormatWeeklyReportFitsOneMessage(t *testing.T) {
+	t.Parallel()
+
+	since := time.Date(2026, 11, 16, 7, 0, 0, 0, time.UTC)
+	agents := make([]pilot.AgentMetrics, 0, len(agentTitles))
+
+	for agent := range agentTitles {
+		agents = append(agents, pilot.AgentMetrics{
+			Agent: agent, Created: 9999, Approved: 9999, ApprovedFirst: 9999, Revisions: 99999, Rejected: 9999,
+			Failed: 9999, FirstDrafts: 9999, MedianFirstDraft: 999 * time.Hour, MaxFirstDraft: 999 * time.Hour,
+		})
+	}
+
+	feedback := make([]pilot.Feedback, 0, weeklyFeedbackLimit)
+	for range weeklyFeedbackLimit {
+		feedback = append(feedback, pilot.Feedback{
+			AuthorName: strings.Repeat("Ж", 64), Text: strings.Repeat("ё", 2000), TaskID: 99999, TaskVersion: 99,
+			CreatedAt: since,
+		})
+	}
+
+	metrics := pilot.Metrics{Since: since, Until: since.AddDate(0, 0, 7), Agents: agents, Feedback: 999}
+	text := formatWeeklyReport(&metrics, feedback, 999, moscow)
+
+	assert.LessOrEqual(t, utf16Len(text), maxMessageLength)
+	assert.Contains(t, text, "\n…и ещё ")
+}
+
+func TestUnknownAdmins(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		admins   []int64
+		allowed  []int64
+		expected []int64
+	}{
+		{name: "no admins", allowed: []int64{1}},
+		{name: "admins are allowed", admins: []int64{1}, allowed: []int64{1, 2}},
+		{name: "an admin the gateway ignores", admins: []int64{1, 3}, allowed: []int64{1, 2}, expected: []int64{3}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, unknownAdmins(tt.admins, tt.allowed))
 		})
 	}
 }
@@ -527,12 +622,12 @@ func TestFormatWeeklyReport(t *testing.T) {
 	}{
 		{
 			name: "no feedback", total: 0,
-			expected: "Сводка пилота за неделю 16.11–23.11 (задачи, созданные за неделю):\n— задач не было.\nОтзывов: 3." +
+			expected: "Сводка пилота за неделю 16.11–22.11 (задачи, созданные за неделю):\n— задач не было.\nОтзывов: 3." +
 				"\n\nОтзывов за неделю не было.",
 		},
 		{
 			name: "feedback cut, the rest counted", feedback: feedback, total: 3,
-			expected: "Сводка пилота за неделю 16.11–23.11 (задачи, созданные за неделю):\n— задач не было.\nОтзывов: 3." +
+			expected: "Сводка пилота за неделю 16.11–22.11 (задачи, созданные за неделю):\n— задач не было.\nОтзывов: 3." +
 				"\n\nОтзывы тренера:\n— 16.11, Анастасия: Монтаж отличный\n— 18.11, Анастасия, задача 12 (версия 2): " +
 				strings.Repeat("б", weeklyFeedbackLength) + "…\n…и ещё 1.",
 		},

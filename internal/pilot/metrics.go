@@ -4,6 +4,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Prokud1n/ai-agents/internal/ideas"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
@@ -12,19 +13,25 @@ const (
 	tenths  = 10
 )
 
-// agentOrder is the order of the agents in the metrics; other agents follow by name.
-var agentOrder = []string{"editor", "copywriter", "marketer", "designer"}
+// IdeasGroup is the group of the idea cards (/idea): they are the marketer's tasks, counted apart from his other ones.
+const IdeasGroup = "ideas"
 
-// AgentMetrics are the metrics of one agent's tasks created in the period, by their current state.
+// agentOrder is the order of the groups in the metrics; other agents follow by name.
+var agentOrder = []string{"editor", "copywriter", "marketer", IdeasGroup, "designer"}
+
+// AgentMetrics are the metrics of one agent's tasks created in the period, by their current state. Agent is the agent
+// name, or IdeasGroup for the marketer's idea cards.
 type AgentMetrics struct {
 	Agent    string
 	Created  int
 	Approved int
-	// ApprovedFirst: approved at version 1, without revisions.
+	// ApprovedFirst: approved without a revision asked for.
 	ApprovedFirst int
-	// Revisions of the approved tasks: every revision makes a new version, so it is version − 1 of each.
+	// Revisions the trainer asked for before approving the approved tasks.
 	Revisions int
 	Rejected  int
+	// Failed: the task could not be done (attempts exhausted, a permanent error, the draft not delivered).
+	Failed int
 	// FirstDrafts is the number of tasks with a first draft; MedianFirstDraft and MaxFirstDraft are the time from the
 	// task to its first draft (the version is stored when the draft is ready, right before it is sent).
 	FirstDrafts      int
@@ -32,7 +39,7 @@ type AgentMetrics struct {
 	MaxFirstDraft    time.Duration
 }
 
-// FirstVersionPercent is the share of the approved tasks approved at the first version, rounded; 0 without approved.
+// FirstVersionPercent is the share of the approved tasks approved without revisions, rounded; 0 without approved.
 func (m *AgentMetrics) FirstVersionPercent() int {
 	if m.Approved == 0 {
 		return 0
@@ -57,28 +64,31 @@ func Compute(rows []TaskRow) []AgentMetrics {
 
 	for i := range rows {
 		row := rows[i]
-		m := byAgent[row.Agent]
-		m.Agent = row.Agent
+		group := groupOf(&row)
+		m := byAgent[group]
+		m.Agent = group
 		m.Created++
 
 		switch row.Status {
 		case tasks.ApprovedStatus:
 			m.Approved++
-			m.Revisions += max(row.Version-1, 0)
+			m.Revisions += row.Revisions
 
-			if row.Version == 1 {
+			if row.Revisions == 0 {
 				m.ApprovedFirst++
 			}
 		case tasks.RejectedStatus:
 			m.Rejected++
+		case tasks.FailedStatus:
+			m.Failed++
 		default:
 		}
 
 		if row.FirstDraftAt != nil {
-			drafts[row.Agent] = append(drafts[row.Agent], max(row.FirstDraftAt.Sub(row.CreatedAt), 0))
+			drafts[group] = append(drafts[group], max(row.FirstDraftAt.Sub(row.CreatedAt), 0))
 		}
 
-		byAgent[row.Agent] = m
+		byAgent[group] = m
 	}
 
 	result := make([]AgentMetrics, 0, len(byAgent))
@@ -97,6 +107,15 @@ func Compute(rows []TaskRow) []AgentMetrics {
 	}
 
 	return result
+}
+
+// groupOf is the group of a task in the metrics: the agent, or IdeasGroup for an idea card.
+func groupOf(row *TaskRow) string {
+	if row.Agent == ideas.AgentName && row.Kind == ideas.TaskKind {
+		return IdeasGroup
+	}
+
+	return row.Agent
 }
 
 func orderedAgents(byAgent map[string]AgentMetrics) []string {

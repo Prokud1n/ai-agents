@@ -14,18 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start the gateway sets the command menu of the group for the marketer's bot (`setMyCommands`: `/help`, `/idea`,
   `/ideas`, `/idea_done`, `/idea_drop`, `/feedback`, `/status`) and removes the menus of the other three bots, so the
   commands are listed once; a failure is only logged. The service command `/onboard` (`TELEGRAM_ADMIN_USER_IDS`, empty —
-  anyone of the allowlist) publishes short greetings in «Планёрка», «Исходники» (from the editor) and «Продакшн» and
-  pins them with the marketer's bot; a repeated `/onboard` edits them instead of posting duplicates
-  (`onboarding_messages`); without the right to pin the admin gets an honest answer and «Техничка» a note.
+  anyone of the allowlist; an admin outside the allowlist is warned about in the log) publishes short greetings in
+  «Планёрка» (from the marketer), «Исходники» and «Продакшн» (from the editor) and pins them with the marketer's bot; a
+  repeated `/onboard` edits them without a new pin instead of posting duplicates (`onboarding_messages` keeps the
+  message, its topic and whether it is pinned); without the right to pin the admin gets an honest answer and
+  «Техничка» a note.
 - Pilot feedback and metrics (T4.5, `internal/pilot`, migration 008). `/feedback <text>` in any topic is saved
   (`feedback`: author, text up to 2000 characters with a note when cut, topic, and the task and version when it replies
   to a draft), copied to «Техничка» with a link and thanked with «Спасибо, передал команде.»; an empty one gets a
-  hint, a forwarded one is refused, a redelivered one is saved once. The metrics are counted from `tasks` and
-  `task_versions` (tasks created in the period, by agent): created, approved, approved at the first version (share),
-  average revisions before the approval, rejected, and for the editor the time from the task to the first draft
-  (median and maximum), plus the number of feedbacks. `/status` adds them for 7 days; a weekly report with the week's
-  feedback goes to «Техничка» at `PILOT_REPORT_WEEKDAY` / `PILOT_REPORT_TIME` (`TEAM_TIMEZONE`, empty — off), at most
-  once a week (`pilot_reports`), a missed one is sent on start within a day.
+  hint, a forwarded one is refused, a redelivered one is saved and copied once and thanked again. The metrics are
+  counted from `tasks`, `task_versions` and `task_feedback` (tasks created in the period, by agent; the `/idea` cards
+  apart from the marketer's other tasks): created, approved, approved without revisions (share), average revisions
+  asked before the approval, rejected, failed, and for the editor the time from the task to the first draft (median
+  and maximum), plus the number of feedbacks. `/status` adds them for 7 days; a weekly report with the week's feedback
+  goes to «Техничка» as one message (feedback that does not fit is counted) at `PILOT_REPORT_WEEKDAY` /
+  `PILOT_REPORT_TIME` (`TEAM_TIMEZONE`, empty — off), at most once a week (`pilot_reports`), a missed one is sent on
+  start within a day.
 
 - Idea backlog (T2.4, `internal/ideas`, migration 007). `/idea <text>` makes an idea card instead of a brief: the
   marketer answers with the final `submit_idea` tool (title, what the reel is about in 1–3 sentences, format — talk,

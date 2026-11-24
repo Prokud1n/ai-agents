@@ -330,17 +330,20 @@ func ideaAlreadyClosedText(idea *ideas.Idea) string {
 const (
 	helpGeneralText = "Как работать с командой\n\n" +
 		"Кто что делает:\n" +
-		"• Маркетолог — идеи и бэклог: /idea и текст или просто сообщение в «Планёрку».\n" +
+		"• Маркетолог — идеи и задачи по контенту. Идея в бэклог — только командой /idea и текст; другие задачи " +
+		"Маркетологу — обычным сообщением в «Планёрке».\n" +
 		"• Копирайтер (бета) — сценарии рилс и подписи к постам: упомяните его бота в «Планёрке». Голос бренда ещё " +
 		"настраиваем, поэтому тексты могут звучать не совсем по-вашему — поправьте их ответом на черновик.\n" +
 		"• Монтажёр — монтирует рилс из ваших видео: разговорные ролики и тренировки. Видео — в «Исходники».\n" +
 		"• Дизайнер — обложки, скоро подключим.\n\n" +
 		"Топики:\n" +
-		"• «Планёрка» — идеи и задачи текстом.\n" +
+		"• «Планёрка» — идеи и задачи текстом. Текстовые черновики (карточки идей, сценарии, ответы Маркетолога) " +
+		"приходят сюда же — ответом на ваше сообщение.\n" +
 		"• «Исходники» — видео для монтажа; подпись к видео — пожелание Монтажёру.\n" +
-		"• «Продакшн» — черновики с кнопками «Одобрить», «Правки», «Отклонить».\n" +
+		"• «Продакшн» — сюда Монтажёр присылает готовые видео-черновики.\n" +
 		"• «Техничка» — служебный, туда команда пишет о сбоях.\n\n" +
-		"Правки пишите ответом (реплаем) на черновик своими словами. Например, Монтажёру:\n" +
+		"У каждого черновика кнопки «Одобрить», «Правки», «Отклонить». Правки пишите ответом (реплаем) на черновик " +
+		"своими словами. Например, Монтажёру:\n" +
 		"• «убери первые 3 секунды»\n" +
 		"• «оставь второй дубль»\n" +
 		"• «исправь в субтитрах „присед“ на „приседание“»\n" +
@@ -357,10 +360,12 @@ const (
 		"Голосовые и кружки не обрабатываются — продиктуйте текст на клавиатуре телефона."
 
 	planningGreeting = "Это «Планёрка» — здесь идеи и задачи.\n" +
-		"• Идея для контента: /idea и текст. Маркетолог оформит карточку, кнопка «В бэклог» сохранит её; " +
+		"• Идея в бэклог — только командой /idea и текст. Маркетолог оформит карточку, кнопка «В бэклог» сохранит её; " +
 		"список — /ideas.\n" +
 		"• Сценарий рилс или подпись к посту: упомяните бота Копирайтера и опишите задачу.\n" +
-		"• Задачу Маркетологу можно написать обычным сообщением.\n" +
+		"• Другие задачи Маркетологу — обычным сообщением.\n" +
+		"• Черновик придёт сюда же — ответом на ваше сообщение, с кнопками «Одобрить», «Правки», «Отклонить». Правку " +
+		"пишите ответом на черновик.\n" +
 		"Все команды и примеры — /help. Отзыв о работе команды — /feedback."
 	sourcesGreeting = "Это «Исходники» — сюда присылайте видео для монтажа.\n" +
 		"• Монтажёр смонтирует черновик рилс с субтитрами и пришлёт его в «Продакшн».\n" +
@@ -368,12 +373,12 @@ const (
 		"«это тренировка, подпиши упражнения».\n" +
 		"• Голосовые и кружки не обрабатываются — пишите текстом.\n" +
 		"Подробнее — /help."
-	productionGreeting = "Это «Продакшн» — сюда приходят черновики.\n" +
+	productionGreeting = "Это «Продакшн» — сюда Монтажёр присылает видео-черновики.\n" +
 		"• «Одобрить» — готово, «Отклонить» — не нужно.\n" +
-		"• «Правки» или ответ (реплай) на черновик своими словами — команда сделает новую версию. Например, " +
-		"Монтажёру: «убери первые 3 секунды», «оставь второй дубль».\n" +
+		"• «Правки» или ответ (реплай) на видео своими словами — Монтажёр сделает новую версию. Например: «убери " +
+		"первые 3 секунды», «оставь второй дубль».\n" +
 		"• Отзыв про черновик — /feedback ответом на него.\n" +
-		"Подробнее — /help."
+		"Текстовые черновики приходят в «Планёрку». Подробнее — /help."
 
 	onboardNotAllowedText = "Эта команда — для администраторов команды."
 	onboardForwardedText  = "Пересланные команды не выполняю. Отправьте /onboard сами."
@@ -387,13 +392,15 @@ const (
 
 // helpTopicTexts open /help in a topic: what to do right there; the general part follows.
 var helpTopicTexts = map[gateway.Topic]string{
-	gateway.PlanningTopic: "Вы в «Планёрке». Здесь идеи и задачи текстом: /idea и текст — идея в бэклог; сценарий или " +
-		"подпись — упомяните бота Копирайтера и опишите задачу; задачу Маркетологу — обычным сообщением.",
+	gateway.PlanningTopic: "Вы в «Планёрке». Здесь идеи и задачи текстом: /idea и текст — идея в бэклог (только так); " +
+		"сценарий или подпись — упомяните бота Копирайтера и опишите задачу; другие задачи Маркетологу — обычным " +
+		"сообщением. Черновик придёт сюда же — ответом на ваше сообщение.",
 	gateway.SourcesTopic: "Вы в «Исходниках». Пришлите сюда видео — Монтажёр смонтирует черновик рилс с субтитрами и " +
 		"пришлёт его в «Продакшн». В подписи к видео можно написать пожелание, например «это тренировка». Правки — " +
 		"ответом (реплаем) на готовое видео.",
-	gateway.ProductionTopic: "Вы в «Продакшне». Сюда приходят черновики: «Одобрить» — готово, «Отклонить» — не нужно, " +
-		"«Правки» — ответьте на черновик текстом правки. Отзыв о черновике — /feedback ответом на него.",
+	gateway.ProductionTopic: "Вы в «Продакшне». Сюда Монтажёр присылает видео-черновики: «Одобрить» — готово, " +
+		"«Отклонить» — не нужно, «Правки» — ответьте на видео текстом правки. Отзыв о черновике — /feedback ответом " +
+		"на него. Текстовые черновики приходят в «Планёрку».",
 	gateway.TechTopic: "Это «Техничка» — служебный топик: здесь команда сообщает о сбоях и присылает сводки. Вам здесь " +
 		"ничего делать не нужно.",
 }
@@ -556,14 +563,19 @@ const (
 	weekDateLayout      = "02.01"
 	// weeklyFeedbackLength cuts each feedback in the weekly report (characters).
 	weeklyFeedbackLength = 300
-	// weeklyFeedbackLimit is how many feedbacks the weekly report lists; the rest are counted.
-	weeklyFeedbackLimit = 20
-	minutesInHour       = 60
-	editorAgent         = string(gateway.EditorRole)
+	// weeklyFeedbackLimit is how many feedbacks the weekly report reads; those that do not fit one message are counted.
+	weeklyFeedbackLimit = 10
+	// maxMessageLength is the Telegram limit of one message (UTF-16 code units): the report is not split.
+	maxMessageLength = 4096
+	// weeklyRestReserve is kept for «…и ещё N.» under the listed feedback.
+	weeklyRestReserve = 32
+	minutesInHour     = 60
+	editorAgent       = string(gateway.EditorRole)
 )
 
 var agentTitles = map[string]string{
 	string(gateway.MarketerRole):   "Маркетолог",
+	pilot.IdeasGroup:               "Идеи (/idea)",
 	string(gateway.CopywriterRole): "Копирайтер",
 	string(gateway.EditorRole):     "Монтажёр",
 	string(gateway.DesignerRole):   "Дизайнер",
@@ -605,7 +617,7 @@ func formatAgentMetrics(a *pilot.AgentMetrics) string {
 			a.ApprovedFirst, a.FirstVersionPercent(), formatTenths(a.AverageRevisionsTenths()))
 	}
 
-	fmt.Fprintf(&b, ", отклонено %d.", a.Rejected)
+	fmt.Fprintf(&b, ", отклонено %d, сбоев %d.", a.Rejected, a.Failed)
 
 	if a.Agent == editorAgent && a.FirstDrafts > 0 {
 		fmt.Fprintf(&b, " Первый черновик: медиана %s, максимум %s.",
@@ -644,10 +656,12 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
-// formatWeeklyReport is the weekly report to «Техничка»: the metrics of the week and the feedback given in it (each cut
-// to weeklyFeedbackLength), dated in the team's time zone.
+// formatWeeklyReport is the weekly report to «Техничка» in one message (at most 4096 UTF-16 code units): the metrics of
+// the week and the feedback given in it (each cut to weeklyFeedbackLength; the feedback that does not fit is counted),
+// dated in the team's time zone. The period ends the day before the report: «17.11–23.11» for a Monday report.
 func formatWeeklyReport(m *pilot.Metrics, feedback []pilot.Feedback, total int, location *time.Location) string {
-	header := fmt.Sprintf(weeklyHeader, m.Since.In(location).Format(weekDateLayout), m.Until.In(location).Format(weekDateLayout))
+	header := fmt.Sprintf(weeklyHeader, m.Since.In(location).Format(weekDateLayout),
+		m.Until.In(location).AddDate(0, 0, -1).Format(weekDateLayout))
 
 	var b strings.Builder
 
@@ -662,22 +676,35 @@ func formatWeeklyReport(m *pilot.Metrics, feedback []pilot.Feedback, total int, 
 
 	b.WriteString(weeklyFeedbackTitle)
 
-	for i := range feedback {
-		fb := feedback[i]
-		fmt.Fprintf(&b, "\n— %s, %s", fb.CreatedAt.In(location).Format(weekDateLayout), fb.AuthorName)
+	listed := 0
 
-		if fb.TaskID > 0 {
-			fmt.Fprintf(&b, ", задача %d (версия %d)", fb.TaskID, fb.TaskVersion)
+	for i := range feedback {
+		line := weeklyFeedbackLine(&feedback[i], location)
+		if utf16Len(b.String())+utf16Len(line)+weeklyRestReserve > maxMessageLength {
+			break
 		}
 
-		b.WriteString(": " + cutText(fb.Text, weeklyFeedbackLength))
+		b.WriteString(line)
+
+		listed++
 	}
 
-	if rest := total - len(feedback); rest > 0 {
+	if rest := total - listed; rest > 0 {
 		fmt.Fprintf(&b, "\n…и ещё %d.", rest)
 	}
 
 	return b.String()
+}
+
+// weeklyFeedbackLine: «\n— 18.11, Анастасия, задача 12 (версия 2): текст».
+func weeklyFeedbackLine(fb *pilot.Feedback, location *time.Location) string {
+	line := fmt.Sprintf("\n— %s, %s", fb.CreatedAt.In(location).Format(weekDateLayout), fb.AuthorName)
+
+	if fb.TaskID > 0 {
+		line += fmt.Sprintf(", задача %d (версия %d)", fb.TaskID, fb.TaskVersion)
+	}
+
+	return line + ": " + cutText(fb.Text, weeklyFeedbackLength)
 }
 
 // cutText cuts a text to limit characters with «…».

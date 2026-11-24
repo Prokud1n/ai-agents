@@ -37,7 +37,7 @@ func parseFeedback(event *gateway.Event) (input feedbackInput, refusal string) {
 }
 
 // feedback saves the trainer's /feedback, copies it to «Техничка» and thanks her. A reply to a draft links the feedback
-// to its task and version. A redelivered message is saved once and answered once.
+// to its task and version. A redelivered message is saved and copied once and thanked again.
 func (h *Handler) feedback(ctx context.Context, event *gateway.Event) error {
 	input, refusal := parseFeedback(event)
 	if refusal != "" {
@@ -64,9 +64,11 @@ func (h *Handler) feedback(ctx context.Context, event *gateway.Event) error {
 	}
 
 	if !created {
+		// A redelivered message: the copy is in «Техничка» already, the trainer is thanked again (the first answer may
+		// have been lost).
 		h.log.InfoContext(ctx, "teamchat: feedback of the message is saved already", "feedback_id", fb.ID, "event", event)
 
-		return nil
+		return h.reply(ctx, gateway.MarketerRole, event, feedbackThanks(fb.Truncated))
 	}
 
 	h.log.InfoContext(ctx, "teamchat: feedback saved", "feedback_id", fb.ID, "task_id", fb.TaskID)

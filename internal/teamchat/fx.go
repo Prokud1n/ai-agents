@@ -64,6 +64,11 @@ func newHandler(p handlerParams, team *config.Team, store *pilot.Service, tech *
 	h.pilot = store
 	h.tech = tech
 	h.admins = adminSet(p.Config.AdminUserIDs)
+
+	if unknown := unknownAdmins(p.Config.AdminUserIDs, p.Config.AllowedUserIDs); len(unknown) > 0 {
+		p.Log.Warn("teamchat: TELEGRAM_ADMIN_USER_IDS has IDs that are not in TELEGRAM_ALLOWED_USER_IDS, "+
+			"the gateway ignores their messages", "user_ids", unknown)
+	}
 	h.greetings = greetings(p.Config)
 	p.Lifecycle.Append(fx.Hook{OnStop: h.WaitBackground})
 
