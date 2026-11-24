@@ -14,10 +14,15 @@
 package editjob
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
 // Status of a finished job.
@@ -26,6 +31,22 @@ type Status string
 const (
 	DoneStatus   Status = "done"
 	FailedStatus Status = "failed"
+	// PlannedStatus: an AutoStage job stopped after the plan, without a reel: the editor decides on the plan
+	// (the trainer's caption, disputed repeats) and replaces the job with its RenderStage (Board.Replace).
+	PlannedStatus Status = "planned"
+)
+
+// Stage is what a job does.
+type Stage string
+
+const (
+	// AutoStage transcribes the source and plans the cut; with nothing to decide (no Decide, no disputed repeats)
+	// it renders the reel at once, otherwise it stops with PlannedStatus after storing the transcript and the plan.
+	// An empty stage is AutoStage.
+	AutoStage Stage = "auto"
+	// RenderStage renders the reel with the editor's Edit from the stored transcript of the source: the speech
+	// is not transcribed again.
+	RenderStage Stage = "render"
 )
 
 // FailureCode tells the app why a job failed, so it can tell the trainer without technical details.
@@ -54,6 +75,9 @@ const (
 	TimeoutCode FailureCode = "timeout"
 	// QueueTimeoutCode: no worker took the job before its queue deadline (EDITOR_QUEUE_TIMEOUT).
 	QueueTimeoutCode FailureCode = "queue_timeout"
+	// InvalidEditCode: the plan of a render job cannot be built with its edit (the app checked it, so this is a bug
+	// or a change of the transcript): a technical failure, not the trainer's.
+	InvalidEditCode FailureCode = "invalid_edit"
 	// TemporaryCode: the API, the storage or ffmpeg failed; another attempt may succeed.
 	TemporaryCode FailureCode = "temporary"
 )
@@ -75,6 +99,50 @@ type Job struct {
 	QueueDeadline time.Time `json:"queue_deadline"`
 	// Timeout of the edit from the moment a worker took the job.
 	Timeout time.Duration `json:"timeout"`
+	Stage   Stage         `json:"stage,omitempty"`
+	// Decide stops an AutoStage job after the plan even without disputed repeats: the trainer's caption is
+	// applied by the editor first.
+	Decide bool `json:"decide,omitempty"`
+	// Settings and Edit of a RenderStage job: the plan is built with the settings of the plan the editor
+	// decided on (so the IDs of its candidates hold) and the editor's changes, checked by the app.
+	Settings *roughcut.Settings `json:"settings,omitempty"`
+	Edit     *roughcut.Edit     `json:"edit,omitempty"`
+	// Summary is the app's own note for the description of the draft; the worker does not read it.
+	Summary *Summary `json:"summary,omitempty"`
+	// RevisionHash is the app's fingerprint of the trainer's text the job was decided on (the revision; the caption
+	// of the first version): a job of a failed revision left on the board is not given to the next revision.
+	RevisionHash string `json:"revision_hash,omitempty"`
+}
+
+// TextHash is the fingerprint of a text for Job.RevisionHash: sha256 in hex, empty for an empty text.
+func TextHash(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(text))
+
+	return hex.EncodeToString(sum[:])
+}
+
+// Summary is what the app tells the trainer about a decided version, besides the durations.
+type Summary struct {
+	// Changes are the sentences about what the editor changed.
+	Changes []string `json:"changes,omitempty"`
+	// Note is said after them (for example, why the caption was not applied).
+	Note string `json:"note,omitempty"`
+	// PreviousDuration is the length of the reel of the previous version; 0 for the first one.
+	PreviousDuration float64 `json:"previous_duration,omitempty"`
+}
+
+// EffectiveStage is the stage of the job; empty is AutoStage.
+func (j *Job) EffectiveStage() Stage {
+	if j.Stage == "" {
+		return AutoStage
+	}
+
+	return j.Stage
 }
 
 // JobID is the ID of the job that makes the version of the task: the same for every run of the task.
@@ -93,6 +161,10 @@ func (j *Job) Validate() error {
 		return fmt.Errorf("job %q has no source: %w", j.ID, ErrInvalidJob)
 	case j.QueueDeadline.IsZero() || j.Timeout <= 0:
 		return fmt.Errorf("job %q has no queue deadline or timeout: %w", j.ID, ErrInvalidJob)
+	case j.EffectiveStage() != AutoStage && j.EffectiveStage() != RenderStage:
+		return fmt.Errorf("job %q has an unknown stage %q: %w", j.ID, j.Stage, ErrInvalidJob)
+	case j.Stage == RenderStage && j.Settings == nil:
+		return fmt.Errorf("job %q renders without the plan settings: %w", j.ID, ErrInvalidJob)
 	}
 
 	return nil
@@ -107,8 +179,8 @@ type Result struct {
 	SourceDuration float64 `json:"source_duration"`
 	Duration       float64 `json:"duration,omitempty"`
 	MaxDuration    float64 `json:"max_duration,omitempty"`
-	// Cuts, Retakes and Candidates count the plan's cut pieces, removed retakes and the disputed repeats left in
-	// the reel (T3.4c decides them).
+	// Cuts, Retakes and Candidates count the plan's cut pieces, removed retakes (accepted candidates included) and
+	// the disputed repeats left in the reel.
 	Cuts       int `json:"cuts,omitempty"`
 	Retakes    int `json:"retakes,omitempty"`
 	Candidates int `json:"candidates,omitempty"`

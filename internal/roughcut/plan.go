@@ -14,6 +14,8 @@ const (
 	FillerCutReason CutReason = "filler"
 	// RetakeCutReason is a failed take: a phrase that was broken off or said again right after.
 	RetakeCutReason CutReason = "retake"
+	// EditCutReason is a fragment the editor asked to cut (Edit.Remove): a revision of the trainer.
+	EditCutReason CutReason = "edit"
 )
 
 // TakeKind tells how a failed take was recognized.
@@ -56,6 +58,33 @@ type Plan struct {
 	// Candidates are repeats left in the cut: the editor (a person or the editing agent) decides whether
 	// to cut the earlier phrase by editing Keep.
 	Candidates []Candidate `json:"candidates"`
+	// Edit is what the editor changed on top of the automatic plan (CutData.Edit): the next revision starts
+	// from it. Nil for an automatic plan.
+	Edit *Edit `json:"edit,omitempty"`
+}
+
+// Edit is what the editor (the editing agent, by the trainer's caption or revision) changed on top of the
+// automatic plan. The plan is built again from the transcript with the same settings and rules
+// (BuildPlanEdited), so the same edit always gives the same plan, and the IDs of the candidates do not depend
+// on it. Word indices are into the source transcript; ranges include both ends.
+type Edit struct {
+	// Accept are IDs of Plan.Candidates whose earlier phrase is cut.
+	Accept []int `json:"accept,omitempty"`
+	// Remove are words cut in addition to the automatic cuts; Restore are words kept although the automatic
+	// plan (a filler, a failed take, an accepted candidate) cut them. A word in both is cut.
+	Remove  []WordRange `json:"remove,omitempty"`
+	Restore []WordRange `json:"restore,omitempty"`
+	// Words replace the text of transcript words in the subtitles only: the plan is built from the original
+	// words.
+	Words []WordFix `json:"words,omitempty"`
+	// Notes explain the editor's decisions of this version in the decisions log.
+	Notes []string `json:"notes,omitempty"`
+}
+
+// WordFix is a corrected subtitle word: Text replaces the word Index of the source transcript.
+type WordFix struct {
+	Index int    `json:"index"`
+	Text  string `json:"text"`
 }
 
 // Settings are the thresholds the plan was built with, in seconds.
@@ -108,8 +137,9 @@ type Candidate struct {
 	// Earlier is the phrase that would be cut, Later the one said again.
 	Earlier Span `json:"earlier"`
 	Later   Span `json:"later"`
-	// EarlierWords are the indices of Earlier's words in the source transcript, both included.
+	// EarlierWords and LaterWords are the indices of the phrases' words in the source transcript, both included.
 	EarlierWords WordRange `json:"earlier_words"`
+	LaterWords   WordRange `json:"later_words"`
 	// Cut is the interval of the source accepting the candidate removes: with the margins around the
 	// neighbouring words and on the frame grid, as the cut would be made.
 	Cut         Interval `json:"cut"`

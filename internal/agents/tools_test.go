@@ -29,6 +29,12 @@ type fakeTool struct {
 	name    string
 	schema  string // empty: a valid default schema
 	execute func(input json.RawMessage) (string, error)
+	// final makes a successful call end the run (finalTool).
+	final bool
+}
+
+func (t *fakeTool) EndsRun() bool {
+	return t.final
 }
 
 func (t *fakeTool) Name() string {

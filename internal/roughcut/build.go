@@ -41,6 +41,20 @@ func BuildPlanAccepting(
 	settings Settings,
 	accept []int,
 ) (Plan, error) {
+	return BuildPlanEdited(transcript, duration, settings, &Edit{Accept: accept})
+}
+
+// BuildPlanEdited is BuildPlan with the editor's changes: the accepted candidates and the removed words are cut,
+// the restored words are kept. Failed takes and candidates are found before the changes, so the IDs of the
+// candidates are the same as in the automatic plan. Edit.Words and Edit.Notes do not change the plan, and the
+// plan's Edit is left to the caller. A word index outside the transcript or an unknown candidate is
+// ErrInvalidPlan.
+func BuildPlanEdited(
+	transcript *transcription.Result,
+	duration float64,
+	settings Settings,
+	edit *Edit,
+) (Plan, error) {
 	settings = effectiveSettings(settings)
 	words := transcript.Words
 	duration = planDuration(transcript, duration, settings)
@@ -55,13 +69,18 @@ func BuildPlanAccepting(
 	retakes, candidates := detectRetakes(ph.tokens, settings.RetakeSimilarity)
 	removed = markRetakes(removed, ph.tokens, retakes)
 
-	accepted, rest, err := splitAccepted(candidates, accept)
+	accepted, rest, err := splitAccepted(candidates, edit.Accept)
 	if err != nil {
 		return Plan{}, err
 	}
 
 	for i := range accepted {
 		removed = markRetakes(removed, ph.tokens, []retake{accepted[i].retake})
+	}
+
+	removed, err = applyWordEdits(removed, edit)
+	if err != nil {
+		return Plan{}, err
 	}
 
 	keep, cuts := buildIntervals(words, removed, duration, settings)
@@ -82,6 +101,43 @@ func BuildPlanAccepting(
 		Takes:          append(describeTakes(ph, retakes), describeAccepted(ph, accepted)...),
 		Candidates:     describeCandidates(ph, rest, cutFor),
 	}, nil
+}
+
+// applyWordEdits returns a copy of removed with the restored words kept and the removed words cut (a word in both
+// is cut).
+func applyWordEdits(removed []CutReason, edit *Edit) ([]CutReason, error) {
+	out := append([]CutReason(nil), removed...)
+
+	for _, r := range edit.Restore {
+		if err := checkWordRange(r, len(out)); err != nil {
+			return nil, err
+		}
+
+		for i := r.From; i <= r.To; i++ {
+			out[i] = ""
+		}
+	}
+
+	for _, r := range edit.Remove {
+		if err := checkWordRange(r, len(out)); err != nil {
+			return nil, err
+		}
+
+		for i := r.From; i <= r.To; i++ {
+			out[i] = EditCutReason
+		}
+	}
+
+	return out, nil
+}
+
+// checkWordRange: both ends within the words, From not after To.
+func checkWordRange(r WordRange, words int) error {
+	if r.From < 0 || r.To < r.From || r.To >= words {
+		return fmt.Errorf("failed to edit words %d–%d of %d: %w", r.From, r.To, words, ErrInvalidPlan)
+	}
+
+	return nil
 }
 
 // planDuration is the source duration, or the transcript's, or the end of the last word.

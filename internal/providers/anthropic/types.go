@@ -72,6 +72,8 @@ type ContentBlock struct {
 
 	// text
 	Text string `json:"text,omitempty"`
+	// CacheControl on a text block marks the end of a cacheable prefix of the messages.
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 
 	// tool_use
 	ID    string          `json:"id,omitempty"`
@@ -114,6 +116,12 @@ func (b *ContentBlock) MarshalJSON() ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// Cacheable reports whether the block can carry CacheControl: a text block made here (a block decoded from JSON is
+// sent back as it came, without changes).
+func (b *ContentBlock) Cacheable() bool {
+	return b.Type == TextContentType && len(b.raw) == 0
 }
 
 func TextBlock(text string) ContentBlock {

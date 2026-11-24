@@ -26,8 +26,6 @@ var (
 	ErrUnknownVersion  = fmt.Errorf("no such draft version: %w", ErrValidation)
 	ErrInvalidCallback = fmt.Errorf("invalid task callback data: %w", ErrValidation)
 	ErrEmptyTask       = fmt.Errorf("task has neither text nor media: %w", ErrValidation)
-	// ErrVideoRevision: a revision of a video draft by text is the next step (T3.4c).
-	ErrVideoRevision = fmt.Errorf("a video draft cannot be revised by text yet: %w", ErrValidation)
 
 	// errExecutorPanic marks a run whose executor panicked; it is retried like a temporary error.
 	errExecutorPanic = errors.New("executor panicked")
@@ -97,8 +95,6 @@ func UserMessage(err error) string {
 		return "Кнопка устарела или повреждена."
 	case errors.Is(err, ErrEmptyTask):
 		return "В задаче нет ни текста, ни вложений."
-	case errors.Is(err, ErrVideoRevision):
-		return VideoRevisionText
 	case errors.Is(err, ErrValidation):
 		return "Не хватает данных для задачи."
 	default:
@@ -127,10 +123,6 @@ func failureReason(err error, attempts int) string {
 		return fmt.Sprintf("Сервис ИИ временно недоступен: попыток было %d. Попробуйте позже.", attempts)
 	}
 }
-
-// VideoRevisionText answers a revision of a video draft («Правки» or a reply to it): by text it is the next step.
-const VideoRevisionText = "Правки текстом к видео появятся на следующем шаге. Пока можно отклонить черновик и " +
-	"прислать исходник заново."
 
 // failedTaskMessage tells the trainer that a task without a draft failed.
 func failedTaskMessage(reason string) string {

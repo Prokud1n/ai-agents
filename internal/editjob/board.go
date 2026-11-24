@@ -44,6 +44,19 @@ var (
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0
 `)
+	// replaceScript puts a job in place of the one with a result of the given status: only while that result is
+	// there, the job is replaced, its result, start and lock are deleted (a result means the worker is done) and the
+	// new job is queued, all at once.
+	replaceScript = goredis.NewScript(`
+local result = redis.call('GET', KEYS[2])
+if not result then return 0 end
+local ok, decoded = pcall(cjson.decode, result)
+if not ok or type(decoded) ~= 'table' or decoded['status'] ~= ARGV[3] then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+redis.call('DEL', KEYS[2], KEYS[3], KEYS[5])
+redis.call('XADD', KEYS[4], '*', ARGV[4], ARGV[1])
+return 1
+`)
 	// refreshScript extends the lock only if it is still the caller's.
 	refreshScript = goredis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
@@ -120,6 +133,35 @@ func (b *Board) Submit(ctx context.Context, job *Job) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// Replace puts the job (the next stage of a job with a planned result, the same ID) in place of the planned one and
+// queues it; false if the job's result is not planned (the job was replaced already, or forgotten): nothing changes.
+// A delivery of the replaced job left in the stream is skipped by the worker (its stage differs from the stored job).
+func (b *Board) Replace(ctx context.Context, job *Job) (bool, error) {
+	return b.replace(ctx, job, PlannedStatus)
+}
+
+// Retry queues the job again in place of its failed result (a temporary failure of a decided render: the same
+// edit, new deadlines); false if the job has no failed result.
+func (b *Board) Retry(ctx context.Context, job *Job) (bool, error) {
+	return b.replace(ctx, job, FailedStatus)
+}
+
+func (b *Board) replace(ctx context.Context, job *Job, status Status) (bool, error) {
+	data, err := json.Marshal(job)
+	if err != nil {
+		return false, fmt.Errorf("failed to encode job: %w", err)
+	}
+
+	keys := []string{b.jobKey(job.ID), b.resultKey(job.ID), b.startedKey(job.ID), b.stream, b.lockKey(job.ID)}
+
+	n, err := replaceScript.Run(ctx, b.rdb, keys, data, recordTTL.Milliseconds(), string(status), jobField).Int()
+	if err != nil {
+		return false, fmt.Errorf("failed to replace job %s: %w", job.ID, err)
+	}
+
+	return n == 1, nil
 }
 
 // Job returns the submitted job; false if there is none.

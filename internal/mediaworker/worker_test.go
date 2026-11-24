@@ -19,6 +19,8 @@ import (
 
 var testNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
+const testJobID = "task-17-v1"
+
 // fakeBoard records what the worker did with one delivery.
 type fakeBoard struct {
 	mu sync.Mutex
@@ -27,6 +29,8 @@ type fakeBoard struct {
 	lockHeld  bool // another worker holds the lock
 	lost      bool // Refresh reports the lock lost
 	finishErr error
+	// stored is the job on the board (nil: none, as after Forget).
+	stored *editjob.Job
 
 	acked    []string
 	finished []editjob.Result
@@ -73,6 +77,14 @@ func (b *fakeBoard) Ack(_ context.Context, id string) error {
 }
 
 func (b *fakeBoard) HasResult(context.Context, string) (bool, error) { return b.hasResult, nil }
+
+func (b *fakeBoard) Job(context.Context, string) (editjob.Job, bool, error) {
+	if b.stored == nil {
+		return editjob.Job{}, false, nil
+	}
+
+	return *b.stored, true, nil
+}
 
 func (b *fakeBoard) Lock(context.Context, string, string) (bool, error) { return !b.lockHeld, nil }
 
@@ -158,7 +170,7 @@ func deliveryWithTimeout(queueDeadline time.Time, timeout time.Duration) *editjo
 func TestWorkerHandle(t *testing.T) {
 	t.Parallel()
 
-	done := &editjob.Result{JobID: "task-17-v1", Status: editjob.DoneStatus}
+	done := &editjob.Result{JobID: testJobID, Status: editjob.DoneStatus}
 	later := testNow.Add(time.Hour)
 
 	tests := []struct {
@@ -179,7 +191,7 @@ func TestWorkerHandle(t *testing.T) {
 		},
 		{
 			name: "a failure is a result with its code", board: &fakeBoard{},
-			runner:       &fakeRunner{result: &editjob.Result{JobID: "task-17-v1"}, err: fail(editjob.NoAudioCode, errNoAudio)},
+			runner:       &fakeRunner{result: &editjob.Result{JobID: testJobID}, err: fail(editjob.NoAudioCode, errNoAudio)},
 			delivery:     delivery(later),
 			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.FailedStatus, expectedCode: editjob.NoAudioCode,
 		},
@@ -211,6 +223,24 @@ func TestWorkerHandle(t *testing.T) {
 		{
 			name: "a locked job is left pending for a later claim", board: &fakeBoard{lockHeld: true},
 			runner: &fakeRunner{}, delivery: delivery(later),
+		},
+		{
+			name:  "a planned job replaced by its render stage is skipped",
+			board: &fakeBoard{stored: &editjob.Job{ID: testJobID, Stage: editjob.RenderStage}}, runner: &fakeRunner{},
+			delivery: delivery(later), expectedAcks: 1,
+		},
+		{
+			name: "a render queued again later is skipped in its old delivery",
+			board: &fakeBoard{stored: &editjob.Job{
+				ID: testJobID, Stage: editjob.AutoStage, CreatedAt: testNow.Add(time.Minute),
+			}},
+			runner: &fakeRunner{}, delivery: delivery(later), expectedAcks: 1,
+		},
+		{
+			name:   "the current stage is run",
+			board:  &fakeBoard{stored: &editjob.Job{ID: testJobID, Stage: editjob.AutoStage}},
+			runner: &fakeRunner{result: done}, delivery: delivery(later),
+			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
 		},
 		{
 			name: "a malformed entry is acked", board: &fakeBoard{}, runner: &fakeRunner{},
