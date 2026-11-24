@@ -16,6 +16,9 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
+// greatFeedback is the text of the test feedback.
+const greatFeedback = "Монтаж отличный"
+
 // telegramLimit is the length of one Telegram message in UTF-16 code units.
 const telegramLimit = 4096
 
@@ -92,7 +95,7 @@ func TestParseFeedback(t *testing.T) {
 		expected        feedbackInput
 		expectedRefusal string
 	}{
-		{name: "text", input: commandEvent(gateway.FeedbackCommand, "  Монтаж отличный "), expected: feedbackInput{text: "Монтаж отличный"}},
+		{name: "plain text", input: commandEvent(gateway.FeedbackCommand, "  Монтаж отличный "), expected: feedbackInput{text: greatFeedback}},
 		{name: "empty: a hint", input: commandEvent(gateway.FeedbackCommand, "  "), expectedRefusal: emptyFeedbackText},
 		{
 			name:            "forwarded: someone else's words",
@@ -123,13 +126,13 @@ func TestHandlerFeedback(t *testing.T) {
 
 	saved := func(taskID int64, version int, text string, truncated bool) []pilot.SaveFeedbackData {
 		return []pilot.SaveFeedbackData{{
-			AuthorID: testUserID, AuthorName: "Анастасия", Text: text, Truncated: truncated, TaskID: taskID,
+			AuthorID: testUserID, AuthorName: testUserName, Text: text, Truncated: truncated, TaskID: taskID,
 			TaskVersion: version, Topic: string(gateway.PlanningTopic), TopicID: testTopicID, ChatID: testChatID,
 			MessageID: testMessageID,
 		}}
 	}
 	named := func(event *gateway.Event) *gateway.Event {
-		event.From.FirstName = "Анастасия"
+		event.From.FirstName = testUserName
 
 		return event
 	}
@@ -143,9 +146,9 @@ func TestHandlerFeedback(t *testing.T) {
 	}{
 		{
 			name:  "saved, copied to «Техничка», thanked",
-			event: named(commandEvent(gateway.FeedbackCommand, "Монтаж отличный")),
+			event: named(commandEvent(gateway.FeedbackCommand, greatFeedback)),
 			expected: pilotCalls{
-				feedback: saved(0, 0, "Монтаж отличный", false),
+				feedback: saved(0, 0, greatFeedback, false),
 				texts:    []sentText{reply(gateway.MarketerRole, feedbackThanksText)},
 				reports:  []string{"Отзыв №1 от Анастасия, топик «Планёрка»:\nМонтаж отличный\nhttps://t.me/c/1000/7/100"},
 			},
@@ -193,15 +196,15 @@ func TestHandlerFeedback(t *testing.T) {
 		{
 			name:     "redelivered: saved before, no second answer",
 			store:    &fakePilot{exists: true},
-			event:    named(commandEvent(gateway.FeedbackCommand, "Монтаж отличный")),
-			expected: pilotCalls{feedback: saved(0, 0, "Монтаж отличный", false)},
+			event:    named(commandEvent(gateway.FeedbackCommand, greatFeedback)),
+			expected: pilotCalls{feedback: saved(0, 0, greatFeedback, false)},
 		},
 		{
 			name:  "save failed",
 			store: &fakePilot{saveErr: errDatabaseDown},
-			event: named(commandEvent(gateway.FeedbackCommand, "Монтаж отличный")),
+			event: named(commandEvent(gateway.FeedbackCommand, greatFeedback)),
 			expected: pilotCalls{
-				feedback: saved(0, 0, "Монтаж отличный", false),
+				feedback: saved(0, 0, greatFeedback, false),
 				texts:    []sentText{reply(gateway.MarketerRole, feedbackFailedText)},
 			},
 		},
@@ -289,8 +292,8 @@ func TestHandlerOnboardPublishesThenEdits(t *testing.T) {
 	assert.Equal(t, []pinCall{{Role: gateway.MarketerRole, MessageID: 301}, {Role: gateway.MarketerRole, MessageID: 302}},
 		sender.pins, "the marketer pins both")
 	assert.Equal(t, map[string]pilot.OnboardingMessage{
-		string(gateway.PlanningTopic): {ChatID: testChatID, Topic: string(gateway.PlanningTopic), Role: "marketer", MessageID: 301},
-		string(gateway.SourcesTopic):  {ChatID: testChatID, Topic: string(gateway.SourcesTopic), Role: "editor", MessageID: 302},
+		string(gateway.PlanningTopic): {ChatID: testChatID, Topic: string(gateway.PlanningTopic), Role: string(gateway.MarketerRole), MessageID: 301},
+		string(gateway.SourcesTopic):  {ChatID: testChatID, Topic: string(gateway.SourcesTopic), Role: string(gateway.EditorRole), MessageID: 302},
 	}, store.greetings)
 
 	// The second /onboard edits the same messages: no duplicates in the topics.
@@ -314,9 +317,9 @@ func TestHandlerOnboardDeletedGreeting(t *testing.T) {
 
 	sender := &fakeSender{nextID: 400, editTextErr: gateway.ErrMessageNotFound}
 	store := &fakePilot{greetings: map[string]pilot.OnboardingMessage{
-		string(gateway.PlanningTopic): {ChatID: testChatID, Topic: string(gateway.PlanningTopic), Role: "marketer", MessageID: 10},
+		string(gateway.PlanningTopic): {ChatID: testChatID, Topic: string(gateway.PlanningTopic), Role: string(gateway.MarketerRole), MessageID: 10},
 		// «Исходники» was greeted by another bot: only a new message can be edited later.
-		string(gateway.SourcesTopic): {ChatID: testChatID, Topic: string(gateway.SourcesTopic), Role: "marketer", MessageID: 11},
+		string(gateway.SourcesTopic): {ChatID: testChatID, Topic: string(gateway.SourcesTopic), Role: string(gateway.MarketerRole), MessageID: 11},
 	}}
 	h := onboardHandler(sender, store, &fakeTech{})
 
@@ -439,7 +442,7 @@ func TestHandlerStatusWithMetrics(t *testing.T) {
 		{
 			name: "the metrics follow the status",
 			store: &fakePilot{metrics: pilot.Metrics{Feedback: 2, Agents: []pilot.AgentMetrics{{
-				Agent: "editor", Created: 4, Approved: 2, ApprovedFirst: 1, Revisions: 2, Rejected: 1,
+				Agent: editorAgent, Created: 4, Approved: 2, ApprovedFirst: 1, Revisions: 2, Rejected: 1,
 				FirstDrafts: 3, MedianFirstDraft: 20 * time.Minute, MaxFirstDraft: 75 * time.Minute,
 			}}}},
 			expected: "Задачи:\n— в очереди: 1\n\nРасход LLM за 7 дней: $0.00, вызовов: 0\n\n" +
@@ -480,17 +483,17 @@ func TestFormatAgentMetrics(t *testing.T) {
 	}{
 		{
 			name:     "nothing approved: no breakdown; the draft time only for the editor",
-			input:    pilot.AgentMetrics{Agent: "copywriter", Created: 2, Rejected: 1, FirstDrafts: 2, MedianFirstDraft: time.Minute},
+			input:    pilot.AgentMetrics{Agent: string(gateway.CopywriterRole), Created: 2, Rejected: 1, FirstDrafts: 2, MedianFirstDraft: time.Minute},
 			expected: "Копирайтер: задач 2, одобрено 0, отклонено 1.",
 		},
 		{
 			name:     "average revisions with a decimal",
-			input:    pilot.AgentMetrics{Agent: "marketer", Created: 2, Approved: 2, Revisions: 3},
+			input:    pilot.AgentMetrics{Agent: string(gateway.MarketerRole), Created: 2, Approved: 2, Revisions: 3},
 			expected: "Маркетолог: задач 2, одобрено 2 (с первой версии 0 — 0%, правок до одобрения в среднем 1,5), отклонено 0.",
 		},
 		{
 			name:  "editor drafts faster than a minute",
-			input: pilot.AgentMetrics{Agent: "editor", Created: 1, Approved: 1, ApprovedFirst: 1, FirstDrafts: 1, MedianFirstDraft: 30 * time.Second, MaxFirstDraft: 2 * time.Hour},
+			input: pilot.AgentMetrics{Agent: editorAgent, Created: 1, Approved: 1, ApprovedFirst: 1, FirstDrafts: 1, MedianFirstDraft: 30 * time.Second, MaxFirstDraft: 2 * time.Hour},
 			expected: "Монтажёр: задач 1, одобрено 1 (с первой версии 1 — 100%, правок до одобрения в среднем 0), " +
 				"отклонено 0. Первый черновик: медиана меньше минуты, максимум 2 ч.",
 		},
@@ -512,8 +515,8 @@ func TestFormatWeeklyReport(t *testing.T) {
 	since := time.Date(2026, 11, 16, 7, 0, 0, 0, time.UTC) // 10:00 in Moscow
 	metrics := pilot.Metrics{Since: since, Until: since.AddDate(0, 0, 7), Feedback: 3}
 	feedback := []pilot.Feedback{
-		{AuthorName: "Анастасия", Text: "Монтаж отличный", CreatedAt: since.Add(time.Hour)},
-		{AuthorName: "Анастасия", Text: strings.Repeat("б", weeklyFeedbackLength+1), TaskID: 12, TaskVersion: 2, CreatedAt: since.Add(48 * time.Hour)},
+		{AuthorName: testUserName, Text: greatFeedback, CreatedAt: since.Add(time.Hour)},
+		{AuthorName: testUserName, Text: strings.Repeat("б", weeklyFeedbackLength+1), TaskID: 12, TaskVersion: 2, CreatedAt: since.Add(48 * time.Hour)},
 	}
 
 	tests := []struct {

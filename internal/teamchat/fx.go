@@ -45,15 +45,13 @@ type handlerParams struct {
 	Ideas     *ideas.Service
 	Sender    *gateway.Sender
 	Files     mediaStore
-	Pilot     *pilot.Service
-	Tech      *TechReporter
 	Log       *slog.Logger
 }
 
 // newHandler registers waiting for the reactions set in the background when the handler is constructed: the
 // gateway that calls the handler is constructed after it, so on stop the gateway stops first and no new
 // reaction starts while they are waited for.
-func newHandler(p handlerParams, team *config.Team) (*Handler, error) {
+func newHandler(p handlerParams, team *config.Team, store *pilot.Service, tech *TechReporter) (*Handler, error) {
 	location, err := team.Location()
 	if err != nil {
 		return nil, err
@@ -63,8 +61,8 @@ func newHandler(p handlerParams, team *config.Team) (*Handler, error) {
 	h.location = location
 	h.productionTopicID = p.Config.ProductionTopicID
 	h.maxFileSize = p.Config.MaxFileSize
-	h.pilot = p.Pilot
-	h.tech = p.Tech
+	h.pilot = store
+	h.tech = tech
 	h.admins = adminSet(p.Config.AdminUserIDs)
 	h.greetings = greetings(p.Config)
 	p.Lifecycle.Append(fx.Hook{OnStop: h.WaitBackground})

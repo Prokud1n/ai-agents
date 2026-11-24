@@ -14,6 +14,9 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/pilot"
 )
 
+// tenOClock is the report time of the tests.
+const tenOClock = "10:00"
+
 func TestParseSchedule(t *testing.T) {
 	t.Parallel()
 
@@ -25,7 +28,7 @@ func TestParseSchedule(t *testing.T) {
 	}{
 		{
 			name:     "monday 10:00",
-			input:    config.Pilot{ReportWeekday: "Monday", ReportTime: "10:00"},
+			input:    config.Pilot{ReportWeekday: "Monday", ReportTime: tenOClock},
 			expected: weeklySchedule{weekday: time.Monday, hour: 10, location: moscow},
 		},
 		{
@@ -33,8 +36,8 @@ func TestParseSchedule(t *testing.T) {
 			input:    config.Pilot{ReportWeekday: " sunday ", ReportTime: "21:30"},
 			expected: weeklySchedule{weekday: time.Sunday, hour: 21, minute: 30, location: moscow},
 		},
-		{name: "russian weekday", input: config.Pilot{ReportWeekday: "понедельник", ReportTime: "10:00"}, fails: true},
-		{name: "time without the weekday", input: config.Pilot{ReportTime: "10:00"}, fails: true},
+		{name: "russian weekday", input: config.Pilot{ReportWeekday: "понедельник", ReportTime: tenOClock}, fails: true},
+		{name: "time without the weekday", input: config.Pilot{ReportTime: tenOClock}, fails: true},
 		{name: "weekday without the time", input: config.Pilot{ReportWeekday: "monday"}, fails: true},
 		{name: "bad time", input: config.Pilot{ReportWeekday: "monday", ReportTime: "25:00"}, fails: true},
 	}
