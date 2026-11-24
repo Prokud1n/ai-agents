@@ -230,6 +230,13 @@ func TestWorkerHandle(t *testing.T) {
 			delivery: delivery(later), expectedAcks: 1,
 		},
 		{
+			name: "a render queued again later is skipped in its old delivery",
+			board: &fakeBoard{stored: &editjob.Job{
+				ID: testJobID, Stage: editjob.AutoStage, CreatedAt: testNow.Add(time.Minute),
+			}},
+			runner: &fakeRunner{}, delivery: delivery(later), expectedAcks: 1,
+		},
+		{
 			name:   "the current stage is run",
 			board:  &fakeBoard{stored: &editjob.Job{ID: testJobID, Stage: editjob.AutoStage}},
 			runner: &fakeRunner{result: done}, delivery: delivery(later),

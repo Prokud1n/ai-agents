@@ -125,6 +125,8 @@ func (s *Service) execute(ctx context.Context, task *Task, rev revision) (output
 		Version:  task.Version + 1,
 		Prompt:   BuildPrompt(task, rev.previous, rev.feedback),
 		Revision: rev.text(),
+		// The same condition as in handleRunError: Attempts already counts this run.
+		LastAttempt: task.Attempts >= s.cfg.MaxAttempts,
 	})
 	if err != nil {
 		return Output{}, err

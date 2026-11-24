@@ -225,6 +225,14 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalTimeout)
 	defer cancel()
 
+	// The app replaced or forgot the job while it ran: its result would answer a job that is not there any more.
+	if superseded, err := w.superseded(finalCtx, job); err == nil && superseded {
+		w.log.WarnContext(ctx, "mediaworker: job was replaced while it ran, its result is dropped", "job_id", job.ID)
+		w.ack(finalCtx, d)
+
+		return
+	}
+
 	if err := w.board.Finish(finalCtx, job, result); err != nil {
 		w.log.ErrorContext(ctx, "mediaworker: failed to store the result, the job will be run again", "error", err,
 			"job_id", job.ID)
@@ -233,6 +241,18 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 	}
 
 	w.ack(finalCtx, d)
+}
+
+// superseded: the job on the board is another one than the delivered (a planned job replaced by its render, a render
+// queued again after a failure, a revision submitted anew): a different stage or a different creation time. A job
+// that is not on the board is not superseded (it is run as before).
+func (w *Worker) superseded(ctx context.Context, job *editjob.Job) (bool, error) {
+	stored, found, err := w.board.Job(ctx, job.ID)
+	if err != nil {
+		return false, err
+	}
+
+	return found && (stored.EffectiveStage() != job.EffectiveStage() || !stored.CreatedAt.Equal(job.CreatedAt)), nil
 }
 
 // skip: a job with a result is announced again (the app may have missed it) and skipped; a job that waited in the
@@ -250,16 +270,14 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 		return true, nil
 	}
 
-	// A planned job replaced by its render stage (editjob.Board.Replace) may still be delivered: the stored job
-	// tells which stage is current.
-	stored, found, err := w.board.Job(ctx, job.ID)
+	superseded, err := w.superseded(ctx, job)
 	if err != nil {
 		return false, err
 	}
 
-	if found && stored.EffectiveStage() != job.EffectiveStage() {
-		w.log.InfoContext(ctx, "mediaworker: job stage was replaced, skipping the old one", "job_id", job.ID,
-			"stage", job.EffectiveStage(), "current_stage", stored.EffectiveStage())
+	if superseded {
+		w.log.InfoContext(ctx, "mediaworker: job was replaced, skipping the old delivery", "job_id", job.ID,
+			"stage", job.EffectiveStage())
 
 		return true, nil
 	}

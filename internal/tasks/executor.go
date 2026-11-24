@@ -32,6 +32,9 @@ type ExecuteData struct {
 	// Revision is the trainer's text of the revision this run makes; empty for the first version. An executor that
 	// does not use Prompt (the editor) takes it from here.
 	Revision string
+	// LastAttempt: a failure of this run gives the task up (the attempts are exhausted), so the executor must not
+	// leave work behind for a retry.
+	LastAttempt bool
 }
 
 // Output is the draft a run made: its text and, for a video draft, the S3 key of the video (the text is then

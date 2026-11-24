@@ -304,7 +304,7 @@ func TestExecutorSubmitsAndDefers(t *testing.T) {
 			assert.Equal(t, editjob.Job{
 				ID: testJobID, TaskID: testTaskID, Version: 1, SourceKey: testSourceKey,
 				CreatedAt: testNow, QueueDeadline: testNow.Add(testQueue), Timeout: testTimeout,
-				Stage: editjob.AutoStage, Decide: tt.decide,
+				Stage: editjob.AutoStage, Decide: tt.decide, RevisionHash: editjob.TextHash(tt.caption),
 			}, b.submitted[0])
 			assert.Empty(t, decider.requests, "no model call before the plan")
 		})
@@ -773,6 +773,7 @@ func TestExecutorRetriesRender(t *testing.T) {
 	render := pendingJob(2 * time.Hour)
 	render.ID, render.Version, render.Stage = "task-17-v2", 2, editjob.RenderStage
 	render.Settings, render.Edit = &testPlan().Settings, &editOutcome().Edit
+	render.RevisionHash = editjob.TextHash(testRevision)
 	b := &fakeBoard{
 		job:    render,
 		result: &editjob.Result{JobID: render.ID, Status: editjob.FailedStatus, Code: editjob.TemporaryCode},
@@ -797,4 +798,66 @@ func TestExecutorRetriesRender(t *testing.T) {
 
 	var deferred *tasks.DeferredError
 	require.ErrorAs(t, err, &deferred, "the next run waits for the queued render")
+}
+
+// TestExecutorLastAttemptForgetsRender: on the last attempt a failed render is not queued again (the task is given
+// up, its result would wait for the next revision): it is forgotten.
+func TestExecutorLastAttemptForgetsRender(t *testing.T) {
+	t.Parallel()
+
+	render := pendingJob(time.Hour)
+	render.ID, render.Version, render.Stage = "task-17-v2", 2, editjob.RenderStage
+	render.Settings, render.RevisionHash = &testPlan().Settings, editjob.TextHash(testRevision)
+	b := &fakeBoard{
+		job:    render,
+		result: &editjob.Result{JobID: render.ID, Status: editjob.FailedStatus, Code: editjob.TemporaryCode},
+	}
+	data := revisionData()
+	data.LastAttempt = true
+
+	_, err := newTestExecutorWith(&testDeps{board: b, decider: &fakeDecider{}, tech: &fakeTech{}}).Execute(t.Context(), data)
+
+	var temporary *tasks.TemporaryError
+	require.ErrorAs(t, err, &temporary)
+	assert.Empty(t, b.retried, "not queued again")
+	assert.Equal(t, []string{render.ID}, b.forgotten)
+}
+
+// TestExecutorStaleRevision: a job or a result of this version left by another revision (given up, finished late) is
+// not given to the new revision: it is forgotten and the new revision is decided and submitted.
+func TestExecutorStaleRevision(t *testing.T) {
+	t.Parallel()
+
+	old := pendingJob(time.Hour)
+	old.ID, old.Version, old.Stage = "task-17-v2", 2, editjob.RenderStage
+	old.Settings, old.RevisionHash = &testPlan().Settings, editjob.TextHash("оставь второй дубль")
+	done := &editjob.Result{JobID: old.ID, Status: editjob.DoneStatus, SourceDuration: 60, Duration: 30}
+
+	tests := []struct {
+		name string
+		job  *editjob.Job
+	}{
+		{name: "a job of another revision", job: old},
+		{name: "a result without its job"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			b := &fakeBoard{job: tt.job, result: done}
+			decider := &fakeDecider{outcome: editOutcome()}
+			deps := &testDeps{board: b, store: testStore{files: storedFiles(t)}, decider: decider, tech: &fakeTech{}}
+
+			_, err := newTestExecutorWith(deps).Execute(t.Context(), revisionData())
+
+			var deferred *tasks.DeferredError
+			require.ErrorAs(t, err, &deferred, "the old reel is not the draft")
+			assert.Equal(t, []string{old.ID}, b.forgotten)
+			require.Len(t, decider.requests, 1)
+			assert.Equal(t, testRevision, decider.requests[0].Revision)
+			require.Len(t, b.submitted, 1)
+			assert.Equal(t, editjob.TextHash(testRevision), b.submitted[0].RevisionHash)
+		})
+	}
 }

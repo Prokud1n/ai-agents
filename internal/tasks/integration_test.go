@@ -384,6 +384,11 @@ func TestIntegrationRetriesThenFailed(t *testing.T) {
 
 	require.NoError(t, env.service.Run(ctx, task.ID), "a failed task is not run again")
 	assert.Len(t, env.executor.Prompts(), 3)
+
+	// The executor knows the run whose failure gives the task up (the editor leaves no work behind for it).
+	runs := env.executor.Data()
+	require.Len(t, runs, 3)
+	assert.Equal(t, []bool{false, false, true}, []bool{runs[0].LastAttempt, runs[1].LastAttempt, runs[2].LastAttempt})
 }
 
 func TestIntegrationPermanentErrorFailsAtOnce(t *testing.T) {

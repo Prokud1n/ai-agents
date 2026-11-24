@@ -126,6 +126,12 @@ func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.
 
 	id := editjob.JobID(data.TaskID, data.Version)
 
+	if data.Version > 1 {
+		if err := e.dropStaleRevision(ctx, data, id); err != nil {
+			return tasks.Output{}, err
+		}
+	}
+
 	result, found, err := e.board.Result(ctx, id)
 	if err != nil {
 		return tasks.Output{}, err
@@ -154,14 +160,52 @@ func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.
 	}
 }
 
-// newJob is a job of the version of the task, due by the configured limits from now.
+// newJob is a job of the version of the task, due by the configured limits from now, with the fingerprint of the
+// trainer's text it is made for.
 func (e *Executor) newJob(data *tasks.ExecuteData) *editjob.Job {
 	now := e.now()
 
 	return &editjob.Job{
 		ID: editjob.JobID(data.TaskID, data.Version), TaskID: data.TaskID, Version: data.Version,
 		SourceKey: data.Media[0], CreatedAt: now, QueueDeadline: now.Add(e.queueTimeout), Timeout: e.jobTimeout,
+		RevisionHash: revisionHash(data),
 	}
+}
+
+// revisionHash fingerprints the revision of a new version, the caption of the first one.
+func revisionHash(data *tasks.ExecuteData) string {
+	if data.Version > 1 {
+		return editjob.TextHash(data.Revision)
+	}
+
+	return editjob.TextHash(data.Input)
+}
+
+// dropStaleRevision forgets the job of this version made for another revision: a revision that failed and was given
+// up leaves its job (or its late result) under the same ID, and the next revision of the same version must not get
+// that reel. A result without its job cannot be checked and is forgotten too.
+func (e *Executor) dropStaleRevision(ctx context.Context, data *tasks.ExecuteData, id string) error {
+	job, found, err := e.board.Job(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if found && job.RevisionHash == revisionHash(data) {
+		return nil
+	}
+
+	if !found {
+		_, hasResult, err := e.board.Result(ctx, id)
+		if err != nil || !hasResult {
+			return err
+		}
+	}
+
+	e.log.WarnContext(ctx, "editor: the job of the version was made for another revision, it is forgotten",
+		"job_id", id, "task_id", data.TaskID)
+	e.forget(ctx, id)
+
+	return nil
 }
 
 // autoJob is the first edit: the worker stops after the plan when the caption is to be applied or a repeat decided.
@@ -448,8 +492,9 @@ func (e *Executor) finish(ctx context.Context, data *tasks.ExecuteData, result *
 	err := fmt.Errorf("edit job %s failed: %s", result.JobID, result.Code)
 	temporary := &tasks.TemporaryError{Message: forVersion(data.Version, editFailedText, editFailedRevisionText), Err: err}
 
-	// A decided render is queued again as it is: no new transcription, no new decision of the model.
-	if result.Code == editjob.TemporaryCode && e.retryRender(ctx, result.JobID) {
+	// A decided render is queued again as it is: no new transcription, no new decision of the model. Not on the last
+	// attempt: the task is given up, nobody would read the result.
+	if result.Code == editjob.TemporaryCode && !data.LastAttempt && e.retryRender(ctx, result.JobID) {
 		return tasks.Output{}, temporary
 	}
 

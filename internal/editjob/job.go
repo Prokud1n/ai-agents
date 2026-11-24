@@ -14,9 +14,12 @@
 package editjob
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
@@ -106,6 +109,21 @@ type Job struct {
 	Edit     *roughcut.Edit     `json:"edit,omitempty"`
 	// Summary is the app's own note for the description of the draft; the worker does not read it.
 	Summary *Summary `json:"summary,omitempty"`
+	// RevisionHash is the app's fingerprint of the trainer's text the job was decided on (the revision; the caption
+	// of the first version): a job of a failed revision left on the board is not given to the next revision.
+	RevisionHash string `json:"revision_hash,omitempty"`
+}
+
+// TextHash is the fingerprint of a text for Job.RevisionHash: sha256 in hex, empty for an empty text.
+func TextHash(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(text))
+
+	return hex.EncodeToString(sum[:])
 }
 
 // Summary is what the app tells the trainer about a decided version, besides the durations.

@@ -301,6 +301,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `agents.Runtime` marks the end of the first user message with `cache_control` for every agent: runs with several
+  turns read the task from the cache, single-turn runs pay the cache write.
+
 - A revision of a video draft is no longer refused (`tasks.ErrVideoRevision` and its text are removed): «Правки» under
   a video draft asks to reply with the revision («Ответьте на видео текстом правки, например: …»), the caption of a
   source is taken as a wish for the edit («Подпись учту как пожелание к монтажу.»), `tasks.ExecuteData.Revision` carries
