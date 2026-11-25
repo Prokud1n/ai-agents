@@ -10,13 +10,20 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
+// Texts of the screen notes in the tests.
+const (
+	noteSpine  = "1/ спина ровно"
+	noteSquats = "10 приседаний"
+	noteYears  = "6 лет"
+)
+
 // testNotes are a list of two items and a callout on the words of testSpeech (word 6, «эээ», is cut as a filler).
 func testNotes() []NoteInput {
 	return []NoteInput{
-		{Kind: roughcut.ListItemNote, Text: "1/ спина ровно", Word: new(0)},
+		{Kind: roughcut.ListItemNote, Text: noteSpine, Word: new(0)},
 		{Kind: roughcut.ListTitleNote, Text: " «как держать спину». ", Start: new(0.45)},
 		{Kind: roughcut.ListItemNote, Text: "2/ ещё раз ровно", Word: new(3), End: new(4.0)},
-		{Kind: roughcut.CalloutNote, Text: "10 приседаний", Word: new(9)},
+		{Kind: roughcut.CalloutNote, Text: noteSquats, Word: new(9)},
 	}
 }
 
@@ -32,15 +39,15 @@ func TestApplyScreenNotes(t *testing.T) {
 	words := speech(testSpeech).Words
 	assert.Equal(t, []roughcut.ScreenNote{
 		{Kind: roughcut.ListTitleNote, Text: "как держать спину", Start: 0.45},
-		{Kind: roughcut.ListItemNote, Text: "1/ спина ровно", Start: words[0].Start},
+		{Kind: roughcut.ListItemNote, Text: noteSpine, Start: words[0].Start},
 		{Kind: roughcut.ListItemNote, Text: "2/ ещё раз ровно", Start: words[3].Start, End: 4},
-		{Kind: roughcut.CalloutNote, Text: "10 приседаний", Start: words[9].Start},
+		{Kind: roughcut.CalloutNote, Text: noteSquats, Start: words[9].Start},
 	}, first.Edit.ScreenNotes)
 	assert.Equal(t, "На экране: 2 пункта и 1 выноска.", first.Changes[0], "named first, never folded")
 
 	tooMany := make([]NoteInput, maxScreenNotes+1)
 	for i := range tooMany {
-		tooMany[i] = NoteInput{Kind: roughcut.CalloutNote, Text: "6 лет", Word: new(0)}
+		tooMany[i] = NoteInput{Kind: roughcut.CalloutNote, Text: noteYears, Word: new(0)}
 	}
 
 	tests := []struct {
@@ -49,7 +56,7 @@ func TestApplyScreenNotes(t *testing.T) {
 		mode  roughcut.Mode
 		err   string
 	}{
-		{name: "an unknown kind", notes: []NoteInput{{Kind: "title", Text: "6 лет", Word: new(0)}}, err: "kind"},
+		{name: "an unknown kind", notes: []NoteInput{{Kind: "title", Text: noteYears, Word: new(0)}}, err: "kind"},
 		{
 			name: "too long", err: "от 1 до 40",
 			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: strings.Repeat("а", maxNoteRunes+1), Word: new(0)}},
@@ -64,23 +71,23 @@ func TestApplyScreenNotes(t *testing.T) {
 		},
 		{
 			name: "a word and seconds", err: "укажи начало",
-			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: "6 лет", Word: new(0), Start: new(1.0)}},
+			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: noteYears, Word: new(0), Start: new(1.0)}},
 		},
-		{name: "no start", notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: "6 лет"}}, err: "укажи начало"},
+		{name: "no start", notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: noteYears}}, err: "укажи начало"},
 		{
 			name: "no such word", err: "нет в расшифровке",
-			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: "6 лет", Word: new(99)}},
+			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: noteYears, Word: new(99)}},
 		},
 		{
 			name: "past the source", err: "start_seconds",
-			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: "6 лет", Start: new(99.0)}},
+			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: noteYears, Start: new(99.0)}},
 		},
 		{
 			name: "the end before the start", err: "end_seconds",
-			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: "6 лет", Word: new(3), End: new(1.0)}},
+			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: noteYears, Word: new(3), End: new(1.0)}},
 		},
 		{name: "too many", notes: tooMany, err: "слишком много"},
-		{name: "a workout", notes: testNotes(), mode: roughcut.WorkoutMode, err: "только в разговорном"},
+		{name: "in a workout", notes: testNotes(), mode: roughcut.WorkoutMode, err: "только в разговорном"},
 		{
 			name: "on a cut word", err: "не видно в ролике",
 			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: "эээ", Word: new(6)}},
@@ -141,7 +148,7 @@ func TestApplyHookOnlyAllowsNotes(t *testing.T) {
 
 	outcome, err := Apply(hookOnlyRequest(), &Input{
 		Decision: EditDecision, HookTitle: new(testHook),
-		ScreenNotes: new([]NoteInput{{Kind: roughcut.CalloutNote, Text: "10 приседаний", Word: new(9)}}),
+		ScreenNotes: new([]NoteInput{{Kind: roughcut.CalloutNote, Text: noteSquats, Word: new(9)}}),
 	})
 	require.NoError(t, err)
 	assert.Len(t, outcome.Edit.ScreenNotes, 1)
@@ -184,7 +191,7 @@ func TestPromptScreenNotes(t *testing.T) {
 	t.Parallel()
 
 	withNotes := &roughcut.Edit{ScreenNotes: []roughcut.ScreenNote{
-		{Kind: roughcut.ListItemNote, Text: "1/ спина ровно", Start: 0.5},
+		{Kind: roughcut.ListItemNote, Text: noteSpine, Start: 0.5},
 		{Kind: roughcut.CalloutNote, Text: "эээ", Start: 5.7},
 	}}
 
@@ -211,7 +218,7 @@ func TestPromptScreenNotes(t *testing.T) {
 			},
 		},
 		{
-			name: "a workout", req: testRequest(1, &roughcut.Edit{Mode: roughcut.WorkoutMode}),
+			name: "workout", req: testRequest(1, &roughcut.Edit{Mode: roughcut.WorkoutMode}),
 			absent: []string{"screen_notes", "Пункты и цифры на экране"},
 		},
 	}

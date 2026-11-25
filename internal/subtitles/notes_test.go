@@ -9,6 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Texts of the note tests.
+const (
+	listTitle    = "3 вещи"
+	itemWater    = "1/ вода"
+	listOne      = listTitle + "|" + itemWater
+	listTwo      = listOne + "|2/ приседания"
+	calloutYears = "6 лет"
+)
+
 // shownBlock is a note block as the tests compare it.
 type shownBlock struct {
 	start, end float64
@@ -21,7 +30,7 @@ type shownBlock struct {
 func TestNoteBlocks(t *testing.T) {
 	t.Parallel()
 
-	title := Note{Kind: ListTitleNote, Text: "3 вещи", Start: 2}
+	title := Note{Kind: ListTitleNote, Text: listTitle, Start: 2}
 	item := func(text string, start float64) Note { return Note{Kind: ListItemNote, Text: text, Start: start} }
 
 	tests := []struct {
@@ -33,43 +42,43 @@ func TestNoteBlocks(t *testing.T) {
 	}{
 		{
 			name:  "a list piles up and stays listTail after its last item",
-			notes: []Note{item("1/ вода", 4), title, item("2/ приседания", 6)},
+			notes: []Note{item(itemWater, 4), title, item("2/ приседания", 6)},
 			expected: []shownBlock{
-				{2, 4, "3 вещи"}, {4, 6, "3 вещи|1/ вода"}, {6, 11, "3 вещи|1/ вода|2/ приседания"},
+				{2, 4, listTitle}, {4, 6, listOne}, {6, 11, listTwo},
 			},
 		},
 		{
 			name:     "a note waits for the hook",
-			notes:    []Note{{Kind: CalloutNote, Text: "6 лет", Start: 3}},
+			notes:    []Note{{Kind: CalloutNote, Text: calloutYears, Start: 3}},
 			hookEnd:  5,
-			expected: []shownBlock{{5, 7.5, "6 лет"}},
+			expected: []shownBlock{{5, 7.5, calloutYears}},
 		},
 		{
 			name: "a callout interrupts the list, the list comes back",
 			notes: []Note{
-				title, item("1/ вода", 3), {Kind: CalloutNote, Text: "(каждый день)", Start: 4, End: 4.5},
+				title, item(itemWater, 3), {Kind: CalloutNote, Text: "(каждый день)", Start: 4, End: 4.5},
 				item("2/ приседания", 7),
 			},
 			expected: []shownBlock{
-				{2, 3, "3 вещи"}, {3, 4, "3 вещи|1/ вода"}, {4, 5.5, "(каждый день)"},
-				{7, 12, "3 вещи|1/ вода|2/ приседания"},
+				{2, 3, listTitle}, {3, 4, listOne}, {4, 5.5, "(каждый день)"},
+				{7, 12, listTwo},
 			},
 		},
 		{
 			name: "the earliest items scroll away",
 			notes: []Note{
-				title, item("1/ вода", 3), item("2/ приседания", 4), item("3/ прогулка", 5), item("4/ завтрак", 6),
+				title, item(itemWater, 3), item("2/ приседания", 4), item("3/ прогулка", 5), item("4/ завтрак", 6),
 			},
 			expected: []shownBlock{
-				{2, 3, "3 вещи"}, {3, 4, "3 вещи|1/ вода"}, {4, 5, "3 вещи|1/ вода|2/ приседания"},
+				{2, 3, listTitle}, {3, 4, listOne}, {4, 5, listTwo},
 				{5, 6, "3 вещи|1/ вода|2/ приседания|3/ прогулка"},
 				{6, 11, "3 вещи|2/ приседания|3/ прогулка|4/ завтрак"},
 			},
 		},
 		{
 			name:     "an item numbered first after items starts a new list",
-			notes:    []Note{title, item("1/ вода", 3), item("2/ сон", 4), item("1/ бег", 6)},
-			expected: []shownBlock{{2, 3, "3 вещи"}, {3, 4, "3 вещи|1/ вода"}, {4, 6, "3 вещи|1/ вода|2/ сон"}, {6, 11, "1/ бег"}},
+			notes:    []Note{title, item(itemWater, 3), item("2/ сон", 4), item("1/ бег", 6)},
+			expected: []shownBlock{{2, 3, listTitle}, {3, 4, listOne}, {4, 6, "3 вещи|1/ вода|2/ сон"}, {6, 11, "1/ бег"}},
 		},
 		{
 			name:     "an end of its own; the reel ends the last note",
@@ -79,8 +88,8 @@ func TestNoteBlocks(t *testing.T) {
 		},
 		{
 			name:     "too short and empty notes are not drawn",
-			notes:    []Note{title, item("1/ вода", 2.3), {Kind: CalloutNote, Text: " ​ ", Start: 5}},
-			expected: []shownBlock{{2.3, 7.3, "3 вещи|1/ вода"}},
+			notes:    []Note{title, item(itemWater, 2.3), {Kind: CalloutNote, Text: " \u200b ", Start: 5}},
+			expected: []shownBlock{{2.3, 7.3, listOne}},
 		},
 	}
 
@@ -108,9 +117,9 @@ func TestNoteFades(t *testing.T) {
 
 	style := DefaultStyle()
 	blocks := noteBlocks([]Note{
-		{Kind: ListTitleNote, Text: "3 вещи", Start: 1},
-		{Kind: ListItemNote, Text: "1/ вода", Start: 2},
-		{Kind: CalloutNote, Text: "6 лет", Start: 10},
+		{Kind: ListTitleNote, Text: listTitle, Start: 1},
+		{Kind: ListItemNote, Text: itemWater, Start: 2},
+		{Kind: CalloutNote, Text: calloutYears, Start: 10},
 	}, 0, 0, &style)
 
 	require.Len(t, blocks, 3)
@@ -126,8 +135,8 @@ func TestNoteEvents(t *testing.T) {
 
 	style := DefaultStyle()
 	blocks := []noteBlock{
-		{start: 2, end: 4, entries: []string{"3 вещи", "1/ стакан {\\b1}воды"}, lines: 2, fadeIn: true},
-		{start: 4, end: 6, entries: []string{"6 лет"}, lines: 1},
+		{start: 2, end: 4, entries: []string{listTitle, "1/ стакан {\\b1}воды"}, lines: 2, fadeIn: true},
+		{start: 4, end: 6, entries: []string{calloutYears}, lines: 1},
 	}
 
 	assert.Equal(t, "Dialogue: 2,0:00:02.00,0:00:04.00,Hook,,0,0,0,,{\\fad(150,0)}3 вещи\\N1/ стакан \\{b1\\}воды\n"+

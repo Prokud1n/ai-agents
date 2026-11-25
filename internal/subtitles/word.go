@@ -54,9 +54,9 @@ type WordBoxStyle struct {
 
 func defaultWordBox() WordBoxStyle {
 	return WordBoxStyle{
-		TextStyle: TextStyle{Font: "Manrope Medium", Size: 44, Color: "#111111"},
+		TextStyle: TextStyle{Font: defaultFont, Size: 44, Color: "#111111"},
 		Lowercase: true,
-		Box:       "#FFFFFF",
+		Box:       white,
 		Padding:   10,
 		X:         defaultWordBoxX, Y: defaultWordBoxY, MaxWidth: defaultWordWidth,
 		MinDuration: 0.15,

@@ -9,7 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testHandle = "@prokudina.ana"
+const (
+	testHandle = "@prokudina.ana"
+	cardEvent  = ",Card,,"
+)
 
 func TestCheckHandle(t *testing.T) {
 	t.Parallel()
@@ -66,7 +69,7 @@ func TestBrandEvents(t *testing.T) {
 		{
 			name: "the handle alone", branding: &Branding{Handle: testHandle}, reelEnd: 10,
 			expected:    []string{"Dialogue: 3,0:00:00.00,0:00:10.00,Handle,,0,0,0,,{\\q2}@prokudina.ana\n"},
-			notExpected: []string{",Card,,", "\\p1"},
+			notExpected: []string{cardEvent, "\\p1"},
 		},
 		{
 			name: "the icon and the card", branding: &Branding{Handle: testHandle, Icon: true, EndCard: true}, reelEnd: 10,
@@ -83,12 +86,12 @@ func TestBrandEvents(t *testing.T) {
 		{
 			name: "a reel too short for the card", branding: &Branding{Handle: testHandle, EndCard: true}, reelEnd: 2.5,
 			expected:    []string{"Dialogue: 3,0:00:00.00,0:00:02.50,Handle,,0,0,0,,{\\q2}@prokudina.ana\n"},
-			notExpected: []string{",Card,,"},
+			notExpected: []string{cardEvent},
 		},
 		{
 			name: "a reel of unknown length", branding: &Branding{Handle: testHandle, EndCard: true},
 			expected:    []string{"Dialogue: 3,0:00:00.00,10:00:00.00,Handle,"},
-			notExpected: []string{",Card,,"},
+			notExpected: []string{cardEvent},
 		},
 		{
 			name:     "a long handle is squeezed",
@@ -149,7 +152,7 @@ func TestValidateHandle(t *testing.T) {
 	}{
 		{name: "the default fits", modify: func(*Style) {}},
 		{name: "the phrase default fits", phrase: true, modify: func(*Style) {}},
-		{name: "over the hook", modify: func(s *Style) { s.Handle.Y = 300 }, expectedErr: "overlaps the hook"},
+		{name: "over the hook", modify: func(s *Style) { s.Handle.Y = 300 }, expectedErr: overlapsHook},
 		{name: "on the buttons", modify: func(s *Style) { s.Handle.Y = 1100 }, expectedErr: "above the buttons"},
 		{name: "over the words", modify: func(s *Style) { s.Handle.Right = 400 }, expectedErr: "overlaps the words"},
 		{

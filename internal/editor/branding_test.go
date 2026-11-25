@@ -12,6 +12,9 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/subtitles"
 )
 
+// testHandle is the trainer's handle.
+const testHandle = "@prokudina.ana"
+
 // TestCheckBranding: REELS_HANDLE is checked strictly at the start of the app: empty is no handle, anything but «@»
 // and 1–30 of a-z, 0-9, «.», «_» fails the start.
 func TestCheckBranding(t *testing.T) {
@@ -26,8 +29,8 @@ func TestCheckBranding(t *testing.T) {
 		{name: "none"},
 		{name: "spaces only", handle: "  "},
 		{
-			name: "the trainer's handle", handle: " @prokudina.ana ",
-			expected: &editjob.Branding{Handle: "@prokudina.ana", Icon: true, EndCard: true},
+			name: "the trainer's handle", handle: " " + testHandle + " ",
+			expected: &editjob.Branding{Handle: testHandle, Icon: true, EndCard: true},
 		},
 		{name: "no @", handle: "prokudina.ana", invalid: true},
 		{name: "capitals", handle: "@Prokudina", invalid: true},
@@ -60,12 +63,12 @@ func TestJobsCarryBranding(t *testing.T) {
 	b := &fakeBoard{}
 	e := NewExecutor(b, testStore{}, &fakeDecider{}, &fakeTech{}, &config.Editor{
 		JobTimeout: testTimeout, QueueTimeout: testQueue, WorkerWait: testWorker, PollInterval: testPoll,
-		ReelsHandle: "@prokudina.ana", ReelsHandleIcon: false, ReelsEndCard: true,
+		ReelsHandle: testHandle, ReelsHandleIcon: false, ReelsEndCard: true,
 	}, slog.New(slog.DiscardHandler))
 
 	job := e.newJob(editData())
 	require.NotNil(t, job.Branding)
-	assert.Equal(t, editjob.Branding{Handle: "@prokudina.ana", EndCard: true}, *job.Branding)
+	assert.Equal(t, editjob.Branding{Handle: testHandle, EndCard: true}, *job.Branding)
 	assert.NotSame(t, e.branding, job.Branding, "a copy")
 
 	assert.Nil(t, newTestExecutor(b).newJob(editData()).Branding, "no handle, no branding")

@@ -148,23 +148,17 @@ func noteEnd(notes []Note, i int, start, hookEnd float64) float64 {
 
 // scrollEntries keeps what fits hookLines lines: the earliest items scroll away first, the title (titled) last, the
 // latest item always stays. It returns the entries shown and their lines.
-func scrollEntries(entries []string, titled bool, style *Style) ([]string, int) {
+func scrollEntries(entries []string, titled bool, style *Style) (shown []string, lines int) {
 	title, items := "", entries
 
 	if titled && len(entries) > 1 {
 		title, items = entries[0], entries[1:]
 	}
 
-	lines := func(texts []string) int {
-		n := 0
-		for _, e := range texts {
-			n += noteLines(e, style)
-		}
-
-		return n
+	total := noteLines(title, style)
+	for _, item := range items {
+		total += noteLines(item, style)
 	}
-
-	total := lines(items) + noteLines(title, style)
 
 	for total > hookLines && len(items) > 1 {
 		total -= noteLines(items[0], style)

@@ -78,7 +78,7 @@ func TestParseStyle(t *testing.T) {
 		{name: "text under the caption", input: "layout:\n  margin_bottom: 200\n", expectedErr: "layout.margin_bottom"},
 		{name: "unknown position", input: "layout:\n  position: left\n", expectedErr: "layout.position"},
 		{name: "unknown mode", input: "layout:\n  mode: karaoke\n", expectedErr: "layout.mode must be word or phrase"},
-		{name: "the word plate over the hook", input: "word_box:\n  y: 400\n", expectedErr: "overlaps the hook"},
+		{name: "the word plate over the hook", input: "word_box:\n  y: 400\n", expectedErr: overlapsHook},
 		{name: "the handle under the buttons", input: "handle:\n  y: 1200\n", expectedErr: "above the buttons"},
 		{name: "comma in a font name", input: "accent:\n  font: \"Fira, Sans\"\n", expectedErr: "accent.font"},
 		{name: "font size typo", input: "text:\n  size: 800\n", expectedErr: "text.size"},

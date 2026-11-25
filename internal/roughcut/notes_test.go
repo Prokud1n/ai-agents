@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// calloutYears is the text of a callout in the tests.
+const calloutYears = "6 лет"
+
 // TestRemapScreenNotes: the notes go onto the reel's timeline ordered by time; a note that starts in a cut piece is
 // dropped, an end in a cut moves to where the reel goes on, an end not after the start is dropped.
 func TestRemapScreenNotes(t *testing.T) {
@@ -25,19 +28,19 @@ func TestRemapScreenNotes(t *testing.T) {
 			name: "moved, ordered, the cut one dropped",
 			input: []ScreenNote{
 				{Kind: ListTitleNote, Text: "3 вещи", Start: 5, End: 7},
-				{Kind: CalloutNote, Text: "6 лет", Start: 1},
+				{Kind: CalloutNote, Text: calloutYears, Start: 1},
 				{Kind: ListItemNote, Text: "1/ вода", Start: 3},
 				{Kind: ListItemNote, Text: "2/ сон", Start: 4.5, End: 3},
 				{Kind: ListItemNote, Text: "3/ бег", Start: 1.5, End: 3},
 			},
 			expected: []ScreenNote{
-				{Kind: CalloutNote, Text: "6 лет", Start: 1},
+				{Kind: CalloutNote, Text: calloutYears, Start: 1},
 				{Kind: ListItemNote, Text: "3/ бег", Start: 1.5, End: 2},
 				{Kind: ListItemNote, Text: "2/ сон", Start: 2.5},
 				{Kind: ListTitleNote, Text: "3 вещи", Start: 3, End: 4},
 			},
 		},
-		{name: "all cut", input: []ScreenNote{{Kind: CalloutNote, Text: "6 лет", Start: 3}}, expected: nil},
+		{name: "all cut", input: []ScreenNote{{Kind: CalloutNote, Text: calloutYears, Start: 3}}, expected: nil},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +57,7 @@ func TestRemapScreenNotes(t *testing.T) {
 func TestScreenNotesInEditAndLog(t *testing.T) {
 	t.Parallel()
 
-	notes := []ScreenNote{{Kind: ListItemNote, Text: "1/ вода", Start: 1}, {Kind: CalloutNote, Text: "6 лет", Start: 2}}
+	notes := []ScreenNote{{Kind: ListItemNote, Text: "1/ вода", Start: 1}, {Kind: CalloutNote, Text: calloutYears, Start: 2}}
 	edit := &Edit{ScreenNotes: notes}
 	cloned := cloneEdit(edit)
 	edit.ScreenNotes[0].Text = "changed"

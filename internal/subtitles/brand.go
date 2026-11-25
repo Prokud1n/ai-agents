@@ -93,7 +93,7 @@ type EndCardStyle struct {
 
 func defaultHandle() HandleStyle {
 	return HandleStyle{
-		TextStyle: TextStyle{Font: "Manrope Medium", Size: 30, Color: "#FFFFFFB3"},
+		TextStyle: TextStyle{Font: defaultFont, Size: 30, Color: "#FFFFFFB3"},
 		Right:     40,
 		Y:         defaultHandleY,
 		MaxWidth:  300,
@@ -104,7 +104,7 @@ func defaultHandle() HandleStyle {
 
 func defaultEndCard() EndCardStyle {
 	return EndCardStyle{
-		TextStyle: TextStyle{Font: "Manrope Medium", Size: 64, Color: "#FFFFFF"},
+		TextStyle: TextStyle{Font: defaultFont, Size: 64, Color: white},
 		Duration:  2,
 		Shade:     0.7,
 		Fade:      500,

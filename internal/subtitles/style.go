@@ -183,6 +183,9 @@ type Layout struct {
 const (
 	defaultAccentFont  = "Fira Sans Extra Condensed ExtraBold"
 	defaultAccentColor = "#F2B94B"
+	// defaultFont is the font of the speech, the word plate, the handle and the card; white is their light color.
+	defaultFont = "Manrope Medium"
+	white       = "#FFFFFF"
 )
 
 // DefaultStyle is the look of the reference reels the owner chose (T3.17): the speech one word at a time, small black
@@ -206,7 +209,7 @@ func DefaultStyle() Style {
 // (17 pt), a third smaller than typical Reels captions; condensed capitals need 64 px to look as large.
 func PhraseStyle() Style {
 	return Style{
-		Text: TextStyle{Font: "Manrope Medium", Size: 56, Color: "#F5F0E1"},
+		Text: TextStyle{Font: defaultFont, Size: 56, Color: "#F5F0E1"},
 		Accent: AccentStyle{
 			TextStyle:   TextStyle{Font: defaultAccentFont, Size: 64, Uppercase: true, Color: defaultAccentColor},
 			Words:       []string{},
@@ -235,7 +238,7 @@ func PhraseStyle() Style {
 			BoxPadding: 14,
 		},
 		Hook: HookStyle{
-			TextStyle:   TextStyle{Font: "Manrope", Size: 60, Color: "#FFFFFF"},
+			TextStyle:   TextStyle{Font: "Manrope", Size: 60, Color: white},
 			MinDuration: 2.5,
 			MaxDuration: 8,
 			Fade:        150,

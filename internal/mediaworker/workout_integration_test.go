@@ -205,7 +205,7 @@ func TestIntegrationWorkoutKeepsPauses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(ass.ASS), "Style: Title,Fira Sans Extra Condensed ExtraBold,")
 	assert.Contains(t, string(ass.ASS), ",Title,,0,0,0,,ВЫПАДЫ — 12 РАЗ\n")
-	assert.Contains(t, string(ass.ASS), ",Main,,0,0,0,,Выпады", "the speech subtitles stay")
+	assert.Contains(t, string(ass.ASS), ",Word,,0,0,0,,{\\q2}выпады", "the speech subtitles stay")
 
 	// The spoken word hidden in the subtitles only: the reel is as long, the word is not in the ASS, the title stays.
 	edit.Hide = []roughcut.WordRange{{From: 0, To: 0}}
@@ -216,7 +216,7 @@ func TestIntegrationWorkoutKeepsPauses(t *testing.T) {
 
 	ass, err = burner.service.CreateSubtitles(&burner.last().CreateSubtitlesData)
 	require.NoError(t, err)
-	assert.NotContains(t, string(ass.ASS), ",Main,,")
+	assert.NotContains(t, string(ass.ASS), ",Word,,")
 	assert.Contains(t, string(ass.ASS), ",Title,,0,0,0,,ВЫПАДЫ — 12 РАЗ\n")
 	checkReel(t, storedReel(t, files), 30, hidden.Duration)
 }

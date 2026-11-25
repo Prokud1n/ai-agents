@@ -10,6 +10,13 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
+// Texts of the word tests.
+const (
+	tenRepeats   = "10 повторений"
+	wordHello    = "привет"
+	overlapsHook = "overlaps the hook"
+)
+
 // TestWordCues: the word layout shows one word at a time, in small letters, without the punctuation of its sentence;
 // a number with its unit is one cue, a word said too quickly is shown with the next one, never across a pause.
 func TestWordCues(t *testing.T) {
@@ -34,12 +41,12 @@ func TestWordCues(t *testing.T) {
 		{
 			name:     "a word at a time, small letters, no sentence punctuation",
 			input:    speech("Привет, друзья!", "«Делаем» присед."),
-			expected: []string{"привет", "друзья!", "делаем", "присед"},
+			expected: []string{wordHello, "друзья!", wDelaem, wPrised},
 		},
 		{
 			name:     "a number with its unit is one cue",
 			input:    speech("Делаем 10 повторений и 3 подхода"),
-			expected: []string{"делаем", "10 повторений", "и", "3 подхода"},
+			expected: []string{wDelaem, tenRepeats, wI, "3 подхода"},
 		},
 		{name: "a quick word goes with the next one", input: quick, expected: []string{"раз и", "два"}},
 		{name: "not across the end of a sentence", input: paused, expected: []string{"да", "нет"}},
@@ -105,7 +112,7 @@ func TestWordEvents(t *testing.T) {
 	}{
 		{
 			name:     "a word",
-			input:    wordCue{Text: "привет", Start: 1, End: 1.5},
+			input:    wordCue{Text: wordHello, Start: 1, End: 1.5},
 			expected: "Dialogue: 0,0:00:01.00,0:00:01.50,Word,,0,0,0,,{\\q2}привет\n",
 		},
 		{
@@ -152,7 +159,7 @@ func TestValidateWordBox(t *testing.T) {
 		expectedErr string
 	}{
 		{name: "the default fits", modify: func(*Style) {}},
-		{name: "over the hook", modify: func(s *Style) { s.WordBox.Y = 500 }, expectedErr: "overlaps the hook"},
+		{name: "over the hook", modify: func(s *Style) { s.WordBox.Y = 500 }, expectedErr: overlapsHook},
 		{name: "under the buttons", modify: func(s *Style) { s.WordBox.X = 500 }, expectedErr: "Instagram zones"},
 		{name: "over the titles", modify: func(s *Style) { s.WordBox.Y = 1300 }, expectedErr: "exercise titles"},
 		{name: "translucent plate", modify: func(s *Style) { s.WordBox.Box = "#FFFFFF40" }, expectedErr: "half opaque"},
