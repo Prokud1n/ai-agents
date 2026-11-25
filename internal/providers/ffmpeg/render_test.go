@@ -341,7 +341,7 @@ func TestRunnerRenderHalvesFrameRate(t *testing.T) {
 		commonArgs(),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=1.2"),
 		lavfiInput("color=c=black:s=64x64:r=60:d=1.2,format=gray,geq=lum='N*3'"),
-		[]string{"-c:v", "ffv1", audioCodecFlag, "pcm_s16le", shortestFlag, src},
+		[]string{videoCodecFlag, "ffv1", audioCodecFlag, "pcm_s16le", shortestFlag, src},
 	), nil)
 	require.NoError(t, err)
 
