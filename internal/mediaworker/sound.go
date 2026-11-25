@@ -2,6 +2,7 @@ package mediaworker
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,11 +19,10 @@ const (
 	// The range of loudnorm's target, LUFS.
 	minLoudnessTarget = -70.0
 	maxLoudnessTarget = -5.0
-	// draftTruePeak: Instagram and the other networks encode the sound again (AAC); 1.5 dB under full scale leaves room
-	// for the overshoot of that encode.
-	draftTruePeak = -1.5
-	// draftLoudnessRange: speech with natural dynamics fits it, so with a measurement loudnorm mostly changes only the
-	// volume (its linear mode); a wider sound is compressed to it.
+	// draftTruePeak the limiter (and the one-pass loudnorm) keeps the peaks at: the AAC encode of the draft overshoots
+	// by a few tenths of a dB, so the reel stays at most -1.5 dBTP, the limit of Instagram and the other networks.
+	draftTruePeak = -2.0
+	// draftLoudnessRange the one-pass loudnorm (no measurement) leaves: speech with natural dynamics fits it.
 	draftLoudnessRange = 11.0
 	// quietestSource: a source quieter than this (LUFS) is silence or noise — a workout filmed without sound, a muted
 	// phone. Raising it to the target would make the hiss loud, so its level is kept.
@@ -64,7 +64,7 @@ func parseSoundSettings(cfg *config.MediaWorker) (soundSettings, error) {
 	}
 
 	target, err := strconv.ParseFloat(value, floatBits)
-	if err != nil || target < minLoudnessTarget || target > maxLoudnessTarget {
+	if err != nil || math.IsNaN(target) || target < minLoudnessTarget || target > maxLoudnessTarget {
 		return soundSettings{}, fmt.Errorf("MEDIA_WORKER_LOUDNESS %q must be off or LUFS within %.0f..%.0f: %w",
 			cfg.Loudness, minLoudnessTarget, maxLoudnessTarget, ErrInvalidConfig)
 	}
@@ -75,19 +75,23 @@ func parseSoundSettings(cfg *config.MediaWorker) (soundSettings, error) {
 }
 
 // cut is the rough cut of the plan with the sound and the framing of the draft. The loudness is brought to the target
-// in either mode (a talking head or a workout with music), by the measurement of the source when the transcript has
-// one (no second analysis; a transcript stored before T3.15 has none — loudnorm then works in one pass). The noise is
-// reduced and the framing changes at the joints only in a talking head: in a workout the noise reduction would eat into
-// the music, and the cuts are rare and deliberate. A muted sound stays silent.
+// in either mode (a talking head or a workout with music): with the measurement of the source the transcript has (no
+// second analysis) by one gain and a peak limiter; a transcript stored before T3.15 has none — loudnorm then works in
+// one pass. The noise is reduced (its floor by the loudness of the recording) and the framing changes at the joints
+// only in a talking head: in a workout the noise reduction would eat into the music, and the cuts are rare and
+// deliberate. A muted sound stays silent.
 func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness) *ffmpeg.Cut {
 	opts := plan.Render
 	talk := plan.Plan.Mode.Effective() == roughcut.TalkMode
 
-	opts.Denoise = s.denoise && talk && !opts.Mute
-	opts.Loudness = nil
+	opts.Denoise, opts.Loudness = nil, nil
+
+	if s.denoise && talk && !opts.Mute {
+		opts.Denoise = &ffmpeg.Denoise{NoiseFloor: ffmpeg.NoiseFloorFor(measured)}
+	}
 
 	if s.normalize && !opts.Mute && (measured == nil || measured.Integrated >= quietestSource) {
-		opts.Loudness = &ffmpeg.Loudnorm{
+		opts.Loudness = &ffmpeg.LoudnessTarget{
 			Integrated: s.loudness, TruePeak: draftTruePeak, Range: draftLoudnessRange, Measured: measured,
 		}
 	}
@@ -103,34 +107,6 @@ func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness) *f
 // notes are the lines of the decisions log about the sound and the framing of the rendered draft.
 func (s *soundSettings) notes(cut *ffmpeg.Cut, measured *ffmpeg.Loudness, mode roughcut.Mode) []string {
 	workout := mode.Effective() == roughcut.WorkoutMode
-	l := cut.Options.Loudness
-
-	var loudness string
-
-	switch {
-	case cut.Options.Mute:
-		loudness = "Громкость: звук исходника убран"
-	case !s.normalize:
-		loudness = "Громкость: как в исходнике (выравнивание выключено)"
-	case l == nil:
-		loudness = fmt.Sprintf("Громкость: исходник %.1f LUFS — почти тишина, оставлена как есть", measured.Integrated)
-	case measured == nil:
-		loudness = fmt.Sprintf("Громкость: исходник не измерен → %.1f LUFS, пики до %.1f dBTP", l.Integrated, l.TruePeak)
-	default:
-		loudness = fmt.Sprintf("Громкость: исходник %.1f LUFS (пики %.1f dBTP) → %.1f LUFS, пики до %.1f dBTP",
-			measured.Integrated, measured.TruePeak, l.Integrated, l.TruePeak)
-	}
-
-	denoise := "Шумодав: лёгкий (речь)"
-
-	switch {
-	case cut.Options.Mute:
-		denoise = "Шумодав: нет (звук убран)"
-	case workout && s.denoise:
-		denoise = "Шумодав: нет (тренировка, музыка)"
-	case !cut.Options.Denoise:
-		denoise = "Шумодав: выключен"
-	}
 
 	zoom := fmt.Sprintf("Зумы на склейках: %d (приближение %.0f%%)", cut.Zooms(), s.zoom)
 
@@ -141,7 +117,40 @@ func (s *soundSettings) notes(cut *ffmpeg.Cut, measured *ffmpeg.Loudness, mode r
 		zoom = "Зумы на склейках: выключены"
 	}
 
-	return []string{loudness, denoise, zoom}
+	return []string{s.loudnessNote(cut, measured), s.denoiseNote(cut, workout), zoom}
+}
+
+// loudnessNote: the loudness before and after and how it was reached.
+func (s *soundSettings) loudnessNote(cut *ffmpeg.Cut, measured *ffmpeg.Loudness) string {
+	l := cut.Options.Loudness
+
+	switch {
+	case cut.Options.Mute:
+		return "Громкость: звук исходника убран"
+	case !s.normalize:
+		return "Громкость: как в исходнике (выравнивание выключено)"
+	case l == nil:
+		return fmt.Sprintf("Громкость: исходник %.1f LUFS — почти тишина, оставлена как есть", measured.Integrated)
+	case measured == nil:
+		return fmt.Sprintf("Громкость: исходник не измерен → %.1f LUFS: loudnorm без измерения (в один проход), "+
+			"пики до %.1f dBTP", l.Integrated, l.TruePeak)
+	default:
+		return fmt.Sprintf("Громкость: исходник %.1f LUFS (пики %.1f dBTP) → %.1f LUFS: усиление %+.1f dB, "+
+			"лимитер пиков на %.1f dBTP", measured.Integrated, measured.TruePeak, l.Integrated, l.Gain(), l.TruePeak)
+	}
+}
+
+func (s *soundSettings) denoiseNote(cut *ffmpeg.Cut, workout bool) string {
+	switch {
+	case cut.Options.Mute:
+		return "Шумодав: нет (звук убран)"
+	case workout && s.denoise:
+		return "Шумодав: нет (тренировка, музыка)"
+	case cut.Options.Denoise == nil:
+		return "Шумодав: выключен"
+	default:
+		return fmt.Sprintf("Шумодав: лёгкий (речь), порог шума %.0f dBFS", cut.Options.Denoise.NoiseFloor)
+	}
 }
 
 // appendDecisions adds the notes to the decisions log of the plan.

@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,15 +16,32 @@ const (
 	measureLogTail = 16 << 10
 	summaryMarker  = "Summary:"
 
-	// denoiseFilter is a light noise reduction of speech: the rumble below 80 Hz (wind, traffic, handling of the
-	// phone) is cut, then afftdn lowers the stationary noise under a floor of -50 dBFS by at most 10 dB (12 by
-	// default). A stronger reduction (nr 20+, a floor of -30) makes the voice sound «under water».
-	denoiseFilter = "highpass=f=80,afftdn=nr=10:nf=-50"
-	// soundRate is the sample rate after loudnorm, which works at 192 kHz in its dynamic mode.
+	// highpassFilter cuts the rumble below 80 Hz (wind, traffic, handling of the phone) before the noise reduction.
+	highpassFilter = "highpass=f=80"
+	// noiseReduction: afftdn lowers the stationary noise under the floor by at most 10 dB (12 by default); a stronger
+	// reduction (nr 20+) makes the voice sound «under water».
+	noiseReduction = 10
+	// afftdnDelay: afftdn puts its output 25 ms late (its FFT window, at 44.1 and 48 kHz alike, ffmpeg 6.1 and 8.1). The
+	// sound is padded by it at the end and trimmed by it at the start, so it stays in place and as long.
+	afftdnDelay = "0.025"
+	// The noise floor of afftdn follows the loudness of the recording: speech is about 36 dB above its noise, so a quiet
+	// recording (-30 LUFS) gets a floor of -66 dBFS instead of a fixed -50, which would eat into its speech.
+	noiseFloorBelowSpeech = 36.0
+	minNoiseFloor         = -80.0 // the range of afftdn's nf
+	maxNoiseFloor         = -35.0
+	// defaultNoiseFloor without a measurement: a recording at about -14 LUFS.
+	defaultNoiseFloor = -50.0
+
+	// The limiter after the gain: a lookahead of 5 ms (compensated: latency=1, the sound is not delayed), a release of
+	// 50 ms, no automatic level (it would raise the sound again).
+	limiterOptions    = ":attack=5:release=50:level=false:latency=1"
+	amplitudeDecibels = 20.0 // an amplitude ratio of a level in dB is 10^(dB/20)
+
+	// soundRate is the sample rate of the processed sound: loudnorm works at 192 kHz in its dynamic mode.
 	soundRate  = "48000"
 	soundLabel = "j"
 
-	// Limits of loudnorm's measured_* options: a silent sound measures -inf, which neither loudnorm nor JSON takes.
+	// Limits of a measured level: a silent sound measures -inf, which neither ffmpeg's options nor JSON take.
 	minLevel = -99.0
 	maxRange = 99.0
 )
@@ -45,18 +63,44 @@ type Loudness struct {
 	TruePeak float64 `json:"true_peak"`
 }
 
-// Loudnorm is the loudness the joined sound of a render is brought to (the loudnorm filter).
-type Loudnorm struct {
-	// Integrated loudness, LUFS; TruePeak, the most the peaks reach, dBTP; Range, the loudness range left to a sound
-	// that has to be compressed, LU.
+// LoudnessTarget is the loudness the joined sound of a render is brought to.
+type LoudnessTarget struct {
+	// Integrated loudness, LUFS; TruePeak, the most the peaks reach, dBTP; Range, the loudness range the one-pass
+	// loudnorm leaves (LU).
 	Integrated float64
 	TruePeak   float64
 	Range      float64
-	// Measured is the loudness of the source (Runner.ExtractAudioMeasured): loudnorm then changes the volume by one
-	// gain (its linear mode), the dynamics stay as recorded. When the gain would push the peaks over TruePeak, or the
-	// range is wider than Range, loudnorm compresses as without a measurement. Nil: one pass with no measurement,
-	// loudnorm adjusts the gain as the sound goes (its dynamic mode, a 3 s window).
+	// Measured is the loudness of the source (Runner.ExtractAudioMeasured): the sound then gets one gain, the target
+	// minus the measured loudness, and a limiter keeps its peaks at TruePeak — the dynamics stay as recorded. (loudnorm's
+	// linear mode would rarely do it: the peaks of phone speech are 13–20 dB above its loudness, so the gain would push
+	// them over, and loudnorm compresses instead.) Nil: loudnorm in one pass, adjusting the gain as the sound goes (its
+	// dynamic mode, a 3 s window), for a transcript stored before the measurement.
 	Measured *Loudness
+}
+
+// Gain is the gain of a measured sound, dB; 0 without a measurement.
+func (l *LoudnessTarget) Gain() float64 {
+	if l.Measured == nil {
+		return 0
+	}
+
+	return l.Integrated - l.Measured.Integrated
+}
+
+// Denoise is the light noise reduction of speech.
+type Denoise struct {
+	// NoiseFloor of afftdn, dBFS (NoiseFloorFor).
+	NoiseFloor float64
+}
+
+// NoiseFloorFor is the noise floor of a recording of the measured loudness: 36 dB under it, within -80..-35 dBFS;
+// -50 without a measurement.
+func NoiseFloorFor(measured *Loudness) float64 {
+	if measured == nil {
+		return defaultNoiseFloor
+	}
+
+	return min(max(math.Round(measured.Integrated-noiseFloorBelowSpeech), minNoiseFloor), maxNoiseFloor)
 }
 
 // soundChain is the processing of the joined sound: the noise reduction, then the loudness. Empty for a muted sound
@@ -67,27 +111,32 @@ func soundChain(opts RenderOptions) string {
 	}
 
 	filters := make([]string, 0, 2)
-	if opts.Denoise {
-		filters = append(filters, denoiseFilter)
+	if opts.Denoise != nil {
+		filters = append(filters, denoiseFilter(opts.Denoise))
 	}
 
 	if opts.Loudness != nil {
-		filters = append(filters, loudnormFilter(opts.Loudness), "aresample="+soundRate)
+		filters = append(filters, loudnessFilter(opts.Loudness), "aresample="+soundRate)
 	}
 
 	return strings.Join(filters, ",")
 }
 
-// loudnormFilter: "loudnorm=I=-14.0:TP=-1.5:LRA=11.0" and the measurement for the linear mode.
-func loudnormFilter(l *Loudnorm) string {
-	f := "loudnorm=I=" + formatLevel(l.Integrated) + ":TP=" + formatLevel(l.TruePeak) + ":LRA=" + formatLevel(l.Range)
+// denoiseFilter: the highpass and afftdn, with the delay of afftdn compensated.
+func denoiseFilter(d *Denoise) string {
+	return "apad=pad_dur=" + afftdnDelay + "," + highpassFilter + ",afftdn=nr=" + strconv.Itoa(noiseReduction) +
+		":nf=" + formatLevel(d.NoiseFloor) + ",atrim=start=" + afftdnDelay + ",asetpts=PTS-STARTPTS"
+}
 
-	if m := l.Measured; m != nil {
-		f += ":measured_I=" + formatLevel(m.Integrated) + ":measured_TP=" + formatLevel(m.TruePeak) +
-			":measured_LRA=" + formatLevel(m.Range) + ":measured_thresh=" + formatLevel(m.Threshold) + ":linear=true"
+// loudnessFilter: "volume=13.6dB,alimiter=limit=0.794328:…" with a measurement, the one-pass loudnorm without.
+func loudnessFilter(l *LoudnessTarget) string {
+	if l.Measured != nil {
+		limit := math.Pow(decimalBase, l.TruePeak/amplitudeDecibels)
+
+		return "volume=" + formatLevel(l.Gain()) + "dB,alimiter=limit=" + formatPrecise(limit) + limiterOptions
 	}
 
-	return f
+	return "loudnorm=I=" + formatLevel(l.Integrated) + ":TP=" + formatLevel(l.TruePeak) + ":LRA=" + formatLevel(l.Range)
 }
 
 func formatLevel(v float64) string {

@@ -51,7 +51,7 @@ const (
 	maxRenderRatio = 5.5
 	// The sound and the zoom of the worker's defaults (MEDIA_WORKER_LOUDNESS -14, MEDIA_WORKER_ZOOM 9).
 	benchLoudness    = -14.0
-	benchTruePeak    = -1.5
+	benchTruePeak    = -2.0
 	benchRange       = 11.0
 	benchZoom        = 1.09
 	benchZoomSegment = 1.2
@@ -166,8 +166,8 @@ func benchDraft(
 	require.NotNil(t, measured)
 
 	talk := cut.Render
-	talk.Denoise = true
-	talk.Loudness = &ffmpeg.Loudnorm{Integrated: benchLoudness, TruePeak: benchTruePeak, Range: benchRange, Measured: measured}
+	talk.Denoise = &ffmpeg.Denoise{NoiseFloor: ffmpeg.NoiseFloorFor(measured)}
+	talk.Loudness = &ffmpeg.LoudnessTarget{Integrated: benchLoudness, TruePeak: benchTruePeak, Range: benchRange, Measured: measured}
 	draft := &ffmpeg.Cut{
 		Segments: cut.Segments(), Options: talk, Zoom: &ffmpeg.Zoom{Factor: benchZoom, MinSegment: benchZoomSegment},
 	}

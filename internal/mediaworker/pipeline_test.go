@@ -495,6 +495,10 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "-3"},
 		},
 		{
+			name:  "a loudness that is NaN",
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "NaN"},
+		},
+		{
 			name:  "a zoom of 50 %",
 			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Zoom: 50},
 		},
@@ -511,7 +515,8 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 }
 
 // TestPipelineSoundAndZoom: the draft is brought to the loudness by the measurement of the source taken during the
-// transcription; a talking head is denoised and zoomed at the joints, a workout is not; a muted sound and a near-silent
+// transcription (one gain and the limiter); a talking head is denoised (the noise floor by the loudness of the
+// recording) and zoomed at the joints, a workout is not; a muted sound and a near-silent
 // source are not raised; without a measurement (a transcript stored before it) loudnorm works in one pass. The
 // decisions log tells what was done.
 func TestPipelineSoundAndZoom(t *testing.T) {
@@ -520,24 +525,28 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 	measured := &ffmpeg.Loudness{Integrated: -27.6, Threshold: -38.1, Range: 6.4, TruePeak: -9.3}
 
 	tests := []struct {
-		name      string
-		change    func(f *pipelineFakes)
-		measured  *ffmpeg.Loudness
-		loudness  bool
-		denoise   bool
-		zoom      bool
-		decisions string
+		name     string
+		change   func(f *pipelineFakes)
+		measured *ffmpeg.Loudness
+		loudness bool
+		// noiseFloor of the noise reduction, dBFS; 0 — none.
+		noiseFloor float64
+		zoom       bool
+		decisions  string
 	}{
 		{
-			name: "a talking head", measured: measured, loudness: true, denoise: true, zoom: true,
-			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP) → -14.0 LUFS, пики до -1.5 dBTP\n" +
-				"- Шумодав: лёгкий (речь)\n- Зумы на склейках: 0 (приближение 9%)\n",
+			// The floor of the noise reduction is 36 dB under the speech: -27.6 - 36 ≈ -64 dBFS.
+			name: "a talking head", measured: measured, loudness: true, noiseFloor: -64, zoom: true,
+			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP) → -14.0 LUFS: усиление +13.6 dB, " +
+				"лимитер пиков на -2.0 dBTP\n- Шумодав: лёгкий (речь), порог шума -64 dBFS\n" +
+				"- Зумы на склейках: 0 (приближение 9%)\n",
 		},
 		{
 			name:     "a transcript without a measurement: one pass",
 			change:   func(f *pipelineFakes) { f.transcriber.result.Loudness = nil },
-			loudness: true, denoise: true, zoom: true,
-			decisions: "- Громкость: исходник не измерен → -14.0 LUFS, пики до -1.5 dBTP\n",
+			loudness: true, noiseFloor: -50, zoom: true,
+			decisions: "- Громкость: исходник не измерен → -14.0 LUFS: loudnorm без измерения (в один проход), " +
+				"пики до -2.0 dBTP\n- Шумодав: лёгкий (речь), порог шума -50 dBFS\n",
 		},
 		{
 			name:     "a workout: the loudness only",
@@ -556,7 +565,7 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 			change: func(f *pipelineFakes) {
 				f.transcriber.result.Loudness = &ffmpeg.Loudness{Integrated: -62, Threshold: -72, TruePeak: -40}
 			},
-			denoise: true, zoom: true,
+			noiseFloor: -80, zoom: true,
 			decisions: "- Громкость: исходник -62.0 LUFS — почти тишина, оставлена как есть\n",
 		},
 		{
@@ -583,11 +592,15 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 
 			require.NotNil(t, fakes.burner.got)
 			cut := fakes.burner.got.Cut
-			assert.Equal(t, tt.denoise, cut.Options.Denoise)
+			if tt.noiseFloor != 0 {
+				assert.Equal(t, &ffmpeg.Denoise{NoiseFloor: tt.noiseFloor}, cut.Options.Denoise)
+			} else {
+				assert.Nil(t, cut.Options.Denoise)
+			}
 
 			if tt.loudness {
 				require.NotNil(t, cut.Options.Loudness)
-				assert.Equal(t, ffmpeg.Loudnorm{Integrated: -14, TruePeak: -1.5, Range: 11, Measured: tt.measured},
+				assert.Equal(t, ffmpeg.LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: tt.measured},
 					*cut.Options.Loudness)
 			} else {
 				assert.Nil(t, cut.Options.Loudness)

@@ -72,10 +72,10 @@ type RenderOptions struct {
 	// Mute silences the sound of the source: the audio track stays (silent), so the export has the same streams.
 	// A muted sound is neither denoised nor normalized.
 	Mute bool
-	// Denoise lightly reduces the noise of the joined sound (speech): the rumble and the stationary hiss.
-	Denoise bool
+	// Denoise, if set, lightly reduces the noise of the joined sound (speech): the rumble and the stationary hiss.
+	Denoise *Denoise
 	// Loudness, if set, brings the joined sound to it after the noise reduction; nil keeps the level of the source.
-	Loudness *Loudnorm
+	Loudness *LoudnessTarget
 }
 
 // RenderSegments re-encodes the given fragments of src one after another into dst (MP4 regardless of its

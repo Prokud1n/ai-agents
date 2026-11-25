@@ -170,19 +170,19 @@ func TestBurnGraphZoomSpans(t *testing.T) {
 }
 
 // TestRunnerZoom: a static picture cut into three 1.5 s pieces — the second one is zoomed in: its frame is the frame of
-// the first one cropped to the window and scaled back, the third one is as it was. The reel keeps all its frames.
+// the first one cropped to the window and scaled back, the third one is as it was — to the frame at both joints. The
+// reel keeps all its frames.
 func TestRunnerZoom(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
 
 	const (
-		small     = "108:192" // frames are compared at a tenth of the size
-		frameSize = 108 * 192
-		// The frames compared: the middle of each piece of 45 frames.
-		plainFrame, zoomedFrame, lastFrame = 20, 65, 110
-		same                               = 2.0   // mean difference of the same picture after the encode
-		different                          = 8.0   // of a picture 9 % closer
-		reelFrames                         = "135" // 3 × 1.5 s at 30 fps
+		small      = "108:192" // frames are compared at a tenth of the size
+		frameSize  = 108 * 192
+		plainFrame = 20    // the middle of the first piece of 45 frames
+		same       = 2.0   // mean difference of the same picture after the encode
+		different  = 8.0   // of a picture 9 % closer
+		reelFrames = "135" // 3 × 1.5 s at 30 fps
 	)
 
 	ctx := t.Context()
@@ -218,22 +218,47 @@ func TestRunnerZoom(t *testing.T) {
 		return []byte(out)
 	}
 
-	frames := pick("select='eq(n\\," + strconv.Itoa(plainFrame) + ")+eq(n\\," + strconv.Itoa(zoomedFrame) +
-		")+eq(n\\," + strconv.Itoa(lastFrame) + ")'")
-	require.Len(t, frames, 3*frameSize)
+	// The middle of the first and the last piece, and the frames around both joints (45 and 90).
+	checked := []struct {
+		frame  int
+		zoomed bool
+	}{
+		{frame: 20}, {frame: 44}, {frame: 45, zoomed: true}, {frame: 46, zoomed: true},
+		{frame: 65, zoomed: true}, {frame: 89, zoomed: true}, {frame: 90}, {frame: 91}, {frame: 110},
+	}
+
+	terms := make([]string, 0, len(checked))
+	for _, c := range checked {
+		terms = append(terms, "eq(n\\,"+strconv.Itoa(c.frame)+")")
+	}
+
+	// select passes the frames in the order of the reel: checked is in that order.
+	selected := pick("select='" + strings.Join(terms, "+") + "'")
+	require.Len(t, selected, len(checked)*frameSize)
+
+	frames := make(map[int][]byte, len(checked))
+	for i, c := range checked {
+		frames[c.frame] = selected[i*frameSize : (i+1)*frameSize]
+	}
 
 	w, h, x, y := zoomWindow(1080, 1920, testZoom.Factor)
 	expected := pick("select='eq(n\\," + strconv.Itoa(plainFrame) + ")',crop=" + strconv.Itoa(w) + ":" + strconv.Itoa(h) +
 		":" + strconv.Itoa(x) + ":" + strconv.Itoa(y) + ",scale=1080:1920")
 	require.Len(t, expected, frameSize)
 
-	plain, zoomed, last := frames[:frameSize], frames[frameSize:2*frameSize], frames[2*frameSize:]
+	plain := frames[plainFrame]
+	assert.Greater(t, meanDiff(plain, expected), different, "the zoomed framing differs from the plain one")
 
-	assert.Less(t, meanDiff(plain, last), same, "the third piece is framed as the first")
-	assert.Greater(t, meanDiff(plain, zoomed), different, "the second piece is framed differently")
-	assert.Less(t, meanDiff(expected, zoomed), same, "the second piece is the first one 9 % closer")
-	t.Logf("zoom: plain/last %.2f, plain/zoomed %.2f, expected/zoomed %.2f",
-		meanDiff(plain, last), meanDiff(plain, zoomed), meanDiff(expected, zoomed))
+	for _, c := range checked {
+		reference := plain
+		if c.zoomed {
+			reference = expected
+		}
+
+		assert.Less(t, meanDiff(reference, frames[c.frame]), same, "frame %d zoomed: %t", c.frame, c.zoomed)
+		t.Logf("zoom: frame %d (zoomed %t): %.2f from the plain, %.2f from the zoomed", c.frame, c.zoomed,
+			meanDiff(plain, frames[c.frame]), meanDiff(expected, frames[c.frame]))
+	}
 }
 
 func meanDiff(a, b []byte) float64 {

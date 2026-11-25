@@ -2,9 +2,9 @@ package ffmpeg
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +69,7 @@ func TestSoundChain(t *testing.T) {
 	t.Parallel()
 
 	measured := &Loudness{Integrated: -27.6, Threshold: -38.1, Range: 6.4, TruePeak: -9.3}
-	target := Loudnorm{Integrated: -14, TruePeak: -1.5, Range: 11}
+	target := LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11}
 
 	tests := []struct {
 		name     string
@@ -78,18 +78,24 @@ func TestSoundChain(t *testing.T) {
 	}{
 		{name: "as recorded", input: RenderOptions{}, expected: ""},
 		{
-			name:  "speech: the noise reduction, then the loudness by the measurement (linear)",
-			input: RenderOptions{Denoise: true, Loudness: &Loudnorm{Integrated: -14, TruePeak: -1.5, Range: 11, Measured: measured}},
-			expected: "highpass=f=80,afftdn=nr=10:nf=-50," +
-				"loudnorm=I=-14.0:TP=-1.5:LRA=11.0:measured_I=-27.6:measured_TP=-9.3:measured_LRA=6.4:measured_thresh=-38.1:linear=true," +
-				"aresample=48000",
+			name: "speech: the noise reduction (its delay compensated), then one gain and the limiter",
+			input: RenderOptions{
+				Denoise:  &Denoise{NoiseFloor: -64},
+				Loudness: &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: measured},
+			},
+			expected: "apad=pad_dur=0.025,highpass=f=80,afftdn=nr=10:nf=-64.0,atrim=start=0.025,asetpts=PTS-STARTPTS," +
+				"volume=13.6dB,alimiter=limit=0.794328:attack=5:release=50:level=false:latency=1,aresample=48000",
 		},
 		{
-			name:     "no measurement (a plan stored before it): one pass",
+			name:     "no measurement (a transcript stored before it): loudnorm in one pass",
 			input:    RenderOptions{Loudness: &target},
-			expected: "loudnorm=I=-14.0:TP=-1.5:LRA=11.0,aresample=48000",
+			expected: "loudnorm=I=-14.0:TP=-2.0:LRA=11.0,aresample=48000",
 		},
-		{name: "muted: silence is neither denoised nor raised", input: RenderOptions{Mute: true, Denoise: true, Loudness: &target}},
+		{
+			name:     "muted: silence is neither denoised nor raised",
+			input:    RenderOptions{Mute: true, Denoise: &Denoise{NoiseFloor: -50}, Loudness: &target},
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -101,43 +107,77 @@ func TestSoundChain(t *testing.T) {
 	}
 }
 
+func TestNoiseFloorFor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *Loudness
+		expected float64
+	}{
+		{name: "no measurement", input: nil, expected: -50},
+		{name: "a quiet recording: 36 dB under its speech", input: &Loudness{Integrated: -30.4}, expected: -66},
+		{name: "a loud one", input: &Loudness{Integrated: -12.6}, expected: -49},
+		{name: "very quiet: at most -80", input: &Loudness{Integrated: -48}, expected: -80},
+		{name: "very loud", input: &Loudness{Integrated: -5}, expected: -41},
+		{name: "at most -35 dBFS", input: &Loudness{Integrated: 2}, expected: -35},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.InDelta(t, tt.expected, NoiseFloorFor(tt.input), 1e-9)
+		})
+	}
+}
+
 // TestSegmentsFilterSound: the joined sound is processed once, after concat.
 func TestSegmentsFilterSound(t *testing.T) {
 	t.Parallel()
 
-	opts := RenderOptions{Denoise: true, Loudness: &Loudnorm{Integrated: -14, TruePeak: -1.5, Range: 11}}
+	opts := RenderOptions{Denoise: &Denoise{NoiseFloor: -50}, Loudness: &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11}}
 	got := segmentsFilter([]Segment{{Start: 1, End: 2}, {Start: 3, End: 4}}, opts)
 
-	assert.Contains(t, got, "concat=n=2:v=1:a=1[v][j];[j]highpass=f=80,afftdn=nr=10:nf=-50,"+
-		"loudnorm=I=-14.0:TP=-1.5:LRA=11.0,aresample=48000[a]")
-	assert.Equal(t, 1, strings.Count(got, "loudnorm="), "one loudnorm for the whole reel")
+	assert.Contains(t, got, "concat=n=2:v=1:a=1[v][j];[j]apad=pad_dur=0.025,highpass=f=80,afftdn=nr=10:nf=-50.0,"+
+		"atrim=start=0.025,asetpts=PTS-STARTPTS,loudnorm=I=-14.0:TP=-2.0:LRA=11.0,aresample=48000[a]")
+	assert.Equal(t, 1, strings.Count(got, "afftdn="), "one noise reduction for the whole reel")
 }
 
-// TestRunnerLoudness: a quiet (-30 LUFS) and a loud (-8 LUFS) source come out at -14 ± 1 LUFS with the true peak at
-// most -1 dBTP, by the measurement taken while the audio is extracted (the worker) and without it (one pass); the cut
-// and the subtitles are rendered in the same pass, as the worker does it.
+// speechLike is a voice-like sound of the given amplitude for aevalsrc: a 150 Hz voice with harmonics in syllables
+// (4 a second) and a plosive burst every 1.3 s, so its peaks are 16–18 dB above its loudness, as in phone speech.
+func speechLike(amplitude string) string {
+	return "aevalsrc='" + amplitude + "*(pow(abs(sin(2*PI*2*t)),3)*(0.35*sin(2*PI*150*t)+0.2*sin(2*PI*300*t)+" +
+		"0.12*sin(2*PI*450*t)+0.08*sin(2*PI*1200*t))+if(lt(mod(t,1.3),0.004),0.9*sin(2*PI*900*t),0))':s=48000:d=8"
+}
+
+// TestRunnerLoudness: a quiet (about -35 LUFS) and a loud (about -16 LUFS, peaks near full scale) speech-like source
+// come out at -14 ± 1 LUFS with the true peak at most -1.5 dBTP after the AAC encode: by the measurement taken while the
+// audio is extracted (one gain and the limiter, the worker) and without it (loudnorm in one pass); the cut and the
+// subtitles are rendered in the same pass, as the worker does it.
 func TestRunnerLoudness(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
 
 	const (
-		quietGain = -5.5 // dB on the sine of lavfi (-24.5 LUFS with the tremolo): -30 LUFS
-		loudGain  = 16.5 // -8 LUFS
+		quiet     = "0.12" // -34.6 LUFS, peaks -16.8 dBFS
+		loud      = "1.0"  // -16.3 LUFS, peaks -0.4 dBFS: the gain alone would clip them
 		target    = -14.0
+		maxPeak   = -1.5
 		tolerance = 1.0
 	)
 
 	tests := []struct {
-		name    string
-		gain    float64
-		source  float64
-		measure bool
-		denoise bool
+		name      string
+		amplitude string
+		source    float64
+		measure   bool
+		denoise   bool
 	}{
-		{name: "quiet speech, measured", gain: quietGain, source: -30, measure: true, denoise: true},
-		{name: "loud speech, measured", gain: loudGain, source: -8, measure: true, denoise: true},
-		{name: "quiet, one pass without a measurement", gain: quietGain, source: -30},
-		{name: "loud workout, one pass, no noise reduction", gain: loudGain, source: -8},
+		{name: "quiet speech, measured", amplitude: quiet, source: -34.6, measure: true, denoise: true},
+		{name: "loud speech, measured", amplitude: loud, source: -16.3, measure: true, denoise: true},
+		{name: "quiet, one pass without a measurement", amplitude: quiet, source: -34.6},
+		{name: "loud workout, one pass, no noise reduction", amplitude: loud, source: -16.3},
 	}
 
 	for _, tt := range tests {
@@ -149,13 +189,10 @@ func TestRunnerLoudness(t *testing.T) {
 			dir := t.TempDir()
 			src := filepath.Join(dir, "speech.mp4")
 
-			// A tone with a slow tremolo, like syllables: a steady sine would be taken for noise by nothing here, but
-			// the loudness range and the gate see a moving level.
 			_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
-				lavfiInput("sine=frequency=440:sample_rate=48000:duration=8"),
+				lavfiInput(speechLike(tt.amplitude)),
 				lavfiInput("testsrc=duration=8:size=180x320:rate=30"),
-				[]string{audioFilterFlag, "volume=" + strconv.FormatFloat(tt.gain, 'f', 1, 64) + "dB,apulsator=hz=0.7:amount=0.6",
-					videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
+				[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 			require.NoError(t, err)
 
 			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "audio"+AudioExtension))
@@ -163,25 +200,158 @@ func TestRunnerLoudness(t *testing.T) {
 			require.NotNil(t, measured, "ebur128 reported its summary")
 			assert.InDelta(t, tt.source, measured.Integrated, tolerance, "the source as generated")
 
-			loudnorm := &Loudnorm{Integrated: target, TruePeak: -1.5, Range: 11}
+			loudness := &LoudnessTarget{Integrated: target, TruePeak: -2, Range: 11}
 			if tt.measure {
-				loudnorm.Measured = measured
+				loudness.Measured = measured
+			}
+
+			opts := RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}, Loudness: loudness}
+			if tt.denoise {
+				opts.Denoise = &Denoise{NoiseFloor: NoiseFloorFor(measured)}
 			}
 
 			reel := burnTestReel(ctx, t, r, dir, src, &Cut{
-				Segments: []Segment{{Start: 0.5, End: 3.5}, {Start: 4, End: 7.5}},
-				Options: RenderOptions{
-					Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}, Denoise: tt.denoise, Loudness: loudnorm,
-				},
+				Segments: []Segment{{Start: 0.5, End: 3.5}, {Start: 4, End: 7.5}}, Options: opts,
 			})
 
 			out := measureLoudness(ctx, t, r, reel)
 			assert.InDelta(t, target, out.Integrated, tolerance, "the reel at the target")
-			assert.LessOrEqual(t, out.TruePeak, -1.0, "the true peak under -1 dBTP")
+			assert.LessOrEqual(t, out.TruePeak, maxPeak, "the true peak after AAC at most -1.5 dBTP")
 			t.Logf("loudness: source %.1f LUFS (peak %.1f) → reel %.1f LUFS (peak %.1f dBTP)",
 				measured.Integrated, measured.TruePeak, out.Integrated, out.TruePeak)
 		})
 	}
+}
+
+// TestRunnerSoundSync: a white flash and a click at the same moments in three pieces of the source; after the cut
+// with the noise reduction and the loudness every click is where its flash is (within 8 ms; afftdn alone would put it
+// 25 ms late), and the sound is as long as the picture.
+func TestRunnerSoundSync(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	const (
+		rate       = 30
+		sampleRate = 48000
+		maxShift   = 0.008 // s
+		bright     = 128   // of 255: a flash frame
+		clickLevel = 0.3   // of the loudest sample: the onset of a click
+		minGap     = 0.1   // s between two clicks
+		sampleSize = 16    // a 4×4 gray crop of a frame
+		reelLength = 3.0   // s: three pieces of 1 s
+	)
+
+	tests := []struct {
+		name    string
+		measure bool
+	}{
+		{name: "one gain and the limiter", measure: true},
+		{name: "loudnorm in one pass"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := t.Context()
+			r := newTestRunner(2 * time.Minute)
+			dir := t.TempDir()
+			src := filepath.Join(dir, "flashes.mp4")
+
+			// Flashes at the frames 18, 66 and 132 (0.6, 2.2 and 4.4 s), clicks of 20 ms at the same times over a quiet hum.
+			_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
+				lavfiInput("aevalsrc='if(between(t,0.6,0.62)+between(t,2.2,2.22)+between(t,4.4,4.42),"+
+					"0.8*sin(2*PI*1000*t),0.01*sin(2*PI*200*t))':s=48000:d=6"),
+				lavfiInput("color=c=black:s=180x320:r=30:d=6,drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:"+
+					"enable='between(t,0.59,0.62)+between(t,2.19,2.22)+between(t,4.39,4.42)'"),
+				[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
+			require.NoError(t, err)
+
+			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "audio"+AudioExtension))
+			require.NoError(t, err)
+
+			loudness := &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11}
+			if tt.measure {
+				loudness.Measured = measured
+			}
+
+			// Pieces 0.3–1.3, 2.0–3.0, 4.0–5.0 s: the flashes come at 0.3, 1.2 and 2.4 s of the reel.
+			reel := burnTestReel(ctx, t, r, dir, src, &Cut{
+				Segments: []Segment{{Start: 0.3, End: 1.3}, {Start: 2, End: 3}, {Start: 4, End: 5}},
+				Options: RenderOptions{
+					Fade: 0.01, FrameRate: Rational{Num: rate, Den: 1},
+					Denoise: &Denoise{NoiseFloor: NoiseFloorFor(measured)}, Loudness: loudness,
+				},
+			})
+
+			in, err := localFile(reel)
+			require.NoError(t, err)
+
+			frames, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
+				[]string{"-vf", "crop=4:4,format=gray", formatFlag, "rawvideo", "-"}), 1<<20)
+			require.NoError(t, err)
+
+			var flashes []float64
+
+			for i := 0; i+sampleSize <= len(frames); i += sampleSize {
+				k := i / sampleSize
+				if frames[i] > bright && (k == 0 || frames[i-sampleSize] <= bright) {
+					flashes = append(flashes, float64(k)/rate)
+				}
+			}
+
+			pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
+				[]string{"-vn", "-ac", "1", "-ar", "48000", formatFlag, "s16le", "-"}), 1<<21)
+			require.NoError(t, err)
+
+			samples := make([]int, 0, len(pcm)/2)
+			loudest := 0
+
+			for i := 0; i+1 < len(pcm); i += 2 {
+				v := int(pcm[i]) | int(pcm[i+1])<<8
+				if v >= 1<<15 { // signed 16-bit little-endian
+					v -= 1 << 16
+				}
+
+				samples = append(samples, v)
+				loudest = max(loudest, v, -v)
+			}
+
+			var clicks []float64
+
+			last := -1.0
+
+			for i, v := range samples {
+				at := float64(i) / sampleRate
+				if float64(max(v, -v)) > clickLevel*float64(loudest) && at-last > minGap {
+					clicks = append(clicks, at)
+				}
+
+				if float64(max(v, -v)) > clickLevel*float64(loudest) {
+					last = at
+				}
+			}
+
+			require.Equal(t, []float64{0.3, 1.2, 2.4}, roundAll(flashes), "the flashes of the reel")
+			require.Len(t, clicks, len(flashes), "a click for every flash: %v", clicks)
+
+			for i := range clicks {
+				assert.InDelta(t, flashes[i], clicks[i], maxShift, "click %d is with its flash", i)
+			}
+
+			assert.InDelta(t, reelLength, float64(len(samples))/sampleRate, 0.03, "the sound is as long as the picture")
+			t.Logf("sync: flashes %v, clicks %v", flashes, clicks)
+		})
+	}
+}
+
+func roundAll(values []float64) []float64 {
+	out := make([]float64, 0, len(values))
+	for _, v := range values {
+		out = append(out, math.Round(v*1000)/1000)
+	}
+
+	return out
 }
 
 // burnTestReel renders the cut of src at 1080×1920 with an empty ASS (no events) into dir and returns the reel.
