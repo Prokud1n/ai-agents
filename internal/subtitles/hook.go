@@ -17,8 +17,8 @@ const (
 	// hookLayer draws the hook title above the subtitles and the exercise titles.
 	hookLayer = 2
 	// hookLines: the hook is at most this many lines; hookMaxRunes is the longest hook the editor writes (editplan).
-	hookLines    = 2
-	hookMaxRunes = 40
+	hookLines    = 4
+	hookMaxRunes = 90
 	// phraseTail: the hook stays at most this long after the end of the first phrase.
 	phraseTail = 0.5
 	// minHookKeyRunes: a word shorter than this is not the hook's key word (unless it has a digit).
@@ -28,26 +28,29 @@ const (
 	millisPerSecond = 1000
 	// Limits of the hook values in a style file.
 	minHookDuration = 1.0
-	maxHookDuration = 5.0
+	maxHookDuration = 10.0
 	maxHookFade     = 500
 	maxHookGap      = 200
-	// minHookFitScale: the 40 characters of the longest hook squeezed into two lines no narrower than this (\fscx).
+	// minHookFitScale: the longest hook squeezed into hookLines lines no narrower than this (\fscx).
 	minHookFitScale = 85
 )
 
-// HookStyle is the look of the hook title: large text over the first seconds of the reel, at the subtitles' edge
-// (at the top for subtitles in the middle). While it is shown, the subtitles stand right under it (above it at the
-// bottom), clear of it.
+// HookStyle is the look of the hook title: text over the first seconds of the reel, at the subtitles' edge (at the
+// top by default; at the top for subtitles in the middle). While it is shown, the subtitles stand right under it
+// (above it at the bottom), clear of it.
 type HookStyle struct {
 	TextStyle `yaml:",inline"`
 
 	// Highlight colors one key word of the hook (a number with its word, otherwise the longest word); empty: none.
 	Highlight string `yaml:"highlight"`
-	// Duration is the longest the hook is shown, in seconds; it ends at most phraseTail after the first phrase and
-	// at the end of the reel.
-	Duration float64 `yaml:"duration"`
-	// MinDuration: a short first phrase does not end the hook before this, in seconds (the reel still does).
+	// The hook is shown until phraseTail after the first phrase, but at least MinDuration and at most MaxDuration
+	// seconds (MinDuration without speech), and never past the reel.
 	MinDuration float64 `yaml:"min_duration"`
+	MaxDuration float64 `yaml:"max_duration"`
+	// Box is the color of a plate under the lines, "#RRGGBBAA"; empty: none, the outline and the shadow of the
+	// subtitles. BoxPadding is the plate around the text, in pixels.
+	Box        string  `yaml:"box"`
+	BoxPadding float64 `yaml:"box_padding"`
 	// Fade in and out, in milliseconds.
 	Fade int `yaml:"fade"`
 	// Gap between the hook and the subtitles shown with it, in pixels.
@@ -79,9 +82,14 @@ func (s *Style) hookSpan() (top, bottom int) {
 	return blockSpan(s.hookPosition(), s.hookMargin(), s.hookHeight(hookLines))
 }
 
-// hookHeight is the height of a hook of the lines.
+// hookHeight is the height of a hook of the lines, with its plate.
 func (s *Style) hookHeight(lines int) int {
-	return int(float64(lines*s.Hook.Size) * lineHeightFactor)
+	height := float64(lines*s.Hook.Size) * lineHeightFactor
+	if s.Hook.Box != "" {
+		height += 2 * s.Hook.BoxPadding
+	}
+
+	return int(height)
 }
 
 // hookSubtitlesMargin is the margin of the subtitles shown with a hook of the lines: right after it from the same
@@ -106,7 +114,7 @@ func (s *Style) hookLineCount(hook string) int {
 
 // hookWords are the words of the hook as it is drawn, in capitals when the style says so. Defense in depth (the app
 // checks the text): control characters become spaces, invisible format characters are dropped, the text is cut to
-// hookMaxRunes.
+// hookMaxRunes by whole words.
 func hookWords(hook string, style *Style) []string {
 	clean := strings.Map(func(r rune) rune {
 		switch {
@@ -119,11 +127,16 @@ func hookWords(hook string, style *Style) []string {
 		}
 	}, hook)
 
-	if runes := []rune(clean); len(runes) > hookMaxRunes {
-		clean = string(runes[:hookMaxRunes])
+	words := strings.Fields(clean)
+
+	// Cut to hookMaxRunes by whole words (a single long word is cut inside).
+	for len(words) > 1 && lineRunes(words) > hookMaxRunes {
+		words = words[:len(words)-1]
 	}
 
-	words := strings.Fields(clean)
+	if runes := []rune(strings.Join(words, " ")); len(runes) > hookMaxRunes {
+		words = []string{string(runes[:hookMaxRunes])}
+	}
 	if style.Hook.Uppercase {
 		for i := range words {
 			words[i] = strings.ToUpper(words[i])
@@ -155,6 +168,7 @@ func validateHook(s *Style) []error {
 	}
 
 	errs = append(errs, validateHookValues(h)...)
+	errs = append(errs, validateHookBox(h)...)
 	if len(errs) > 0 {
 		return errs
 	}
@@ -166,12 +180,12 @@ func validateHook(s *Style) []error {
 func validateHookValues(h *HookStyle) []error {
 	var errs []error
 
-	if h.Duration < minHookDuration || h.Duration > maxHookDuration {
-		errs = append(errs, fmt.Errorf("hook.duration must be %.0f..%.0f s", minHookDuration, maxHookDuration))
+	if h.MaxDuration < minHookDuration || h.MaxDuration > maxHookDuration {
+		errs = append(errs, fmt.Errorf("hook.max_duration must be %.0f..%.0f s", minHookDuration, maxHookDuration))
 	}
 
-	if h.MinDuration <= 0 || h.MinDuration > h.Duration {
-		errs = append(errs, errors.New("hook.min_duration must be positive and at most hook.duration"))
+	if h.MinDuration < minHookDuration || h.MinDuration > h.MaxDuration {
+		errs = append(errs, fmt.Errorf("hook.min_duration must be %.0f s..hook.max_duration", minHookDuration))
 	}
 
 	if h.Fade < 0 || h.Fade > maxHookFade || float64(2*h.Fade) >= h.MinDuration*millisPerSecond {
@@ -185,6 +199,23 @@ func validateHookValues(h *HookStyle) []error {
 
 	if h.CharWidth < minCharWidth || h.CharWidth > maxCharWidth {
 		errs = append(errs, fmt.Errorf("hook.char_width must be %.1f..%.1f", minCharWidth, maxCharWidth))
+	}
+
+	return errs
+}
+
+// validateHookBox checks the plate under the hook.
+func validateHookBox(h *HookStyle) []error {
+	var errs []error
+
+	if h.BoxPadding < 0 || h.BoxPadding > maxBorder {
+		errs = append(errs, fmt.Errorf("hook.box_padding must be 0..%d", maxBorder))
+	}
+
+	if h.Box != "" {
+		if err := validateColor("hook.box", h.Box); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	return errs
@@ -238,17 +269,19 @@ func outsideZones(top, bottom int) bool {
 	return top < SafeZoneTop || bottom > FrameHeight-SafeZoneBottom
 }
 
-// hookEnd is when the hook disappears: after the style's duration, at most phraseTail after the first phrase of the
-// speech but not before the style's min_duration, and at the end of the reel at the latest; 0 without a hook.
+// hookEnd is when the hook disappears: phraseTail after the first phrase of the speech, clamped to the style's
+// min_duration..max_duration (min_duration without speech), and at the end of the reel at the latest; 0 without a
+// hook.
 func hookEnd(hook string, result *transcription.Result, style *Style) float64 {
 	if len(hookWords(hook, style)) == 0 {
 		return 0
 	}
 
-	end := style.Hook.Duration
+	h := &style.Hook
+	end := h.MinDuration
 
 	if phrase, ok := firstPhraseEnd(result); ok {
-		end = max(style.Hook.MinDuration, min(end, phrase+phraseTail))
+		end = min(max(phrase+phraseTail, h.MinDuration), h.MaxDuration)
 	}
 
 	if result.Duration > 0 {
@@ -375,28 +408,38 @@ func letterCount(w string) int {
 	return n
 }
 
-// splitHook puts the words into one line when they fit, otherwise into two lines as even as possible, without a
-// short word (a preposition: «В», «ЗА») left at the end of the first line when there is another way; a line is
-// [from, to) of the words.
+// splitHook wraps the words by words into at most hookLines lines as even as possible, without a short word (a
+// preposition: «в», «за») left at the end of a line when there is another way; a line is [from, to) of the words.
+// Lines longer than maxChars (a long hook or word) are squeezed by the caller.
 func splitHook(words []string, maxChars int) [][2]int {
-	if lineRunes(words) <= maxChars || len(words) == 1 {
-		return [][2]int{{0, len(words)}}
-	}
+	lines := min(len(wrapHook(words, maxChars)), hookLines)
 
-	best, bestWidth := 1, math.MaxInt
-
-	for i := 1; i < len(words); i++ {
-		width := max(lineRunes(words[:i]), lineRunes(words[i:]))
-		if utf8.RuneCountInString(words[i-1]) <= maxHangingRunes {
-			width += maxChars // only if nothing else is left
-		}
-
-		if width < bestWidth {
-			best, bestWidth = i, width
+	for width := (lineRunes(words) + lines - 1) / lines; ; width++ {
+		if wrapped := wrapHook(words, width); len(wrapped) <= lines {
+			return wrapped
 		}
 	}
+}
 
-	return [][2]int{{0, best}, {best, len(words)}}
+// wrapHook wraps the words greedily into lines of at most width characters (a longer word takes a line of its own).
+func wrapHook(words []string, width int) [][2]int {
+	var lines [][2]int
+
+	for from := 0; from < len(words); {
+		to := from + 1
+		for to < len(words) && lineRunes(words[from:to+1]) <= width {
+			to++
+		}
+
+		if to < len(words) && to-from > 1 && utf8.RuneCountInString(words[to-1]) <= maxHangingRunes {
+			to--
+		}
+
+		lines = append(lines, [2]int{from, to})
+		from = to
+	}
+
+	return lines
 }
 
 // lineRunes is the length of the words joined by spaces.
@@ -418,12 +461,20 @@ func charsScale(chars, maxChars int) int {
 	return max(percentBase*maxChars/chars, minScaleX)
 }
 
-// hookStyleLine is the style of the hook: the outline and the shadow of the subtitles, at the hook's edge.
+// hookStyleLine is the style of the hook at the hook's edge: on its plate when the style has one, otherwise with the
+// outline and the shadow of the subtitles.
 func hookStyleLine(style *Style) string {
 	h := &style.Hook
 	alignment, marginV := placement(&Layout{
 		Position: style.hookPosition(), MarginTop: style.hookMargin(), MarginBottom: style.hookMargin(),
 	})
+
+	borderStyle, outlineColor, outline := outlineBorderStyle, style.Outline.Color, style.Outline.Size
+	shadowColor, shadow := style.Shadow.Color, style.Shadow.Size
+
+	if h.Box != "" {
+		borderStyle, outlineColor, outline, shadow = boxBorderStyle, h.Box, h.BoxPadding, 0
+	}
 
 	bold := 0
 	if h.Bold {
@@ -432,9 +483,9 @@ func hookStyleLine(style *Style) string {
 
 	fields := []string{
 		hookStyleName, h.Font, strconv.Itoa(h.Size),
-		assColor(h.Color), assColor(h.Color), assColor(style.Outline.Color), assColor(style.Shadow.Color),
-		strconv.Itoa(bold), "0", "0", "0", "100", "100", "0", "0", strconv.Itoa(outlineBorderStyle),
-		formatFloat(style.Outline.Size), formatFloat(style.Shadow.Size),
+		assColor(h.Color), assColor(h.Color), assColor(outlineColor), assColor(shadowColor),
+		strconv.Itoa(bold), "0", "0", "0", "100", "100", "0", "0", strconv.Itoa(borderStyle),
+		formatFloat(outline), formatFloat(shadow),
 		strconv.Itoa(alignment), strconv.Itoa(style.Layout.MarginSide), strconv.Itoa(style.Layout.MarginSide),
 		strconv.Itoa(marginV), "1",
 	}
@@ -464,25 +515,21 @@ const (
 	assBlack = "&H00000000"
 )
 
-// shadeEvent is the drawing that extends the vignette under the subtitles shown with the hook, from the start of the
-// reel to the end of the last of them, fading like the hook; "" without a hook, a vignette or shifted subtitles. It is
-// the first event, on layer 0, under every text.
+// shadeEvent is the drawing that extends the vignette under the hook and the subtitles shown with it, from the start
+// of the reel to the end of the hook or of the last of those subtitles, fading like the hook; "" without a hook, a
+// vignette or subtitles to move. It is the first event, on layer 0, under every text.
 func shadeEvent(cues []cue, style *Style, hook hookLayout) string {
 	v := style.Vignette
 	if hook.end <= 0 || hook.margin == 0 || !v.Enabled || style.Layout.Position == MiddlePosition {
 		return ""
 	}
 
-	end := 0.0
+	end := hook.end
 
 	for _, c := range cues {
 		if c.Start < hook.end {
 			end = max(end, c.End)
 		}
-	}
-
-	if end <= 0 {
-		return ""
 	}
 
 	plateau, bottom := style.vignetteSpan()

@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	// maxHookRunes of the hook title: two lines of large capitals (subtitles.HookStyle) at most.
-	maxHookRunes = 40
-	// minHookWords and maxHookWords: a hook is a short phrase or a word, not a sentence.
+	// maxHookRunes of the hook title: four lines of subtitles.HookStyle at most.
+	maxHookRunes = 90
+	// minHookWords and maxHookWords: a hook is a word, a phrase or one short sentence.
 	minHookWords = 1
-	maxHookWords = 6
+	maxHookWords = 14
 	// firstPictograph: the emoji and pictograph blocks start here (U+1F000).
 	firstPictograph = 0x1F000
 	// emojiPresentation is the variation selector that turns a character into an emoji (U+FE0F).
@@ -23,7 +23,7 @@ const (
 // hookSymbols are the symbols allowed in a hook although Unicode puts them with the pictographs (So).
 const hookSymbols = "№°"
 
-// checkHook checks the hook title of the decision: none (nil) or "" (removed) pass; a text is 2–6 words of at most
+// checkHook checks the hook title of the decision: none (nil) or "" (removed) pass; a text is 1–14 words of at most
 // maxHookRunes characters on one line, without markup, emoji or hashtags.
 func checkHook(hook *string) error {
 	if hook == nil {
@@ -40,7 +40,7 @@ func checkHook(hook *string) error {
 		return checkFailedf("заголовок «%s»: без переносов строк, невидимых символов и { } \\ < >",
 			truncate(oneLine(*hook), maxHookRunes))
 	case utf8.RuneCountInString(text) > maxHookRunes:
-		return checkFailedf("заголовок «%s» длиннее %d символов: сократи до 2–6 слов", truncate(text, maxHookRunes),
+		return checkFailedf("заголовок «%s» длиннее %d символов: сократи до одной короткой фразы", truncate(text, maxHookRunes),
 			maxHookRunes)
 	case words < minHookWords || words > maxHookWords:
 		return checkFailedf("заголовок «%s»: от %d до %d слов", text, minHookWords, maxHookWords)

@@ -10,8 +10,14 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
+// fifteenWords is one word over the limit of a hook.
+const fifteenWords = "раз два три четыре пять шесть семь восемь девять десять раз два три четыре пять"
+
+// hook90 is a hook of exactly 90 characters and 13 words.
+const hook90 = "Видео для всех, кто боится начинать тренироваться дома и почему-то считает, что поздновато"
+
 const (
-	hookWords    = "от 1 до 6 слов"
+	hookWords    = "от 1 до 14 слов"
 	hookEmoji    = "без эмодзи и хештегов"
 	testHook     = "3 ошибки в планке"
 	oldHook      = "Спина ровно всегда"
@@ -30,11 +36,12 @@ func TestCheckHook(t *testing.T) {
 		{name: "removed", input: new("  ")},
 		{name: "a hook", input: new(testHook)},
 		{name: "a number sign and degrees are text", input: new("Растяжка № 1 на 90°")},
-		{name: "40 characters", input: new("Почему болит поясница после приседаний?!")},
-		{name: "longer than 40", input: new("Пять ошибок в планке, которые делают почти все"), expected: "длиннее 40 символов"},
+		{name: "90 characters", input: new(hook90)},
+		{name: "longer than 90", input: new(hook90 + "!"), expected: "длиннее 90 символов"},
+		{name: "an address to the audience", input: new("Видео для тех, кто боится начать тренироваться дома")},
 		{name: "one word", input: new("Планка")},
-		{name: "quotes and a period are not counted", input: new("«Почему болит поясница после приседаний?!».")},
-		{name: "seven words", input: new("раз два три четыре пять шесть семь"), expected: hookWords},
+		{name: "quotes and a period are not counted", input: new("«" + hook90 + "».")},
+		{name: "fifteen words", input: new(fifteenWords), expected: hookWords},
 		{name: "emoji", input: new("Пресс за 10 минут 🔥"), expected: hookEmoji},
 		{name: "emoji by the selector", input: new("Пресс за 10 минут ❤️"), expected: hookEmoji},
 		{name: "hashtag", input: new("Пресс за 10 #минут"), expected: hookEmoji},
@@ -106,7 +113,7 @@ func TestApplyHook(t *testing.T) {
 			input: Input{HookTitle: new("")}, err: hookNoChange,
 		},
 		{
-			name: "an invalid hook", version: 1, input: Input{HookTitle: new("раз два три четыре пять шесть семь")},
+			name: "an invalid hook", version: 1, input: Input{HookTitle: new(fifteenWords)},
 			err: hookWords,
 		},
 		{

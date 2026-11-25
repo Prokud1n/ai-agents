@@ -202,13 +202,13 @@ func DefaultStyle() Style {
 			BoxPadding: 14,
 		},
 		Hook: HookStyle{
-			TextStyle:   TextStyle{Font: defaultAccentFont, Size: 88, Uppercase: true, Color: "#F5F0E1"},
-			Highlight:   defaultAccentColor,
-			Duration:    2.5,
-			MinDuration: 1.5,
+			TextStyle:   TextStyle{Font: "Manrope", Size: 60, Color: "#FFFFFF"},
+			MinDuration: 2.5,
+			MaxDuration: 8,
 			Fade:        150,
 			Gap:         20,
 			CharWidth:   0.5,
+			BoxPadding:  12,
 		},
 	}
 }

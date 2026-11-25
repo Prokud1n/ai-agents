@@ -18,8 +18,8 @@ import (
 
 const (
 	hookPlank = "Три ошибки в планке"
-	// shiftedUnderHook: a subtitle event under a hook of two lines at the top.
-	shiftedUnderHook = ",Main,,0,0,500,,"
+	// shiftedUnderHook: a subtitle event under a hook of one line at the top.
+	shiftedUnderHook = ",Main,,0,0,355,,"
 )
 
 func TestHookEnd(t *testing.T) {
@@ -28,7 +28,7 @@ func TestHookEnd(t *testing.T) {
 	style := DefaultStyle()
 	long := speech("Сегодня разберём три ошибки, которые все делают в планке каждый день.")
 	short := speech("Привет!", "Сегодня разберём три ошибки, которые все делают в планке.")
-	medium := speech("Сегодня разберём ошибки.", "Держим спину ровно и дышим.")
+	endless := speech(strings.Repeat("держим планку ровно и дышим спокойно ", 5))
 	tiny := speech("Привет!")
 
 	tests := []struct {
@@ -38,12 +38,12 @@ func TestHookEnd(t *testing.T) {
 		expected float64
 	}{
 		{name: "no hook", hook: " ", input: long, expected: 0},
-		{name: "the style's duration", hook: hookPlank, input: long, expected: 2.5},
-		{name: "half a second after the first phrase", hook: hookPlank, input: medium, expected: 1.55},
-		{name: "a short first phrase: not shorter than min_duration", hook: hookPlank, input: short, expected: 1.5},
+		{name: "half a second after the first phrase", hook: hookPlank, input: long, expected: 4.35},
+		{name: "a short first phrase: min_duration", hook: hookPlank, input: short, expected: 2.5},
+		{name: "a long first phrase: max_duration", hook: hookPlank, input: endless, expected: 8},
 		{name: "not longer than the reel", hook: hookPlank, input: tiny, expected: 0.85},
 		{
-			name: "no speech: the style's duration", hook: hookPlank,
+			name: "no speech: min_duration", hook: hookPlank,
 			input: &transcription.Result{Duration: 10}, expected: 2.5,
 		},
 		{
@@ -65,9 +65,12 @@ func TestHookEvent(t *testing.T) {
 	t.Parallel()
 
 	style := DefaultStyle()
-	plain := style
-	plain.Hook.Highlight = ""
-	plain.Hook.Uppercase = false
+	accented := style
+	accented.Hook.Highlight = defaultAccentColor
+	capitals := style
+	capitals.Hook.Uppercase = true
+
+	const head = `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}`
 
 	tests := []struct {
 		name     string
@@ -76,45 +79,38 @@ func TestHookEvent(t *testing.T) {
 		style    *Style
 		expected string
 	}{
+		{name: "one line as it is", hook: "Мой ребёнок билингв", end: 2.5, style: &style, expected: head + "Мой ребёнок билингв\n"},
 		{
-			name: "capitals, the longest word highlighted, fading", hook: hookPlank, end: 2.5, style: &style,
-			expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}ТРИ {\1c&H4BB9F2&\1a&H00&}` +
-				`ОШИБКИ{\1c&HE1F0F5&\1a&H00&}\NВ ПЛАНКЕ` + "\n",
+			name: "two even lines", hook: "Видео для тех, кто боится начать тренироваться дома", end: 2.5, style: &style,
+			expected: head + `Видео для тех, кто боится\Nначать тренироваться дома` + "\n",
 		},
 		{
-			name: "no preposition at the end of the first line", hook: "Три ошибки в планке за 10 минут", end: 2.5,
-			style: &plain,
-			expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}{\fscx94}Три ошибки в планке\N` +
-				`{\fscx100}за 10 минут` + "\n",
+			name: "four lines, no preposition at the end of a line", end: 2.5, style: &style,
+			hook: "Как я перестала бояться спортзала и за полгода пробежала первый полумарафон в сорок лет",
+			expected: head + `Как я перестала бояться\Nспортзала и за полгода\Nпробежала первый\N` +
+				`полумарафон в сорок лет` + "\n",
 		},
 		{
-			name: "a number with its word", hook: "Пресс за 10 минут", end: 2.5, style: &style,
-			expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}ПРЕСС ЗА {\1c&H4BB9F2&\1a&H00&}` +
-				`10 МИНУТ{\1c&HE1F0F5&\1a&H00&}` + "\n",
+			name: "cut to 90 characters by words", hook: strings.Repeat("пресс ", 20), end: 2.5, style: &style,
+			expected: head + `пресс пресс пресс пресс\Nпресс пресс пресс пресс\Nпресс пресс пресс пресс\N` +
+				`пресс пресс пресс` + "\n",
 		},
 		{
-			name: "two even lines, the longer one squeezed", hook: "Как убрать живот без диет и голодовок", end: 2,
-			style: &plain,
-			expected: `Dialogue: 2,0:00:00.00,0:00:02.00,Hook,,0,0,0,,{\fad(150,150)}Как убрать живот\N` +
-				`{\fscx90}без диет и голодовок` + "\n",
+			name: "a number with its word highlighted when the style says so", hook: "Пресс за 10 минут", end: 2.5,
+			style: &accented, expected: head + `Пресс за {\1c&H4BB9F2&\1a&H00&}10 минут{\1c&HFFFFFF&\1a&H00&}` + "\n",
 		},
+		{name: "capitals when the style says so", hook: hookPlank, end: 2.5, style: &capitals, expected: head + "ТРИ ОШИБКИ В ПЛАНКЕ\n"},
 		{
-			name: "markup is text, the fade fits a short hook", hook: `Планка {\an7} \N`, end: 0.2, style: &plain,
+			name: "markup is text, the fade fits a short hook", hook: `Планка {\an7} \N`, end: 0.2, style: &style,
 			expected: `Dialogue: 2,0:00:00.00,0:00:00.20,Hook,,0,0,0,,{\fad(100,100)}Планка \{an7\} N` + "\n",
 		},
 		{
-			name: "a long line is squeezed", hook: "Суперинтенсивнейшаятренировкапресса", end: 2.5, style: &plain,
-			expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}{\fscx51}` +
-				`Суперинтенсивнейшаятренировкапресса` + "\n",
+			name: "a long word is squeezed", hook: "Суперинтенсивнейшаятренировкапресса", end: 2.5, style: &style,
+			expected: head + `{\fscx74}Суперинтенсивнейшаятренировкапресса` + "\n",
 		},
 		{
 			name: "control and invisible characters dropped", hook: "\u200bПланка\nбез\u2066 ошибок", end: 2.5,
-			style: &plain, expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}Планка без ошибок` + "\n",
-		},
-		{
-			name: "cut to 40 characters", hook: strings.Repeat("пресс ", 10), end: 2.5, style: &plain,
-			expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}пресс пресс пресс\N` +
-				`{\fscx81}пресс пресс пресс прес` + "\n",
+			style: &style, expected: head + "Планка без ошибок\n",
 		},
 		{name: "no hook", hook: "  ", end: 2.5, style: &style, expected: ""},
 		{name: "no time", hook: hookPlank, end: 0, style: &style, expected: ""},
@@ -171,9 +167,9 @@ func TestHookLayout(t *testing.T) {
 		shift  int
 		shifts bool
 	}{
-		{name: "at the top", style: &top, hook: [2]int{260, 480}, shift: 500, shifts: true},
-		{name: "at the bottom", style: &bottom, hook: [2]int{1260, 1480}, shift: 680, shifts: true},
-		{name: "in the middle", style: &middle, hook: [2]int{260, 480}, shift: 0},
+		{name: "at the top", style: &top, hook: [2]int{260, 560}, shift: 580, shifts: true},
+		{name: "at the bottom", style: &bottom, hook: [2]int{1180, 1480}, shift: 760, shifts: true},
+		{name: "in the middle", style: &middle, hook: [2]int{260, 560}, shift: 0},
 	}
 
 	for _, tt := range tests {
@@ -212,13 +208,18 @@ func TestValidateHook(t *testing.T) {
 		name   string
 		change func(s *Style)
 	}{
-		{name: "too large for two lines", change: func(s *Style) { s.Hook.Size = 120 }},
+		{name: "too large for four lines", change: func(s *Style) { s.Hook.Size = 120 }},
+		{name: "bad box", change: func(s *Style) { s.Hook.Box = "orange" }},
+		{name: "the subtitles under a boxed hook reach the titles", change: func(s *Style) {
+			s.Hook.Box = "#F28C38E6"
+			s.Title.Margin = 900
+		}},
 		{name: "the subtitles under it reach the titles", change: func(s *Style) { s.Hook.Gap = 60; s.Title.Margin = 950 }},
 		{name: "bad highlight", change: func(s *Style) { s.Hook.Highlight = "yellow" }},
 		{name: "translucent highlight", change: func(s *Style) { s.Hook.Highlight = "#F2B94B40" }},
-		{name: "too long", change: func(s *Style) { s.Hook.Duration = 8 }},
+		{name: "too long", change: func(s *Style) { s.Hook.MaxDuration = 12 }},
 		{name: "fade longer than half of min_duration", change: func(s *Style) { s.Hook.MinDuration = 1; s.Hook.Fade = 500 }},
-		{name: "min_duration over duration", change: func(s *Style) { s.Hook.MinDuration = 3 }},
+		{name: "min_duration over max_duration", change: func(s *Style) { s.Hook.MinDuration = 9 }},
 		{name: "no min_duration", change: func(s *Style) { s.Hook.MinDuration = 0 }},
 		{name: "comma in the font", change: func(s *Style) { s.Hook.Font = "Fira, Sans" }},
 		{name: "over the titles at the bottom", change: func(s *Style) {
@@ -245,15 +246,15 @@ func TestBuildASSWithHook(t *testing.T) {
 	t.Parallel()
 
 	style := DefaultStyle()
-	result := speech("Сегодня разберём три ошибки, которые все делают в планке. Держим спину ровно и дышим.",
-		"А теперь самое главное.")
+	result := speech("Сегодня разберём три ошибки.",
+		"Все делают их в планке каждый день, держим спину ровно и дышим, а теперь самое главное.")
 
 	ass, cues := buildASS(result, &style, nil, false, nil, hookPlank)
 	require.Greater(t, cues, 2)
 
-	assert.Contains(t, ass, "Style: Hook,Fira Sans Extra Condensed ExtraBold,88,&H00E1F0F5,&H00E1F0F5,&H00000000,"+
+	assert.Contains(t, ass, "Style: Hook,Manrope,60,&H00FFFFFF,&H00FFFFFF,&H00000000,"+
 		"&H99000000,0,0,0,0,100,100,0,0,1,0,2,8,140,140,260,1\n")
-	assert.Contains(t, ass, `Hook,,0,0,0,,{\fad(150,150)}ТРИ`)
+	assert.Contains(t, ass, `Hook,,0,0,0,,{\fad(150,150)}Три ошибки в планке`)
 
 	shifted, kept := 0, 0
 
@@ -314,18 +315,18 @@ func TestBurnHookWithFFmpeg(t *testing.T) {
 	input, output := filepath.Join(dir, "in.mp4"), filepath.Join(dir, "out.mp4")
 	makeClip(ctx, t, input, reelSize, true)
 
-	// Speech until 2.1 s: the hook stays until 2.5 s, nothing is on screen at 2.8 s.
+	// Speech until 2.1 s (the reel is 2.6 s): the hook stays until 2.6 s, nothing is on screen at 2.8 s.
+	const hook = "Три ошибки в планке за 10 минут"
+
 	result, err := svc.BurnSubtitles(ctx, &BurnSubtitlesData{
-		CreateSubtitlesData: CreateSubtitlesData{
-			Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: "Три ошибки в планке за 10 минут",
-		},
+		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: hook},
 		VideoPath: input, OutputPath: output,
 	})
 	require.NoError(t, err)
 	assert.Empty(t, result.FontFallbacks)
 
 	style := DefaultStyle()
-	hookTop, hookBottom := style.hookSpan()
+	margin := style.hookSubtitlesMargin(style.hookLineCount(hook))
 	shown := grayFrame(ctx, t, output, 1)
 
 	top, bottom, left, right, found := brightBounds(shown)
@@ -334,8 +335,9 @@ func TestBurnHookWithFFmpeg(t *testing.T) {
 	assert.Less(t, bottom, FrameHeight-SafeZoneBottom)
 	assert.Greater(t, left, SafeZoneLeft)
 	assert.Less(t, right, FrameWidth-SafeZoneRight)
-	assert.Positive(t, rowsBright(shown, hookTop, hookBottom), "the hook is drawn in its band")
-	assert.Positive(t, rowsBright(shown, hookBottom+style.Hook.Gap, FrameHeight/2), "the subtitles under it")
+	assert.Equal(t, 2, style.hookLineCount(hook))
+	assert.Positive(t, rowsBright(shown, style.Layout.MarginTop, margin-style.Hook.Gap), "the hook is drawn in its band")
+	assert.Positive(t, rowsBright(shown, margin, margin+style.blockHeight()), "the subtitles under it")
 
 	assert.Zero(t, rowsBright(grayFrame(ctx, t, output, 2.8), 0, FrameHeight), "the hook is gone after its time")
 }
@@ -364,12 +366,18 @@ func TestHookShade(t *testing.T) {
 		shape   string
 		marginV string
 	}{
-		{name: "at the top", style: &top, hook: hookPlank, shape: "m -100 420 l 1180 420 l 1180 790 l -100 790{\\p0}",
-			marginV: shiftedUnderHook},
-		{name: "one line moves less", style: &top, hook: "Пресс за 10", shape: "m -100 420 l 1180 420 l 1180 680 l -100 680",
-			marginV: ",Main,,0,0,390,,"},
-		{name: "at the bottom: mirrored", style: &bottom, hook: hookPlank,
-			shape: "m -100 950 l 1180 950 l 1180 1320 l -100 1320", marginV: ",Main,,0,0,680,,"},
+		{
+			name: "one line at the top", style: &top, hook: hookPlank,
+			shape: "m -100 420 l 1180 420 l 1180 645 l -100 645{\\p0}", marginV: shiftedUnderHook,
+		},
+		{
+			name: "two lines move further", style: &top, hook: "Видео для тех, кто боится начать тренироваться дома",
+			shape: "m -100 420 l 1180 420 l 1180 720 l -100 720", marginV: ",Main,,0,0,430,,",
+		},
+		{
+			name: "at the bottom: mirrored", style: &bottom, hook: hookPlank,
+			shape: "m -100 1095 l 1180 1095 l 1180 1320 l -100 1320", marginV: ",Main,,0,0,535,,",
+		},
 		{name: "in the middle: none", style: &middle, hook: hookPlank},
 		{name: "no vignette: none", style: &noVignette, hook: hookPlank, marginV: shiftedUnderHook},
 	}

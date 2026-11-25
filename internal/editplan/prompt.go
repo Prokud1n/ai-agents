@@ -329,14 +329,24 @@ func writeTrainerText(b *strings.Builder, req *Request) {
 }
 
 // writeLength gives the length of a talking-head reel: the selection of a first version longer than the target, the
-// recommended range otherwise (the trainer may ask for a length). Nothing without a target or in a workout.
+// recommended range otherwise (the trainer may ask for a length); without a target (EDITOR_REELS_TARGET_DURATION 0)
+// the reel is not shortened unless the trainer asks. Nothing in a workout.
 func writeLength(b *strings.Builder, req *Request) {
-	if req.TargetSeconds <= 0 || previousEdit(req.Plan).Mode == roughcut.WorkoutMode {
+	if previousEdit(req.Plan).Mode == roughcut.WorkoutMode {
+		return
+	}
+
+	now := roughcut.FormatTimecode(req.Plan.Duration)
+
+	if req.TargetSeconds <= 0 {
+		fmt.Fprintf(b, "Длина: ролик %s. Не сокращай его сам: длину меняй, только если тренер просит в подписи или "+
+			"правке («сделай 40 секунд», «до 30 секунд») — тогда сделай редакторский отбор под неё и укажи "+
+			"target_seconds.\n", now)
+
 		return
 	}
 
 	low, high := req.TargetRange()
-	now := roughcut.FormatTimecode(req.Plan.Duration)
 
 	switch {
 	case req.Selecting():
