@@ -29,7 +29,7 @@ var (
 )
 
 type audioProcessor interface {
-	ExtractAudio(ctx context.Context, src, dst string) error
+	ExtractAudioMeasured(ctx context.Context, src, dst string) (*ffmpeg.Loudness, error)
 	CutAudio(ctx context.Context, src, dst string, start, duration float64) error
 	Duration(ctx context.Context, path string) (float64, error)
 	DetectSilences(ctx context.Context, path string, opts ffmpeg.SilenceOptions) ([]ffmpeg.Silence, error)
@@ -86,8 +86,13 @@ func (s *Service) Transcribe(ctx context.Context, data TranscribeData) (*Result,
 	}()
 
 	audio := filepath.Join(dir, audioName+ffmpeg.AudioExtension)
-	if err := s.audio.ExtractAudio(ctx, data.Path, audio); err != nil {
+	loudness, err := s.audio.ExtractAudioMeasured(ctx, data.Path, audio)
+	if err != nil {
 		return nil, fmt.Errorf("failed to prepare audio: %w", err)
+	}
+
+	if loudness == nil {
+		s.log.WarnContext(ctx, "transcription: the loudness of the source was not measured")
 	}
 
 	duration, err := s.audio.Duration(ctx, audio)
@@ -110,6 +115,7 @@ func (s *Service) Transcribe(ctx context.Context, data TranscribeData) (*Result,
 	result := mergeChunks(parts)
 	result.Duration = roundTime(duration)
 	result.Language = language
+	result.Loudness = loudness
 
 	if result.Language == "" {
 		result.Language = isoLanguage(parts[0].Transcript.Language)

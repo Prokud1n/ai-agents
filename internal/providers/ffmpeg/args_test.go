@@ -41,7 +41,7 @@ func TestBuildArgs(t *testing.T) {
 		{
 			name:     "extract audio",
 			input:    extractAudioArgs(testVideo, testAudio),
-			expected: concat(common, input(testVideo), []string{"-map", "0:a:0"}, encode, []string{testAudio}),
+			expected: concat(common, input(testVideo), []string{"-map", "0:a:0", "-af", "ebur128=peak=true:framelog=verbose"}, encode, []string{testAudio}),
 		},
 		{
 			name:  "cut audio",

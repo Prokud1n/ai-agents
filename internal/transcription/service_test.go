@@ -32,6 +32,7 @@ type cutCall struct {
 
 type fakeAudio struct {
 	extracted   bool
+	loudness    *ffmpeg.Loudness
 	duration    float64
 	silences    []ffmpeg.Silence
 	extractErr  error
@@ -41,16 +42,16 @@ type fakeAudio struct {
 	cuts []cutCall
 }
 
-func (f *fakeAudio) ExtractAudio(_ context.Context, _, dst string) error {
+func (f *fakeAudio) ExtractAudioMeasured(_ context.Context, _, dst string) (*ffmpeg.Loudness, error) {
 	f.mu.Lock()
 	f.extracted = true
 	f.mu.Unlock()
 
 	if f.extractErr != nil {
-		return f.extractErr
+		return nil, f.extractErr
 	}
 
-	return os.WriteFile(dst, []byte("audio"), 0o600)
+	return f.loudness, os.WriteFile(dst, []byte("audio"), 0o600)
 }
 
 func (f *fakeAudio) CutAudio(_ context.Context, _, dst string, start, duration float64) error {
@@ -126,16 +127,18 @@ func TestServiceTranscribe(t *testing.T) {
 		{
 			name:  "short video is one request without cutting",
 			input: TranscribeData{Path: videoPath},
-			audio: &fakeAudio{duration: 4.2104},
+			audio: &fakeAudio{duration: 4.2104, loudness: &ffmpeg.Loudness{Integrated: -27.5, Threshold: -38, Range: 6.2, TruePeak: -9.1}},
 			transcripts: []whisper.Transcript{{
 				Language: langRussian, Text: segmentHello,
 				Words:    []whisper.Word{{Word: wordHello, Start: 0, End: 0.86}},
 				Segments: []whisper.Segment{{Start: 0, End: 1.1, Text: segmentHello}},
 			}},
+			// The loudness measured while the audio was extracted goes into the transcript for the render.
 			expected: &Result{
 				Language: langRU, Duration: 4.21, Text: textHello,
 				Words:    []Word{{Word: wordHello, Start: 0, End: 0.86}},
 				Segments: []Segment{{Start: 0, End: 1.1, Text: textHello}},
+				Loudness: &ffmpeg.Loudness{Integrated: -27.5, Threshold: -38, Range: 6.2, TruePeak: -9.1},
 			},
 			expectedPrompts:  []string{""},
 			expectedLanguage: langRU,

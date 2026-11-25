@@ -69,7 +69,7 @@ func encodeArgs() []string {
 func extractAudioArgs(src, dst string) []string {
 	args := append(commonArgs(), inputArgs(src)...)
 	// "0:a:0" takes the first audio stream and fails with a clear message if there is none.
-	args = append(args, mapFlag, "0:a:0")
+	args = append(args, mapFlag, "0:a:0", "-af", measureFilter)
 	args = append(args, encodeArgs()...)
 
 	return append(args, dst)

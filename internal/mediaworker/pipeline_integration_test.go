@@ -161,8 +161,10 @@ func realPipelineWith(t *testing.T, files store, speech transcriber) *Pipeline {
 
 	p, err := NewPipeline(&PipelineParams{
 		Store: files, Prober: runner, Keys: fakeKeys{}, Transcriber: speech, Cutter: cutter, Burner: burner,
+		// The sound and the zoom as the worker has them by default: the duration and frame checks hold with them.
 		Config: &config.MediaWorker{
 			WorkDir: t.TempDir(), MaxSourceDuration: time.Minute, MaxSourceSize: 1 << 30, Fit: string(ffmpeg.PadFitMode),
+			Loudness: "-14", Denoise: true, Zoom: 9,
 		},
 		Log: log,
 	})

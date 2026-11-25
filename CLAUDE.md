@@ -269,6 +269,15 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`editplan.phrases`: интервал или причина выреза, сегмент, пауза > 0,7 с, ≤ 8 слов; начало, длительность, начало в
   ролике) с диапазонами индексов слов.
   Проверка — `mediaworker.TestIntegrationSelectionForLongTalk`.
+- Звук и зумы (T3.15a): `ffmpeg.Runner.ExtractAudioMeasured` меряет громкость исходника (`ebur128`) в том же проходе,
+  что извлекает звук для Whisper, → `transcription.Result.Loudness` (хранится в транскрипте исходника, render и правки
+  не меряют заново). `mediaworker.soundSettings.cut` (`MEDIA_WORKER_LOUDNESS`/`_DENOISE`/`_ZOOM`) добавляет к
+  `roughcut.Result.Render`: `RenderOptions.Denoise` (только talk) и `Loudness` (`loudnorm` −14 LUFS, TP −1,5, линейно по
+  измерению; без него — один проход; исходник тише −50 LUFS и `Mute` — без выравнивания) — цепочка после `concat`
+  (`soundChain`); `ffmpeg.Cut.Zoom` (только talk) — jump-cut zoom на кадре 1080×1920 после fit/тонмаппинга, до тени и
+  ass: `split` → `crop`+`scale` → `overlay` с `enable` по отрезкам рилса (`zoomGraph`, кусок < 1,2 с не меняет кадр).
+  Строки «Звук и кадр» дописываются в `decisions.log` после рендера. Проверка с ffmpeg — `TestRunnerLoudness`,
+  `TestRunnerZoom`; скорость — `TestRenderSpeed` (бенч включает звук и зумы).
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

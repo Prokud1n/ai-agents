@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sound and dynamics of the editor's drafts (T3.15a). The draft is brought to -14 LUFS integrated with the true peaks
+  at most -1.5 dBTP (the loudness of Instagram and the other networks), whatever the phone recorded: the loudness of
+  the source is measured (`ebur128`) in the same ffmpeg pass that extracts the audio for the speech recognition, stored
+  in the source transcript (`loudness`) and applied by `loudnorm` with one gain (its linear mode) by the render and every
+  revision without a second analysis; a transcript stored before has no measurement and is normalized in one pass. A
+  source quieter than -50 LUFS (silence, noise) and a muted reel are not raised. A talking head gets a light noise
+  reduction of speech first (`highpass` 80 Hz + `afftdn` nr 10 dB); a workout does not (it would eat into the music).
+  A talking head also gets the jump-cut zoom: at the joints the framing alternates between the plain frame and one 9 %
+  closer (static, the fixed point at the middle across and 40 % down — the face), a piece shorter than 1.2 s keeps the
+  framing; the 1080×1920 frame is zoomed after the fit and the tone mapping, under the shade and the subtitles, and in
+  `pad` mode the black bars stay black. `decisions.log` ends with «Звук и кадр»: the loudness before → after, the noise
+  reduction and the number of zooms. New `MEDIA_WORKER_LOUDNESS` (`-14`, `off`), `MEDIA_WORKER_DENOISE` (`true`),
+  `MEDIA_WORKER_ZOOM` (`9` %, `0` off). Render speed (`TestRenderSpeed`, 4K60 HEVC HLG, 2 CPUs): talk BENCH_TALK, workout
+  BENCH_WORKOUT s of render per second of the reel.
 - Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more
   than `roughcut.TargetMargin` (10 %: over 66 s) after the cleaning is planned by the worker and given to the editor's
   model even without a caption or disputed repeats (shorter ones are rendered at once, no model call; the worker and
