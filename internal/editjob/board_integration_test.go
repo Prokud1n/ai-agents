@@ -408,21 +408,7 @@ func TestIntegrationBoardStaleJob(t *testing.T) {
 	ctx := context.Background()
 	old := testJob(10)
 
-	_, err := board.Submit(ctx, old)
-	require.NoError(t, err)
-	require.NoError(t, board.Forget(ctx, old.ID))
-
-	_, err = board.MarkStarted(ctx, old, testDeadline)
-	require.ErrorIs(t, err, ErrStale, "a forgotten job is not started")
-	require.ErrorIs(t, board.Finish(ctx, old, Failed(old.ID, QueueTimeoutCode, testDeadline)), ErrStale)
-
-	_, found, err := board.Result(ctx, old.ID)
-	require.NoError(t, err)
-	assert.False(t, found, "a forgotten job gets no result")
-
-	_, found, err = board.Started(ctx, old.ID)
-	require.NoError(t, err)
-	assert.False(t, found)
+	checkForgottenIsStale(t, board, old)
 
 	// Submitted again under the same ID with a new creation time: the old delivery is stale, the new one is current.
 	resubmitted := *old
@@ -478,4 +464,27 @@ func TestIntegrationBoardStaleJob(t *testing.T) {
 	require.True(t, replaced)
 	require.ErrorIs(t, board.Finish(ctx, &resubmitted, result), ErrStale, "the planned stage is replaced")
 	require.NoError(t, board.Finish(ctx, &render, result), "the render is current")
+}
+
+// checkForgottenIsStale: a submitted and forgotten job is neither started nor finished.
+func checkForgottenIsStale(t *testing.T, board *Board, job *Job) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	_, err := board.Submit(ctx, job)
+	require.NoError(t, err)
+	require.NoError(t, board.Forget(ctx, job.ID))
+
+	_, err = board.MarkStarted(ctx, job, testDeadline)
+	require.ErrorIs(t, err, ErrStale, "a forgotten job is not started")
+	require.ErrorIs(t, board.Finish(ctx, job, Failed(job.ID, QueueTimeoutCode, testDeadline)), ErrStale)
+
+	_, found, err := board.Result(ctx, job.ID)
+	require.NoError(t, err)
+	assert.False(t, found, "a forgotten job gets no result")
+
+	_, found, err = board.Started(ctx, job.ID)
+	require.NoError(t, err)
+	assert.False(t, found)
 }

@@ -19,7 +19,12 @@ import (
 
 var testNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
-const testJobID = "task-17-v1"
+const (
+	testJobID = "task-17-v1"
+	// Stream entry IDs of the deliveries.
+	firstEntry  = "1-0"
+	secondEntry = "2-0"
+)
 
 // fakeBoard records what the worker did with one delivery.
 type fakeBoard struct {
@@ -232,7 +237,7 @@ func delivery(queueDeadline time.Time) *editjob.Delivery {
 }
 
 func deliveryWithTimeout(queueDeadline time.Time, timeout time.Duration) *editjob.Delivery {
-	return &editjob.Delivery{MessageID: "1-0", Job: &editjob.Job{
+	return &editjob.Delivery{MessageID: firstEntry, Job: &editjob.Job{
 		ID: editjob.JobID(17, 1), TaskID: 17, Version: 1, SourceKey: testSourceKey, QueueDeadline: queueDeadline,
 		Timeout: timeout,
 	}}
@@ -329,7 +334,7 @@ func TestWorkerHandle(t *testing.T) {
 		},
 		{
 			name: "a malformed entry is acked", board: &fakeBoard{}, runner: &fakeRunner{},
-			delivery: &editjob.Delivery{MessageID: "1-0"}, expectedAcks: 1,
+			delivery: &editjob.Delivery{MessageID: firstEntry}, expectedAcks: 1,
 		},
 		{
 			name:  "the result could not be stored: not acked, the job is run again",
@@ -446,7 +451,7 @@ func TestWorkerRunsResubmittedJobOnce(t *testing.T) {
 	old.Job.CreatedAt = testNow.Add(-time.Hour)
 
 	resubmitted := delivery(testNow.Add(time.Hour))
-	resubmitted.MessageID = "2-0"
+	resubmitted.MessageID = secondEntry
 	resubmitted.Job.CreatedAt = testNow
 
 	stored := *resubmitted.Job
@@ -461,18 +466,18 @@ func TestWorkerRunsResubmittedJobOnce(t *testing.T) {
 		expectedAcks  []string
 		expectedStore int
 	}{
-		{name: "the entry of the forgotten job", delivery: old, expectedAcks: []string{"1-0"}},
+		{name: "the entry of the forgotten job", delivery: old, expectedAcks: []string{firstEntry}},
 		{
 			name: "the entry of the new submit", delivery: resubmitted, expectedRuns: 1,
-			expectedAcks: []string{"1-0", "2-0"}, expectedStore: 1,
+			expectedAcks: []string{firstEntry, secondEntry}, expectedStore: 1,
 		},
 		{
 			name: "a redelivery of the new submit", delivery: resubmitted, expectedRuns: 1,
-			expectedAcks: []string{"1-0", "2-0", "2-0"}, expectedStore: 1,
+			expectedAcks: []string{firstEntry, secondEntry, secondEntry}, expectedStore: 1,
 		},
 		{
 			name: "the old entry claimed again", delivery: old, expectedRuns: 1,
-			expectedAcks: []string{"1-0", "2-0", "2-0", "1-0"}, expectedStore: 1,
+			expectedAcks: []string{firstEntry, secondEntry, secondEntry, firstEntry}, expectedStore: 1,
 		},
 	}
 
