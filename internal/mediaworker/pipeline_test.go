@@ -488,15 +488,15 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 		},
 		{
 			name:  "a loudness that is not a number",
-			input: config.MediaWorker{Fit: "pad", MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "loud"},
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "loud"},
 		},
 		{
 			name:  "a loudness louder than loudnorm takes",
-			input: config.MediaWorker{Fit: "pad", MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "-3"},
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "-3"},
 		},
 		{
 			name:  "a zoom of 50 %",
-			input: config.MediaWorker{Fit: "pad", MaxSourceDuration: time.Minute, MaxSourceSize: 1, Zoom: 50},
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Zoom: 50},
 		},
 	}
 

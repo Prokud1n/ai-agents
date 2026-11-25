@@ -154,8 +154,8 @@ func TestRunnerLoudness(t *testing.T) {
 			_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
 				lavfiInput("sine=frequency=440:sample_rate=48000:duration=8"),
 				lavfiInput("testsrc=duration=8:size=180x320:rate=30"),
-				[]string{"-af", "volume=" + strconv.FormatFloat(tt.gain, 'f', 1, 64) + "dB,apulsator=hz=0.7:amount=0.6",
-					videoCodecFlag, "mpeg4", audioCodecFlag, "aac", "-b:a", "192k", shortestFlag, src}), nil)
+				[]string{audioFilterFlag, "volume=" + strconv.FormatFloat(tt.gain, 'f', 1, 64) + "dB,apulsator=hz=0.7:amount=0.6",
+					videoCodecFlag, "mpeg4", audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 			require.NoError(t, err)
 
 			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "audio"+AudioExtension))
@@ -213,7 +213,7 @@ func measureLoudness(ctx context.Context, t *testing.T, r *Runner, path string) 
 
 	log := newTailBuffer(measureLogTail)
 	_, err = r.run(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-		[]string{"-vn", "-af", measureFilter, formatFlag, "null", "-"}), log)
+		[]string{"-vn", audioFilterFlag, measureFilter, formatFlag, "null", "-"}), log)
 	require.NoError(t, err)
 
 	loudness := parseLoudness(log.String())

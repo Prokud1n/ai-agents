@@ -17,9 +17,10 @@ const (
 	audioSampleRate = "16000"
 	audioChannels   = "1"
 
-	inputFlag      = "-i"
-	audioCodecFlag = "-c:a"
-	plainOutput    = "default=noprint_wrappers=1:nokey=1" // ffprobe prints bare values
+	inputFlag       = "-i"
+	audioCodecFlag  = "-c:a"
+	audioFilterFlag = "-af"
+	plainOutput     = "default=noprint_wrappers=1:nokey=1" // ffprobe prints bare values
 	// Inputs come from users (Telegram files): only local files may be opened, never URLs,
 	// concat: lists or other protocols that a crafted name or playlist could point to.
 	fileProtocol      = "file"
@@ -69,7 +70,7 @@ func encodeArgs() []string {
 func extractAudioArgs(src, dst string) []string {
 	args := append(commonArgs(), inputArgs(src)...)
 	// "0:a:0" takes the first audio stream and fails with a clear message if there is none.
-	args = append(args, mapFlag, "0:a:0", "-af", measureFilter)
+	args = append(args, mapFlag, "0:a:0", audioFilterFlag, measureFilter)
 	args = append(args, encodeArgs()...)
 
 	return append(args, dst)
@@ -101,7 +102,7 @@ func silenceDetectArgs(input string, opts SilenceOptions) []string {
 
 	args := append(commonArgs(), inputArgs(input)...)
 
-	return append(args, "-af", filter, "-f", "null", "-")
+	return append(args, audioFilterFlag, filter, "-f", "null", "-")
 }
 
 // formatDecimal formats seconds or decibels with three decimals.

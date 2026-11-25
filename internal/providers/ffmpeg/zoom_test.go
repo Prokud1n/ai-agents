@@ -193,7 +193,7 @@ func TestRunnerZoom(t *testing.T) {
 	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
 		lavfiInput("smptehdbars=size=540x960:rate=30:duration=6"),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=6"),
-		[]string{videoCodecFlag, videoCodec, audioCodecFlag, "aac", shortestFlag, src}), nil)
+		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 	require.NoError(t, err)
 
 	reel := burnTestReel(ctx, t, r, dir, src, &Cut{
