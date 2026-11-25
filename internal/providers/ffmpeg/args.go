@@ -20,6 +20,8 @@ const (
 	inputFlag       = "-i"
 	audioCodecFlag  = "-c:a"
 	audioFilterFlag = "-af"
+	channelsFlag    = "-ac"
+	noVideoFlag     = "-vn"
 	plainOutput     = "default=noprint_wrappers=1:nokey=1" // ffprobe prints bare values
 	// Inputs come from users (Telegram files): only local files may be opened, never URLs,
 	// concat: lists or other protocols that a crafted name or playlist could point to.
@@ -59,8 +61,8 @@ func inputArgs(input string) []string {
 
 func encodeArgs() []string {
 	return []string{
-		"-vn",
-		"-ac", audioChannels,
+		noVideoFlag,
+		channelsFlag, audioChannels,
 		"-ar", audioSampleRate,
 		audioCodecFlag, audioCodec,
 		"-b:a", audioBitrate,

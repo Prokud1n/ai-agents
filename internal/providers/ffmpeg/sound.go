@@ -16,8 +16,8 @@ const (
 	measureLogTail = 16 << 10
 	summaryMarker  = "Summary:"
 
-	// highpassFilter cuts the rumble below 80 Hz (wind, traffic, handling of the phone) before the noise reduction.
-	highpassFilter = "highpass=f=80"
+	// rumbleFilter cuts the rumble below 80 Hz (wind, traffic, handling of the phone) before the noise reduction.
+	rumbleFilter = "highpass=f=80"
 	// noiseReduction: afftdn lowers the stationary noise under the floor by at most 10 dB (12 by default); a stronger
 	// reduction (nr 20+) makes the voice sound «under water».
 	noiseReduction = 10
@@ -124,7 +124,7 @@ func soundChain(opts RenderOptions) string {
 
 // denoiseFilter: the highpass and afftdn, with the delay of afftdn compensated.
 func denoiseFilter(d *Denoise) string {
-	return "apad=pad_dur=" + afftdnDelay + "," + highpassFilter + ",afftdn=nr=" + strconv.Itoa(noiseReduction) +
+	return "apad=pad_dur=" + afftdnDelay + "," + rumbleFilter + ",afftdn=nr=" + strconv.Itoa(noiseReduction) +
 		":nf=" + formatLevel(d.NoiseFloor) + ",atrim=start=" + afftdnDelay + ",asetpts=PTS-STARTPTS"
 }
 

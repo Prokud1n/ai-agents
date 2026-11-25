@@ -11,6 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The flags of the frames read back by a check.
+const (
+	videoFilterFlag = "-vf"
+	rawVideoFormat  = "rawvideo"
+)
+
 var testZoom = &Zoom{Factor: 1.09, MinSegment: 1.2}
 
 func TestZoomedSegments(t *testing.T) {
@@ -211,7 +217,7 @@ func TestRunnerZoom(t *testing.T) {
 
 	pick := func(filter string) []byte {
 		out, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-			[]string{"-vf", filter + ",scale=" + small + ",format=gray", "-fps_mode", "passthrough", formatFlag, "rawvideo", "-"}),
+			[]string{videoFilterFlag, filter + ",scale=" + small + ",format=gray", "-fps_mode", "passthrough", formatFlag, rawVideoFormat, "-"}),
 			1<<20)
 		require.NoError(t, err)
 

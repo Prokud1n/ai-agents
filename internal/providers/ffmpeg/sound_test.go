@@ -195,7 +195,7 @@ func TestRunnerLoudness(t *testing.T) {
 				[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 			require.NoError(t, err)
 
-			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "audio"+AudioExtension))
+			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "speech"+AudioExtension))
 			require.NoError(t, err)
 			require.NotNil(t, measured, "ebur128 reported its summary")
 			assert.InDelta(t, tt.source, measured.Integrated, tolerance, "the source as generated")
@@ -267,7 +267,7 @@ func TestRunnerSoundSync(t *testing.T) {
 				[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 			require.NoError(t, err)
 
-			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "audio"+AudioExtension))
+			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "clicks"+AudioExtension))
 			require.NoError(t, err)
 
 			loudness := &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11}
@@ -288,7 +288,7 @@ func TestRunnerSoundSync(t *testing.T) {
 			require.NoError(t, err)
 
 			frames, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-				[]string{"-vf", "crop=4:4,format=gray", formatFlag, "rawvideo", "-"}), 1<<20)
+				[]string{videoFilterFlag, "crop=4:4,format=gray", formatFlag, rawVideoFormat, "-"}), 1<<20)
 			require.NoError(t, err)
 
 			var flashes []float64
@@ -301,7 +301,7 @@ func TestRunnerSoundSync(t *testing.T) {
 			}
 
 			pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-				[]string{"-vn", "-ac", "1", "-ar", "48000", formatFlag, "s16le", "-"}), 1<<21)
+				[]string{noVideoFlag, channelsFlag, "1", "-ar", "48000", formatFlag, "s16le", "-"}), 1<<21)
 			require.NoError(t, err)
 
 			samples := make([]int, 0, len(pcm)/2)
@@ -383,7 +383,7 @@ func measureLoudness(ctx context.Context, t *testing.T, r *Runner, path string) 
 
 	log := newTailBuffer(measureLogTail)
 	_, err = r.run(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-		[]string{"-vn", audioFilterFlag, measureFilter, formatFlag, "null", "-"}), log)
+		[]string{noVideoFlag, audioFilterFlag, measureFilter, formatFlag, "null", "-"}), log)
 	require.NoError(t, err)
 
 	loudness := parseLoudness(log.String())
