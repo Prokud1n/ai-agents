@@ -61,8 +61,8 @@ normalize() {
 # expand_home <путь>: `~` и `~/…` → $HOME.
 expand_home() {
 	case $1 in
-	"~") printf '%s' "$HOME" ;;
-	"~/"*) printf '%s/%s' "$HOME" "${1#"~/"}" ;;
+	\~) printf '%s' "$HOME" ;;
+	\~/*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
 	*) printf '%s' "$1" ;;
 	esac
 }

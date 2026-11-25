@@ -84,7 +84,7 @@ func TestHelpExitsZero(t *testing.T) {
 
 	assert.Equal(t, 0, run([]string{"-h"}, &stdout, &stderr))
 	assert.Contains(t, stderr.String(), "usage:")
-	assert.Equal(t, usageExitCode, run([]string{outFlag, testOut}, &stdout, &stderr))
+	assert.Equal(t, usageExitCode, run([]string{inFlag, testClip}, &stdout, &stderr))
 }
 
 func TestPrintFailure(t *testing.T) {
