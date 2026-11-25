@@ -28,8 +28,8 @@ func TestPrompt(t *testing.T) {
 			req:  func() *Request { return testRequest(1, nil) },
 			expected: []string{
 				"Подписи нет — реши только спорные повторы.",
-				"0–2 | 0:00.5–0:01.8 | в ролике 0:00.1–0:01.4 | держим спину ровно\n",
-				"6 | 0:05.7–0:06.1 | вырезано: слово-паразит | эээ\n",
+				"0–2 | 0:00.5 | 1.3 с | ролик 0:00.1 | держим спину ровно\n",
+				"6 | 0:05.7 | 0.4 с | вырезано: слово-паразит | эээ\n",
 				"- id 0: первая фраза — слова 0–2 «держим спину ровно.»; повтор — слова 3–5 «держим спину ровно.»",
 				"Вызови submit_edit один раз.",
 			},
@@ -67,7 +67,7 @@ func TestPrompt(t *testing.T) {
 				"Подписи нет — выбери режим монтажа",
 				"Режим монтажа сейчас: workout",
 				speechShareLine, "Речи мало — возможно, это показ упражнений",
-				"6–10 | 0:05.7–0:07.9 | в ролике 0:05.7–0:07.9 | эээ делаем по десять приседаний\n",
+				"6–10 | 0:05.7 | 2.2 с | ролик 0:05.7 | эээ делаем по десять приседаний\n",
 			},
 			absent: []string{"Изменения прошлых версий", "Вырезанные по времени"},
 		},
@@ -167,7 +167,7 @@ func TestPromptLength(t *testing.T) {
 				"Подписи нет, а ролик после чистки длиннее рилс — сделай редакторский отбор",
 				"— длиннее рилс. Сделай рилс 4–8 с: оставь лучшие фразы (хук → суть → финал)",
 				"названную длину укажи в target_seconds",
-				"0–4 | 0:00.5–0:02.7 | в ролике 0:00.1–0:02.3 | привет сегодня расскажу про планку\n",
+				"0–4 | 0:00.5 | 2.2 с | ролик 0:00.1 | привет сегодня расскажу про планку\n",
 				"21–24 | ",
 			},
 		},
@@ -240,7 +240,7 @@ func TestPromptPhrases(t *testing.T) {
 	}
 
 	assert.Equal(t, len(req.Transcript.Words), next, "every word is in a phrase")
-	assert.Less(t, len(got), len(req.Transcript.Words)/5, "phrases, not words")
+	assert.Less(t, len(got), len(req.Transcript.Words)/4, "phrases, not words")
 }
 
 // TestPromptCompression: the transcript of a 2.5-minute talk takes several times less of the prompt by phrases than
@@ -261,7 +261,7 @@ func TestPromptCompression(t *testing.T) {
 		len([]rune(byWords)), len(byWords), len([]rune(byPhrases.String())), byPhrases.Len(), len([]rune(prompt)),
 		len(prompt))
 
-	assert.Less(t, len([]rune(byPhrases.String()))*5, len([]rune(byWords))*2, "at least 2.5 times shorter")
+	assert.Less(t, len([]rune(byPhrases.String()))*3, len([]rune(byWords)), "at least 3 times shorter")
 }
 
 // longTalk is a talking head of sentences of about ten words, as Whisper gives them.

@@ -191,7 +191,7 @@ func TestIntegrationSelectionForLongTalk(t *testing.T) {
 	prompts := model.Prompts()
 	require.Len(t, prompts, 1, "the long talking head is given to the model without a caption")
 	assert.Contains(t, prompts[0], "Сделай рилс 5–10 с")
-	assert.Contains(t, prompts[0], "0–1 | 0:01.0–0:02.7 | в ролике")
+	assert.Contains(t, prompts[0], "0–1 | 0:01.0 | 1.7 с | ролик")
 
 	v1Duration := env.reelDuration(t, v1.MediaKey)
 	assert.InDelta(t, 5*talkPhraseReel, v1Duration, 0.5, "five phrases of eight")

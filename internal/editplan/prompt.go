@@ -72,8 +72,8 @@ func Prompt(req *Request) string {
 // Phrases of the transcript in the prompt: the words are grouped, so the prompt is several times shorter than a line
 // per word, and the model still cuts by the indices of the words.
 const (
-	// maxPhraseWords of a phrase: the model counts a word inside it from the first index.
-	maxPhraseWords = 12
+	// maxPhraseWords of a phrase: the model counts a word inside it from the first index, so a phrase is short.
+	maxPhraseWords = 8
 	// phraseGap: a longer silence between words starts a new phrase.
 	phraseGap = 0.7
 	// segmentSlack: a word belongs to the segment it starts in, give or take this.
@@ -87,15 +87,16 @@ type phraseKey struct {
 	cut      string
 }
 
-// phrase is a run of words [from, to] with the same key; reelStart–reelEnd is its time in the current reel (kept).
+// phrase is a run of words [from, to] with the same key; reelStart is its start in the current reel (kept).
 type phrase struct {
-	from, to           int
-	key                phraseKey
-	reelStart, reelEnd float64
+	from, to  int
+	key       phraseKey
+	reelStart float64
 }
 
-// writeWords lists the transcript by phrases: the indices of their words, their time in the source, their time in
-// the current reel or why they are cut, and their words.
+// writeWords lists the transcript by phrases: the indices of their words, their start in the source and their length
+// (the length of a phrase is what the selection for a reel counts), their start in the current reel or why they are
+// cut, and their words. The ends are left out: the next phrase starts there, and the prompt is shorter.
 func writeWords(b *strings.Builder, transcript *transcription.Result, plan *roughcut.Plan) {
 	if len(transcript.Words) == 0 {
 		b.WriteString("\nРечи в видео нет: в расшифровке ни одного слова. Время — только секундами.\n")
@@ -103,8 +104,9 @@ func writeWords(b *strings.Builder, transcript *transcription.Result, plan *roug
 		return
 	}
 
-	b.WriteString("\nРасшифровка по фразам — индексы слов from–to | время в исходнике | время в ролике или " +
-		"«вырезано: причина» | слова. Индекс слова внутри фразы — from плюс его номер во фразе с нуля.\n")
+	b.WriteString("\nРасшифровка по фразам — индексы слов from–to | начало в исходнике | длительность | начало в " +
+		"ролике («ролик 0:12.3») или «вырезано: причина» | слова. Во фразе не больше 8 слов; индекс слова внутри " +
+		"фразы — from плюс его номер во фразе с нуля.\n")
 
 	words := transcript.Words
 
@@ -120,11 +122,11 @@ func writeWords(b *strings.Builder, transcript *transcription.Result, plan *roug
 		}
 
 		if ph.key.interval >= 0 {
-			place = "в ролике " + roughcut.FormatTimecode(ph.reelStart) + "–" + roughcut.FormatTimecode(ph.reelEnd)
+			place = "ролик " + roughcut.FormatTimecode(ph.reelStart)
 		}
 
-		fmt.Fprintf(b, "%s | %s–%s | %s | %s\n", indices, roughcut.FormatTimecode(words[ph.from].Start),
-			roughcut.FormatTimecode(words[ph.to].End), place, joinWords(words[ph.from:ph.to+1]))
+		fmt.Fprintf(b, "%s | %s | %.1f с | %s | %s\n", indices, roughcut.FormatTimecode(words[ph.from].Start),
+			words[ph.to].End-words[ph.from].Start, place, joinWords(words[ph.from:ph.to+1]))
 	}
 }
 
@@ -143,7 +145,7 @@ func phrases(transcript *transcription.Result, plan *roughcut.Plan) []phrase {
 		if i > 0 && next.key == current.key && i-current.from < maxPhraseWords &&
 			words[i].Start-words[i-1].End <= phraseGap &&
 			segmentOf(transcript.Segments, words[i].Start) == segmentOf(transcript.Segments, words[i-1].Start) {
-			current.to, current.reelEnd = i, next.reelEnd
+			current.to = i
 
 			continue
 		}
@@ -178,11 +180,9 @@ func wordPhrase(plan *roughcut.Plan, offsets []float64, words []transcription.Wo
 
 	for k, iv := range plan.Keep {
 		if middle >= iv.Start && middle < iv.End {
-			return phrase{
-				from: i, to: i, key: phraseKey{interval: k},
-				reelStart: offsets[k] + max(w.Start, iv.Start) - iv.Start,
-				reelEnd:   offsets[k] + min(w.End, iv.End) - iv.Start,
-			}
+			reelStart := offsets[k] + max(w.Start, iv.Start) - iv.Start
+
+			return phrase{from: i, to: i, key: phraseKey{interval: k}, reelStart: reelStart}
 		}
 	}
 
@@ -335,15 +335,22 @@ func writeLength(b *strings.Builder, req *Request) {
 	case req.Selecting():
 		fmt.Fprintf(b, "Длина: после чистки ролик %s — длиннее рилс. Сделай рилс %.0f–%.0f с: оставь лучшие фразы "+
 			"(хук → суть → финал), остальное вырежи целыми фразами через remove_words. Если тренер в подписи назвала "+
-			"длину или что оставить, её указания важнее; названную длину укажи в target_seconds.\n", now, low, high)
+			"длину или что оставить, её указания важнее; названную длину укажи в target_seconds. %s\n", now, low,
+			high, keepWhole(req))
 	case req.IsRevision():
 		fmt.Fprintf(b, "Длина: ролик сейчас %s, рекомендуемая длина рилс — %.0f–%.0f с. Если тренер просит длину "+
 			"(«сделай 40 секунд», «до 30 секунд», «оставь минуту»), сделай редакторский отбор под неё и укажи "+
-			"target_seconds.\n", now, low, high)
+			"target_seconds. %s\n", now, low, high, keepWhole(req))
 	default:
 		fmt.Fprintf(b, "Длина: ролик %s, рекомендуемая длина рилс — %.0f–%.0f с. Сокращай, только если тренер "+
-			"просит в подписи; названную длину укажи в target_seconds.\n", now, low, high)
+			"просит в подписи; названную длину укажи в target_seconds. %s\n", now, low, high, keepWhole(req))
 	}
+}
+
+// keepWhole tells the model what to answer when the trainer asks not to shorten the reel or for more than there is.
+func keepWhole(req *Request) string {
+	return fmt.Sprintf("Если тренер просит не сокращать («не сокращай», «оставь целиком») или называет длину больше, "+
+		"чем длится ролик, укажи target_seconds = %.1f (текущая длина ролика).", req.Plan.Duration)
 }
 
 // writeMode says the mode of the current plan and, for the first version with a caption or planned as a workout by

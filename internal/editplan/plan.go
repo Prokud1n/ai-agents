@@ -49,9 +49,10 @@ type Request struct {
 const minTargetShare = 0.5
 
 // Selecting reports whether the editor shortens the first version to the recommended length: a talking head that is
-// longer than TargetSeconds after the cleaning.
+// longer than TargetSeconds with its margin after the cleaning (roughcut.LongerThanTarget, the rule the media worker
+// stops the job by).
 func (r *Request) Selecting() bool {
-	return !r.IsRevision() && r.TargetSeconds > 0 && r.Plan != nil && r.Plan.Duration > r.TargetSeconds &&
+	return !r.IsRevision() && r.Plan != nil && roughcut.LongerThanTarget(r.Plan.Duration, r.TargetSeconds) &&
 		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 

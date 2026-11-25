@@ -99,13 +99,14 @@ func TestApplySelection(t *testing.T) {
 		keptEndLine, "Не вошло: «привет сегодня расскажу про планку», «не прогибайте поясницу».",
 	}, outcome.Changes, "no line for every fragment cut")
 
-	require.Len(t, outcome.Edit.Notes, 4)
-	assert.Equal(t, "Отбор под рилс: ролик про планку: хук — польза, финал — призыв", outcome.Edit.Notes[0])
-	assert.Regexp(t, `^Длина рилс: 0:08\.\d \(рекомендуется 4–8 с\)$`, outcome.Edit.Notes[1])
+	assert.Equal(t, []string{"Отбор под рилс: ролик про планку: хук — польза, финал — призыв"}, outcome.Edit.Notes,
+		"the decisions only")
+	require.Len(t, outcome.Edit.Details, 3)
+	assert.Regexp(t, `^Длина рилс: 0:08\.\d \(рекомендуется 4–8 с\)$`, outcome.Edit.Details[0])
 	assert.Equal(t, []string{
 		"Не вошло в рилс: слова 0–4 «привет сегодня расскажу про планку»",
 		"Не вошло в рилс: слова 14–16 «не прогибайте поясницу»",
-	}, outcome.Edit.Notes[2:])
+	}, outcome.Edit.Details[1:])
 
 	workout, err := Apply(req, &Input{Decision: EditDecision, Reason: "тренировка", Mode: roughcut.WorkoutMode})
 	require.NoError(t, err, "a workout is not shortened")
@@ -163,6 +164,73 @@ func TestApplyTargetLength(t *testing.T) {
 	assert.Contains(t, outcome.Changes, "Не вошло: «привет сегодня расскажу про планку», «планка укрепляет спину и "+
 		"пресс», «не прогибайте поясницу».")
 	assert.Contains(t, outcome.Edit.Notes, "Правка тренера к версии 1: сделай 6 секунд")
+	assert.Contains(t, outcome.Changes, "Оставил главное: «держите локти под плечами начните с тридцати секунд "+
+		"сохраняйте и пробуйте завтра».", "12 words: one quote, not the start and the end")
+}
+
+// TestApplyRevisionWithoutLength: a revision that names no length is not checked against the recommended range even
+// with a target, and it is not a selection.
+func TestApplyRevisionWithoutLength(t *testing.T) {
+	t.Parallel()
+
+	outcome, err := Apply(selectionRequest(t, 2), &Input{
+		Decision: EditDecision, Reason: "убери вступление", Remove: []roughcut.WordRange{introWords},
+	})
+	require.NoError(t, err, "9.75 s is above 4–8 s, but nobody asked for a length")
+
+	assert.False(t, outcome.Selected)
+	assert.InDelta(t, 9.75, outcome.Duration, 0.01)
+	assert.Equal(t, []string{"Вырезал фрагмент «привет сегодня расскажу про планку»."}, outcome.Changes)
+	assert.Empty(t, outcome.Edit.Details)
+}
+
+// TestApplyKeepWhole: «не сокращай» on a long talking head is target_seconds of the current length: it passes the
+// check, and a reel that did not get shorter is not «сократил под рилс».
+func TestApplyKeepWhole(t *testing.T) {
+	t.Parallel()
+
+	req := selectionRequest(t, 1)
+	req.Caption = "не сокращай"
+
+	outcome, err := Apply(req, &Input{Decision: EditDecision, Reason: "тренер просит целиком", TargetSeconds: 12.2})
+	require.NoError(t, err)
+
+	assert.False(t, outcome.Selected)
+	assert.InDelta(t, req.Plan.Duration, outcome.Duration, 1e-9)
+	assert.Empty(t, outcome.Changes)
+	assert.Empty(t, outcome.Edit.Details)
+	assert.Equal(t, []string{"Подпись тренера к исходнику: тренер просит целиком"}, outcome.Edit.Notes)
+}
+
+// TestApplyFixWordChecksIndex: the word the model read at the index must be there (any case, punctuation around it),
+// so a word counted wrong inside a phrase goes back to the model.
+func TestApplyFixWordChecksIndex(t *testing.T) {
+	t.Parallel()
+
+	_, err := Apply(testRequest(2, nil), &Input{
+		Decision: EditDecision, FixWords: []FixInput{{Index: 8, Word: "десять", Text: "10"}},
+	})
+
+	var check *CheckError
+	require.ErrorAs(t, err, &check)
+	assert.Contains(t, check.Message, "слово 8 в расшифровке — «по», а не «десять»")
+
+	outcome, err := Apply(testRequest(2, nil), &Input{
+		Decision: EditDecision, FixWords: []FixInput{{Index: 9, Word: "Десять,", Text: "10"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []roughcut.WordFix{{Index: 9, Text: "10"}}, outcome.Edit.Words)
+}
+
+// TestApplyResolvedRepeatNotLogged: a disputed repeat whose phrase the decision cut is not «решения нет».
+func TestApplyResolvedRepeatNotLogged(t *testing.T) {
+	t.Parallel()
+
+	outcome, err := Apply(testRequest(1, nil), &Input{
+		Decision: EditDecision, Reason: "без первой фразы", Remove: []roughcut.WordRange{{From: 0, To: 2}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, outcome.Edit.Details)
 }
 
 // TestApplyNotesWithoutCaption: a first version without a caption logs the model's reason and the repeats it left
@@ -174,7 +242,7 @@ func TestApplyNotesWithoutCaption(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, outcome.Selected, "no target")
-	assert.Equal(t, []string{
-		"Решение по черновой склейке: повтор — счёт", "Повтор 0: решения нет — оставлены обе фразы",
-	}, outcome.Edit.Notes)
+	assert.Equal(t, []string{"Решение по черновой склейке: повтор — счёт"}, outcome.Edit.Notes)
+	assert.Equal(t, []string{"Повтор 0: решения нет — оставлены обе фразы"}, outcome.Edit.Details,
+		"both phrases of the repeat stay in the reel")
 }

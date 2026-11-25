@@ -13,6 +13,8 @@ const (
 	lengthTolerance = 0.15
 	// minTargetSeconds: a shorter length is not a reel the trainer would ask for.
 	minTargetSeconds = 5
+	// minShortenSeconds: a decision that leaves the reel less than this shorter did not shorten it («не сокращай»).
+	minShortenSeconds = 0.5
 	// endWords quoted of the start and the end of a shortened reel in the description.
 	endWords = 6
 	// maxDroppedQuotes named in the description, maxDroppedRunes of each.
@@ -21,8 +23,8 @@ const (
 	ellipsisMark     = "…"
 )
 
-// selection is the editorial selection of a decision: whether phrases were picked for the length of a reel, the
-// length asked for (0: the recommended range), and the reel built with the decision.
+// selection is the editorial selection of a decision: whether phrases were picked for the length of a reel (and the
+// reel got shorter), the length asked for (0: the recommended range), and the reel built with the decision.
 type selection struct {
 	on       bool
 	target   float64
@@ -97,10 +99,13 @@ func selectionLines(req *Request, in *Input, sel *selection) []string {
 
 	var lines []string
 
-	if len(kept) > 0 {
-		first, last := kept[:min(endWords, len(kept))], kept[max(len(kept)-endWords, 0):]
+	switch {
+	case len(kept) > 2*endWords:
+		first, last := kept[:endWords], kept[len(kept)-endWords:]
 		lines = append(lines, "Оставил главное: начало «"+joinIndexed(words, first)+ellipsisMark+"», финал «"+
 			ellipsisMark+joinIndexed(words, last)+"».")
+	case len(kept) > 0:
+		lines = append(lines, "Оставил главное: «"+joinIndexed(words, kept)+"».")
 	}
 
 	if len(in.Remove) == 0 {
@@ -143,6 +148,27 @@ func joinIndexed(words []transcription.Word, indices []int) string {
 	return strings.Join(parts, " ")
 }
 
+// keptSet marks the words left in the reel.
+func keptSet(words []transcription.Word, keep []roughcut.Interval) []bool {
+	kept := make([]bool, len(words))
+	for _, i := range keptWords(words, keep) {
+		kept[i] = true
+	}
+
+	return kept
+}
+
+// anyKept: a word of the range is left in the reel.
+func anyKept(kept []bool, r roughcut.WordRange) bool {
+	for i := max(r.From, 0); i <= r.To && i < len(kept); i++ {
+		if kept[i] {
+			return true
+		}
+	}
+
+	return false
+}
+
 func inKeep(keep []roughcut.Interval, t float64) bool {
 	for _, iv := range keep {
 		if t >= iv.Start && t < iv.End {
@@ -153,7 +179,8 @@ func inKeep(keep []roughcut.Interval, t float64) bool {
 	return false
 }
 
-// selectionNotes explain the selection in the decisions log: the length of the reel and every phrase left out.
+// selectionNotes explain the selection in the decisions log (details, not decisions): the length of the reel and every
+// phrase left out.
 func selectionNotes(req *Request, in *Input, sel *selection) []string {
 	if !sel.on {
 		return nil

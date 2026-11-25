@@ -106,8 +106,10 @@ type Edit struct {
 	// Words replace the text of transcript words in the subtitles only: the plan is built from the original
 	// words.
 	Words []WordFix `json:"words,omitempty"`
-	// Notes explain the editor's decisions of this version in the decisions log.
-	Notes []string `json:"notes,omitempty"`
+	// Notes explain the editor's decisions of this version in the decisions log; Details are the lines around them
+	// that are not decisions (the length of a reel shortened by the selection, the phrases left out), not counted.
+	Notes   []string `json:"notes,omitempty"`
+	Details []string `json:"details,omitempty"`
 	// Mode of the cut; empty is TalkMode.
 	Mode Mode `json:"mode,omitempty"`
 	// CutTime are fragments of the source cut by time, in seconds of the source (a trim of a workout, «вырежи

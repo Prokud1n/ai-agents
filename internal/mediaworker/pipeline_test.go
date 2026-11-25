@@ -192,8 +192,8 @@ func TestPipelineStopsForDecision(t *testing.T) {
 	}
 }
 
-// TestPipelineTargetDuration: a cleaned talking head within the target is rendered at once (no model call), a longer
-// one stops for the editor's selection; without a target nothing is decided by the length.
+// TestPipelineTargetDuration: a cleaned talking head within the target and its 10 % margin is rendered at once (no
+// model call), a longer one stops for the editor's selection; without a target nothing is decided by the length.
 func TestPipelineTargetDuration(t *testing.T) {
 	t.Parallel()
 
@@ -204,7 +204,8 @@ func TestPipelineTargetDuration(t *testing.T) {
 	}{
 		{name: "2:21 within 2:30", target: 150, expected: editjob.DoneStatus},
 		{name: "2:21 exactly the target", target: 141, expected: editjob.DoneStatus},
-		{name: "2:21 longer than 2:20", target: 140, expected: editjob.PlannedStatus},
+		{name: "2:21 within the 10 % margin of 2:10", target: 130, expected: editjob.DoneStatus},
+		{name: "2:21 longer than 2:00 with its margin", target: 120, expected: editjob.PlannedStatus},
 		{name: "no target", expected: editjob.DoneStatus},
 	}
 

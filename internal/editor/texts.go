@@ -224,8 +224,8 @@ func utf16Len(text string) int {
 // says so.
 func talkHeader(r *editjob.Result, summary *editjob.Summary) string {
 	if summary != nil && summary.Selected {
-		return fmt.Sprintf("Черновик рилс готов: было %s, стало %s — сократил под рилс: оставил главное, вырезал паузы, "+
-			"оговорки и то, что не вошло.", clock(r.SourceDuration), clock(r.Duration))
+		return fmt.Sprintf("Черновик рилс готов: было %s, стало %s — сократил под рилс.", clock(r.SourceDuration),
+			clock(r.Duration))
 	}
 
 	removed := r.SourceDuration - r.Duration

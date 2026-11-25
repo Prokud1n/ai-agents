@@ -373,9 +373,10 @@ func classifyTranscription(err error) error {
 
 // cut plans the rough cut: an auto job with the default settings (disputed repeats are kept), a render job with the
 // settings and the edit the editor decided on. An auto job with something to decide stops after it: the trainer's
-// caption, disputed repeats, little speech, or a talking head longer than the reel's target after the cleaning. A source with little speech (autoPlan) may be a workout: cutting its
-// silence would cut the exercises, so it is planned in the workout mode (nothing cut) and the editor decides; that plan
-// is also what is rendered if the model cannot decide.
+// caption, disputed repeats, little speech, or a talking head longer than the reel's target after the cleaning
+// (roughcut.LongerThanTarget). A source with little speech (autoPlan) may be a workout: cutting its silence would cut
+// the exercises, so it is planned in the workout mode (nothing cut) and the editor decides; that plan is also what is
+// rendered if the model cannot decide.
 func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	auto := w.job.EffectiveStage() == editjob.AutoStage
 
@@ -402,7 +403,7 @@ func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	w.result.Candidates = len(cut.Plan.Candidates)
 
 	// A talking head longer than the target after the cleaning is shortened by the editor: the best phrases are picked.
-	long := auto && !lowSpeech && w.job.TargetDuration > 0 && cut.Plan.Duration > w.job.TargetDuration
+	long := auto && !lowSpeech && roughcut.LongerThanTarget(cut.Plan.Duration, w.job.TargetDuration)
 
 	if auto && (w.job.Decide || lowSpeech || long || len(cut.Plan.Candidates) > 0) {
 		w.planned = true
