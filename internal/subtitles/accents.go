@@ -60,6 +60,12 @@ func markAccents(tokens []token, explicit, dictionary []string) []token {
 // counting: a number next to another number ("раз два три четыре", "1 2 3") is not a quantity.
 // tokens is a copy owned by the caller.
 func markNumbers(tokens []token) {
+	markNumberGroups(tokens, false)
+}
+
+// markNumberGroups is markNumbers; chained also accents a group right after another one: the word layout shows every
+// quantity as an event of its own («3 подхода» | «10 повторений»), so they never merge.
+func markNumberGroups(tokens []token, chained bool) {
 	for i := 0; i < len(tokens); i++ {
 		if !isNumber(tokens[i].Norm) {
 			continue
@@ -69,7 +75,7 @@ func markNumbers(tokens []token) {
 		counting := (i > 0 && isNumber(tokens[i-1].Norm)) || (end+1 < len(tokens) && isNumber(tokens[end+1].Norm))
 		// "3 подхода 10 повторений": a group right after another one is not accented, so they do not merge
 		// into one long accent.
-		counting = counting || (i > 0 && tokens[i-1].Accent == numberAccent)
+		counting = counting || (!chained && i > 0 && tokens[i-1].Accent == numberAccent)
 
 		if !counting && end+1 < len(tokens) && tokens[end].Break == noBreak && isSignificant(tokens[end+1].Norm) {
 			for j := i; j <= end+1; j++ {

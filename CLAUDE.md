@@ -289,7 +289,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `TestIntegrationHookRender` (без Redis/S3, в media-image), `subtitles.TestBurnHookWithFFmpeg`.
 - Оформление как у референсов (T3.17). Стиль по умолчанию — `layout.mode: word` (`subtitles.DefaultStyle`;
   прежний — `PhraseStyle`, файл `assets/subtitles/style-phrase.yaml`, тесты фразовой раскладки берут его явно):
-  `subtitles.wordCues` — по слову (число с единицей — `markNumbers`, одним событием; слово, за которым следующее
+  `subtitles.wordCues` — по слову (число с единицей — одним событием: `joinThousands` склеивает «10 000»,
+  `markNumberGroups(…, true)` размечает и группу сразу после группы, новая группа начинается с числа; тире не
+  показывается; слово, за которым следующее
   начинается раньше `word_box.min_duration`, — вместе с ним, но не через паузу), строчными, без пунктуации
   предложения; событие держится до следующего (`timeWords`), стиль `Word` — BorderStyle 3 (плашка = outline цвета
   `word_box.box` вокруг глифов, поэтому всегда по слову) с `\an7` у `word_box.x/y`, `\q2`, длинное слово — `\fscx`.
@@ -305,12 +307,14 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   событие стиля `Hook` (слой 2), `\fad` только на краях серии. Во фразовой раскладке субтитры под блоком сдвигаются как
   под хуком, подложки хука и блоков — `shadeEvents` (не перекрываются). Описание — `editplan.notesLine` сразу после
   строки хука. Ник и карточка: `REELS_HANDLE`/`_ICON`/`REELS_END_CARD` (`config.Editor`, app) → `editjob.Job.Branding`
-  (проверка `subtitles.CheckHandle` `^@[a-z0-9._]{1,30}$` — `fx.Invoke(checkBranding)` при старте app и
+  (проверка `editjob.CheckHandle` `^@[a-z0-9._]{1,30}$`, `subtitles` вызывает её же — `fx.Invoke(checkBranding)` при старте app и
   `Pipeline.branding` в воркере: невалидный — лог и черновик без ника) → `subtitles.Branding`: `brandEvents` — стиль
   `Handle` (`\an9`, слой 3) с векторным значком (кольца — внешний и обратный внутренний контур с заливкой: libass
   вырезает заливку из обводки, поэтому не `\bord`) до начала карточки; карточка (`end_card.duration` 2 с от
-  `Transcript.Duration`, слои 4–5): затемнение векторным прямоугольником с `\fad`, значок и ник `\an5` по центру;
-  ролик без длины или короче 3 с — без карточки. Валидация стиля: плашка, хук/пункты (4 строки), подписи, ник
+  `Transcript.Duration`, не больше трети ролика и только если до неё ≥ 2 с — `cardTimes`, слои 4–5): затемнение
+  векторным прямоугольником с `\fad`, значок и ник `\an5` по центру; слова, субтитры и пункты обрезаются по её началу
+  (`clipWords`, `clipCues`). `handle.y` 0 — авто (`Style.handleY`: 620 в word, 840 во фразовом, 700 при субтитрах в
+  середине). Тени: `hook.shadow` (word — 3 px 75 %), `handle.shadow` (ник, значок и карточка). Валидация стиля: плашка, хук/пункты (4 строки), подписи, ник
   (`handle.max_width` справа, выше кнопок Instagram — `rightButtonsTop` 1000) и фразовые субтитры не пересекаются.
   Проверка — `subtitles.TestBurnReferenceStyleWithFFmpeg` (пиксели; в media-image), `mediaworker.TestIntegrationScreenNotes`,
   скорость — `TestRenderSpeed` (референсный стиль против фразового).

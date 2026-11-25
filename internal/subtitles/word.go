@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Prokud1n/ai-agents/internal/transcription"
@@ -25,10 +26,11 @@ const (
 	// maxWordShown: a word before a pause stays at most this long (Whisper may stretch the last word of a phrase over
 	// the pause).
 	maxWordShown = 1.5
-	// wordTrailing are dropped at the end of a word shown alone (the end of a sentence or a dash said apart); «?», «!»
-	// and «…» stay. wordQuotes are dropped at both ends.
+	// wordTrailing and wordQuotes are dropped at both ends of a word shown alone (the punctuation of its sentence, a
+	// dash said apart, quotes); keptMarks at its end stay.
 	wordTrailing = " .,;:—–-"
 	wordQuotes   = "«»\"„“”"
+	keptMarks    = "?!…"
 )
 
 // WordBoxStyle is the look and the place of the word layout: one word at a time on an opaque plate (ASS BorderStyle 3:
@@ -54,10 +56,10 @@ type WordBoxStyle struct {
 
 func defaultWordBox() WordBoxStyle {
 	return WordBoxStyle{
-		TextStyle: TextStyle{Font: defaultFont, Size: 44, Color: "#111111"},
+		TextStyle: TextStyle{Font: defaultFont, Size: 48, Color: "#111111"},
 		Lowercase: true,
 		Box:       white,
-		Padding:   10,
+		Padding:   9,
 		X:         defaultWordBoxX, Y: defaultWordBoxY, MaxWidth: defaultWordWidth,
 		MinDuration: 0.15,
 		CharWidth:   0.55,
@@ -173,52 +175,109 @@ type wordCue struct {
 }
 
 // wordCues are the words of the transcript as the word layout shows them, timed: a number with the word after it is
-// one cue («10 повторений»), as the accents of the phrase layout find it; a word shorter than min_duration is shown
-// together with the next one.
+// one cue («10 повторений», «10 000 шагов»), every quantity of its own; a word shorter than min_duration is shown
+// together with the next one; a token of punctuation only (a dash said apart) is not shown.
 func wordCues(result *transcription.Result, style *Style) []wordCue {
-	tokens := markAccents(tokensFromTranscript(result), nil, nil)
+	tokens := joinThousands(tokensFromTranscript(result))
+	markNumberGroups(tokens, true)
 	words := mergeShortWords(groupWords(tokens, &style.WordBox), style.WordBox.MinDuration)
 
 	return timeWords(words, style.WordBox.MinDuration)
 }
 
-// groupWords makes a cue of every word, of a number with its unit together.
-func groupWords(tokens []token, w *WordBoxStyle) []wordCue {
-	out := make([]wordCue, 0, len(tokens))
+// thousandsDigits: a group of digits after a number written with a space between the thousands («10 000»).
+const thousandsDigits = 3
 
-	for i, t := range tokens {
-		text := wordText(t.Text, w)
-		pause := t.Break == strongBreak || (i+1 < len(tokens) && gapBreaks(t, tokens[i+1]))
+// joinThousands makes one token of a number written with spaces between the thousands («10 000» said as one number,
+// Whisper gives two words).
+func joinThousands(tokens []token) []token {
+	out := make([]token, 0, len(tokens))
 
-		if len(out) > 0 && t.Accent == numberAccent && tokens[i-1].Accent == numberAccent &&
-			!endsPhrase(tokens[i-1], t) {
-			last := out[len(out)-1]
-			out[len(out)-1] = wordCue{Text: last.Text + " " + text, Start: last.Start, End: t.End, Pause: pause}
+	for _, t := range tokens {
+		if n := len(out); n > 0 && isDigits(out[n-1].Norm) && isDigits(t.Norm) &&
+			utf8.RuneCountInString(t.Norm) == thousandsDigits && out[n-1].Break == noBreak && !gapBreaks(out[n-1], t) {
+			prev := out[n-1]
+			out[n-1] = token{Text: prev.Text + " " + t.Text, Norm: prev.Norm + t.Norm, Start: prev.Start, End: t.End, Break: t.Break}
 
 			continue
 		}
 
-		out = append(out, wordCue{Text: text, Start: t.Start, End: t.End, Pause: pause})
+		out = append(out, t)
 	}
 
 	return out
 }
 
-// wordText is a word as the plate shows it: without the punctuation of its sentence and quotes, in small letters or
-// capitals when the style says so; a word of punctuation only stays as it is.
-func wordText(text string, w *WordBoxStyle) string {
-	trimmed := strings.Trim(strings.TrimRight(text, wordTrailing), wordQuotes)
-	if strings.TrimSpace(trimmed) == "" {
-		trimmed = text
+// isDigits: the word is digits only.
+func isDigits(norm string) bool {
+	return norm != "" && !strings.ContainsFunc(norm, func(r rune) bool { return !unicode.IsDigit(r) })
+}
+
+// groupWords makes a cue of every word, of a number with its unit together; punctuation alone is not shown (its pause
+// goes to the word before it).
+func groupWords(tokens []token, w *WordBoxStyle) []wordCue {
+	out := make([]wordCue, 0, len(tokens))
+
+	var prev token
+
+	for i, t := range tokens {
+		pause := t.Break == strongBreak || (i+1 < len(tokens) && gapBreaks(t, tokens[i+1]))
+
+		text := wordText(t.Text, w)
+		if text == "" {
+			if n := len(out); n > 0 && pause {
+				last := out[n-1]
+				last.Pause = true
+				out[n-1] = last
+			}
+
+			continue
+		}
+
+		if len(out) > 0 && joinsNumber(prev, t) {
+			last := out[len(out)-1]
+			out[len(out)-1] = wordCue{Text: last.Text + " " + text, Start: last.Start, End: t.End, Pause: pause}
+		} else {
+			out = append(out, wordCue{Text: text, Start: t.Start, End: t.End, Pause: pause})
+		}
+
+		prev = t
 	}
+
+	return out
+}
+
+// joinsNumber: the word goes on the quantity of the word before it: the unit after the number, or the next part of a
+// compound number («двадцать пять»); another number starts a quantity of its own.
+func joinsNumber(prev, t token) bool {
+	return t.Accent == numberAccent && prev.Accent == numberAccent && !endsPhrase(prev, t) &&
+		(!isNumber(t.Norm) || isCompoundNumber(prev.Norm, t.Norm))
+}
+
+// wordText is a word as the plate shows it: without the punctuation of its sentence and the quotes around it (a «?»,
+// «!» or «…» at its end stays), in small letters or capitals when the style says so; "" for punctuation only.
+func wordText(text string, w *WordBoxStyle) string {
+	core := strings.Trim(text, wordTrailing+wordQuotes+keptMarks)
+	if core == "" {
+		return ""
+	}
+
+	tail := text[strings.LastIndex(text, core)+len(core):]
+	core += strings.Map(func(r rune) rune {
+		if strings.ContainsRune(keptMarks, r) {
+			return r
+		}
+
+		return -1
+	}, tail)
 
 	switch {
 	case w.Lowercase:
-		return strings.ToLower(trimmed)
+		return strings.ToLower(core)
 	case w.Uppercase:
-		return strings.ToUpper(trimmed)
+		return strings.ToUpper(core)
 	default:
-		return trimmed
+		return core
 	}
 }
 

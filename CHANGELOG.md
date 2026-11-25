@@ -21,13 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revisions «убери пункты», «поменяй пункт 2 на …», «добавь выноску … на …» make a new version without the speech
   recognition. The draft says «На экране: 3 пункта и 2 выноски.» or «Убрал пункты и цифры с экрана.», `decisions.log`
   lists them; the refusal texts name the new skill.
-- The trainer's handle and the end card (T3.17): `REELS_HANDLE` (app; empty by default, `.env.dist` has
-  `@prokudina.ana`; strictly `@` and 1–30 of `a-z0-9._`, checked at the start of the app and again by the worker, which
-  gets it in the job, `editjob.Job.Branding`), `REELS_HANDLE_ICON` (true), `REELS_END_CARD` (true). The handle is drawn
-  small and translucent at the right edge on the row of the words over the whole reel, with a simple Instagram icon
-  drawn as ASS vectors (rings of a rounded square and a circle, and a dot); over the last 2 seconds the frame darkens
-  (70 % black, 500 ms fade) and the icon and the handle stand large in the middle — the reel is not longer, the sound
-  is untouched. In talking heads and workouts. Sections `handle` and `end_card` of `style.yaml`.
+- The trainer's handle and the end card (T3.17): `REELS_HANDLE` (app; empty by default, `.env.dist` shows
+  `@prokudina.ana` in a comment; strictly `@` and 1–30 of `a-z0-9._` — `editjob.CheckHandle`, checked at the start of
+  the app and again by the worker, which gets it in the job, `editjob.Job.Branding`), `REELS_HANDLE_ICON` (true),
+  `REELS_END_CARD` (true). The handle is drawn small in opaque white Manrope Medium 32 px with a 2.5 px shadow of 75 %
+  black at the right edge on the row of the words over the whole reel (`handle.y` 0: placed by the layout), with a
+  simple Instagram icon drawn as ASS vectors (rings of a rounded square and a circle, and a dot) with the same shadow;
+  over the last 2 seconds (at most a third of the reel, with at least 2 s before them) the frame darkens (70 % black,
+  500 ms fade) and the icon and the handle stand large in the middle; the words and the screen notes end where the card
+  starts — the reel is not longer, the sound is untouched. In talking heads and workouts. Sections `handle` and
+  `end_card` of `style.yaml`.
 - `TestBurnReferenceStyleWithFFmpeg` (in the media image too): the word on its white plate, a callout, the handle and
   the end card checked by pixels; `TestIntegrationScreenNotes`: the hook, two items and a callout, then «убери пункты»
   without the speech recognition; `TestRenderSpeed` logs what the reference style costs against the phrase style.
@@ -450,13 +453,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The default subtitle style follows the reference reels (T3.17): one word at a time (a number with its unit together,
-  a word shorter than 0.15 s with the next one, no blinking between words), in small letters without the punctuation
-  of its sentence, small black Manrope Medium 44 px on an opaque white plate (ASS BorderStyle 3, so the plate always
-  fits the word) at the left Instagram margin right under the hook (x 140, y 600), no accents and no vignette
-  (`layout.mode: word`, section `word_box`). The phrase style of before is kept as
+  every quantity of its own — «3 подхода» | «10 повторений» —, «10 000 шагов» as one, a word shorter than 0.15 s with
+  the next one, no blinking between words, a dash said apart not shown), in small letters without the punctuation of
+  its sentence and the quotes, small black Manrope Medium 48 px on an opaque white plate with 9 px padding (ASS
+  BorderStyle 3, so the plate always fits the word) at the left Instagram margin right under the hook (x 140, y 600),
+  no accents and no vignette (`layout.mode: word`, section `word_box`); the hook and the notes get a 3 px shadow of
+  75 % black (`hook.shadow`). The phrase style of before is kept as
   `assets/subtitles/style-phrase.yaml` (`/app/subtitles-style-phrase.yaml` in the media image, `SUBTITLES_STYLE_FILE`
-  switches to it). A custom style file without `layout.mode` now gets the word layout: add `mode: phrase` (and
-  `vignette.enabled: true`) to keep the phrases. Hidden and corrected subtitle words work in both layouts. The style
+  switches to it). A custom style file without `layout.mode` now gets the word layout: add `layout.mode: phrase` and
+  `vignette.enabled: true` to keep the phrases (the handle places itself by the layout). Hidden and corrected subtitle words work in both layouts. The style
   validation keeps the plate, the hook with the notes, the exercise titles and the handle clear of each other and of
   the Instagram zones.
 

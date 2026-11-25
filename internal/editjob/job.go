@@ -18,12 +18,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
-	"github.com/Prokud1n/ai-agents/internal/subtitles"
 )
 
 // Status of a finished job.
@@ -135,8 +135,20 @@ type Branding struct {
 
 // Validate checks the handle: «@» and 1–30 small Latin letters, digits, dots and underscores.
 func (b *Branding) Validate() error {
-	if err := subtitles.CheckHandle(b.Handle); err != nil {
-		return fmt.Errorf("failed to check the reels handle: %w", err)
+	return CheckHandle(b.Handle)
+}
+
+// handleRe is an Instagram handle as the app accepts it (REELS_HANDLE): «@», then 1–30 small letters, digits, dots and
+// underscores. The subtitles draw only a handle that matches it, so nothing else reaches the ASS document.
+var handleRe = regexp.MustCompile(`^@[a-z0-9._]{1,30}$`)
+
+// ErrInvalidHandle: a handle that is not «@» and 1–30 small Latin letters, digits, dots and underscores.
+var ErrInvalidHandle = errors.New("invalid instagram handle")
+
+// CheckHandle checks an Instagram handle («@prokudina.ana»).
+func CheckHandle(handle string) error {
+	if !handleRe.MatchString(handle) {
+		return fmt.Errorf("handle %q must be @ and 1-30 of a-z, 0-9, . and _: %w", handle, ErrInvalidHandle)
 	}
 
 	return nil

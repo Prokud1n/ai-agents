@@ -77,6 +77,20 @@ func TestParseStyle(t *testing.T) {
 		{name: "text under the buttons", input: "layout:\n  margin_side: 40\n", expectedErr: "layout.margin_side"},
 		{name: "text under the caption", input: "layout:\n  margin_bottom: 200\n", expectedErr: "layout.margin_bottom"},
 		{name: "unknown position", input: "layout:\n  position: left\n", expectedErr: "layout.position"},
+		{
+			name:  "the phrase layout by two fields",
+			input: "layout:\n  mode: phrase\nvignette:\n  enabled: true\n",
+			modify: func(s *Style) {
+				s.Layout.Mode, s.Vignette.Enabled = PhraseMode, true
+			},
+		},
+		{
+			name:  "the phrase layout at the bottom",
+			input: "layout:\n  mode: phrase\n  position: bottom\nvignette:\n  enabled: true\n",
+			modify: func(s *Style) {
+				s.Layout.Mode, s.Layout.Position, s.Vignette.Enabled = PhraseMode, BottomPosition, true
+			},
+		},
 		{name: "unknown mode", input: "layout:\n  mode: karaoke\n", expectedErr: "layout.mode must be word or phrase"},
 		{name: "the word plate over the hook", input: "word_box:\n  y: 400\n", expectedErr: overlapsHook},
 		{name: "the handle under the buttons", input: "handle:\n  y: 1200\n", expectedErr: "above the buttons"},

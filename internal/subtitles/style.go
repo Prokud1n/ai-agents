@@ -186,6 +186,12 @@ const (
 	// defaultFont is the font of the speech, the word plate, the handle and the card; white is their light color.
 	defaultFont = "Manrope Medium"
 	white       = "#FFFFFF"
+	// softShadow is the shadow of the phrase layout (40 % black); strongShadow keeps white text without a vignette
+	// readable on a light background (75 % black).
+	softShadow   = "#00000066"
+	strongShadow = "#000000BF"
+	// wordHookShadow: the hook and the notes of the word layout have no vignette under them.
+	wordHookShadow = 3
 )
 
 // DefaultStyle is the look of the reference reels the owner chose (T3.17): the speech one word at a time, small black
@@ -196,7 +202,7 @@ func DefaultStyle() Style {
 	style := PhraseStyle()
 	style.Layout.Mode = WordMode
 	style.Vignette.Enabled = false
-	style.Handle.Y = defaultWordHandleY
+	style.Hook.Shadow = Border{Color: strongShadow, Size: wordHookShadow}
 
 	return style
 }
@@ -217,7 +223,7 @@ func PhraseStyle() Style {
 			LongestWord: true,
 		},
 		Outline:      Border{Color: "#000000", Size: 0},
-		Shadow:       Border{Color: "#00000066", Size: 2},
+		Shadow:       Border{Color: softShadow, Size: 2},
 		KaraokeColor: "#FF8C5A",
 		Vignette:     Vignette{Enabled: true, Opacity: 0.6, Fade: 320},
 		Layout: Layout{
@@ -245,6 +251,7 @@ func PhraseStyle() Style {
 			Gap:         20,
 			CharWidth:   0.5,
 			BoxPadding:  12,
+			Shadow:      Border{Color: softShadow, Size: 2},
 		},
 		WordBox: defaultWordBox(),
 		Handle:  defaultHandle(),

@@ -167,9 +167,18 @@ func checkNotesShown(in *Input, edit *roughcut.Edit, plan *roughcut.Plan) error 
 }
 
 // screenNotesLines: «На экране: 3 пункта и 2 выноски.» when the decision sets the notes (a first version with them, a
-// revision that changes them), «Убрал пункты и цифры с экрана.» when it removes them.
+// revision that changes them), «Убрал пункты и цифры с экрана.» when it removes them (or makes the reel a workout).
 func screenNotesLines(req *Request, in *Input, previous *roughcut.Edit) []string {
-	if in.ScreenNotes == nil || nextMode(req, in) == roughcut.WorkoutMode {
+	if nextMode(req, in) == roughcut.WorkoutMode {
+		// A workout has no notes: a revision to a workout removes them.
+		if len(previous.ScreenNotes) > 0 {
+			return []string{notesRemovedLine}
+		}
+
+		return nil
+	}
+
+	if in.ScreenNotes == nil {
 		return nil
 	}
 
@@ -185,7 +194,8 @@ func screenNotesLines(req *Request, in *Input, previous *roughcut.Edit) []string
 	}
 }
 
-// notesLine says what is on the screen: «На экране: 3 пункта и 2 выноски.»; a list without items is «заголовок списка».
+// notesLine says what is on the screen: «На экране: 3 пункта и 2 выноски.»; a list without items is «заголовок
+// списка» (one) or «2 заголовка списка».
 func notesLine(notes []roughcut.ScreenNote) string {
 	counts := map[roughcut.NoteKind]int{}
 	for _, n := range notes {
@@ -202,9 +212,12 @@ func notesLine(notes []roughcut.ScreenNote) string {
 		parts = append(parts, plural(n, "выноска", "выноски", "выносок"))
 	}
 
-	if len(parts) == 0 {
-		parts = append(parts, plural(counts[roughcut.ListTitleNote], "заголовок списка", "заголовка списка",
-			"заголовков списков"))
+	switch titles := counts[roughcut.ListTitleNote]; {
+	case len(parts) > 0:
+	case titles == 1:
+		parts = append(parts, "заголовок списка")
+	default:
+		parts = append(parts, plural(titles, "заголовок списка", "заголовка списка", "заголовков списков"))
 	}
 
 	return notesLinePrefix + strings.Join(parts, " и ") + "."

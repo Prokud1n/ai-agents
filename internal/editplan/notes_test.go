@@ -131,6 +131,11 @@ func TestApplyScreenNotesRevision(t *testing.T) {
 	require.Len(t, replaced.Edit.ScreenNotes, 1)
 	assert.Equal(t, []string{"На экране: 1 пункт."}, replaced.Changes)
 
+	workout, err := Apply(testRequest(2, &previous), &Input{Decision: EditDecision, Mode: roughcut.WorkoutMode})
+	require.NoError(t, err)
+	assert.Nil(t, workout.Edit.ScreenNotes, "a workout has no notes")
+	assert.Equal(t, []string{notesRemovedLine, workoutModeLine}, workout.Changes)
+
 	kept, err := Apply(testRequest(2, &previous), &Input{Decision: EditDecision, TrimEnd: 1.5})
 	require.NoError(t, err)
 	assert.Equal(t, previous.ScreenNotes, kept.Edit.ScreenNotes, "kept when the revision does not name them")
@@ -171,7 +176,8 @@ func TestNotesLine(t *testing.T) {
 		{name: "one item", input: []roughcut.ScreenNote{item}, expected: "На экране: 1 пункт."},
 		{name: "five callouts", input: []roughcut.ScreenNote{callout, callout, callout, callout, callout},
 			expected: "На экране: 5 выносок."},
-		{name: "a title alone", input: []roughcut.ScreenNote{title}, expected: "На экране: 1 заголовок списка."},
+		{name: "a title alone", input: []roughcut.ScreenNote{title}, expected: "На экране: заголовок списка."},
+		{name: "two titles", input: []roughcut.ScreenNote{title, title}, expected: "На экране: 2 заголовка списка."},
 		{name: "eleven items", input: []roughcut.ScreenNote{item, item, item, item, item, item, item, item, item, item, item},
 			expected: "На экране: 11 пунктов."},
 	}

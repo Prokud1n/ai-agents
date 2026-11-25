@@ -57,6 +57,8 @@ type HookStyle struct {
 	Gap int `yaml:"gap"`
 	// CharWidth is the average width of a character in font sizes, for the estimate of a line (as layout.char_width).
 	CharWidth float64 `yaml:"char_width"`
+	// Shadow of the hook and the screen notes (no box): stronger in the word layout, where no vignette is under them.
+	Shadow Border `yaml:"shadow"`
 }
 
 // hookPosition is the edge the hook stands at: the subtitles' one, the top for subtitles in the middle and in the word
@@ -170,6 +172,11 @@ func validateHook(s *Style) []error {
 
 	errs = append(errs, validateHookValues(h)...)
 	errs = append(errs, validateHookBox(h)...)
+
+	if err := validateBorder("hook.shadow", h.Shadow); err != nil {
+		errs = append(errs, err)
+	}
+
 	if len(errs) > 0 {
 		return errs
 	}
@@ -467,7 +474,7 @@ func charsScale(chars, maxChars int) int {
 }
 
 // hookStyleLine is the style of the hook at the hook's edge: on its plate when the style has one, otherwise with the
-// outline and the shadow of the subtitles.
+// outline of the subtitles and its own shadow.
 func hookStyleLine(style *Style) string {
 	h := &style.Hook
 	alignment, marginV := placement(&Layout{
@@ -475,7 +482,7 @@ func hookStyleLine(style *Style) string {
 	})
 
 	borderStyle, outlineColor, outline := outlineBorderStyle, style.Outline.Color, style.Outline.Size
-	shadowColor, shadow := style.Shadow.Color, style.Shadow.Size
+	shadowColor, shadow := h.Shadow.Color, h.Shadow.Size
 
 	if h.Box != "" {
 		borderStyle, outlineColor, outline, shadow = boxBorderStyle, h.Box, h.BoxPadding, 0

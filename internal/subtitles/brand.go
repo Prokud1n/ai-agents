@@ -1,14 +1,14 @@
 package subtitles
 
 import (
-	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Prokud1n/ai-agents/internal/editjob"
 )
 
 const (
@@ -26,8 +26,10 @@ const (
 	rightButtonsTop = 1000
 	// untilTheEnd: the end of the handle of a reel of unknown length (no card): any time past it.
 	untilTheEnd = 10 * 60 * 60
-	// minCardLead: a reel shorter than the card and this is shown without the card.
-	minCardLead = 1.0
+	// minCardLead: the card leaves at least this much of the reel before it, cardShare: it takes at most this share
+	// of the reel (a third).
+	minCardLead = 2.0
+	cardShare   = 3
 	// The icon: the corner of its rounded square, its circle and its dot, in shares of its size; the stroke too.
 	iconCorner = 0.28
 	iconCircle = 0.23
@@ -40,30 +42,18 @@ const (
 	// capHeight of the text in font sizes: the icon stands centered on the capitals of the handle.
 	capHeight = 0.72
 	// Limits of the handle and card values in a style file.
-	minIconSize        = 12
-	maxIconSize        = 400
-	minHandleWidth     = 100
-	minCardDuration    = 0.5
-	maxCardDuration    = 5.0
-	defaultHandleY     = 840
-	defaultWordHandleY = 620
+	minIconSize     = 12
+	maxIconSize     = 400
+	minHandleWidth  = 100
+	minCardDuration = 0.5
+	maxCardDuration = 5.0
+	// Places of the handle with handle.y 0 (auto): on the row of the words in the word layout; in the phrase layout
+	// under the subtitles shifted under the hook (above the buttons, clear of titles at the top for subtitles at the
+	// bottom), or between the hook and the subtitles in the middle.
+	wordHandleY   = 620
+	phraseHandleY = 840
+	middleHandleY = 700
 )
-
-// handleRe is an Instagram handle as the app accepts it (REELS_HANDLE): «@», then 1–30 small letters, digits, dots and
-// underscores. Nothing else reaches the ASS document.
-var handleRe = regexp.MustCompile(`^@[a-z0-9._]{1,30}$`)
-
-// ErrInvalidHandle: a handle that is not «@» and 1–30 small Latin letters, digits, dots and underscores.
-var ErrInvalidHandle = errors.New("invalid instagram handle")
-
-// CheckHandle checks an Instagram handle («@prokudina.ana»).
-func CheckHandle(handle string) error {
-	if !handleRe.MatchString(handle) {
-		return fmt.Errorf("handle %q must be @ and 1-30 of a-z, 0-9, . and _: %w", handle, ErrInvalidHandle)
-	}
-
-	return nil
-}
 
 // HandleStyle is the look and the place of the handle over the reel: small translucent text with the icon before it,
 // right-aligned Right px from the right edge, its top at Y; a handle wider than MaxWidth (the icon included) is
@@ -71,13 +61,16 @@ func CheckHandle(handle string) error {
 type HandleStyle struct {
 	TextStyle `yaml:",inline"`
 
-	Right    int `yaml:"right"`
+	Right int `yaml:"right"`
+	// Y is the top of the handle; 0: auto (the row of the words, or below the phrase subtitles).
 	Y        int `yaml:"y"`
 	MaxWidth int `yaml:"max_width"`
 	// IconSize of the icon (a rounded square, a circle and a dot, drawn in the text color), px.
 	IconSize int `yaml:"icon_size"`
 	// CharWidth is the average width of a character in font sizes, for the estimate of the handle's width.
 	CharWidth float64 `yaml:"char_width"`
+	// Shadow of the handle, its icon and the card's text: it keeps the white readable on a light background.
+	Shadow Border `yaml:"shadow"`
 }
 
 // EndCardStyle is the card over the last Duration seconds of the reel: the frame darkens (Shade is the opacity of the
@@ -93,12 +86,12 @@ type EndCardStyle struct {
 
 func defaultHandle() HandleStyle {
 	return HandleStyle{
-		TextStyle: TextStyle{Font: defaultFont, Size: 30, Color: "#FFFFFFB3"},
+		TextStyle: TextStyle{Font: defaultFont, Size: 32, Color: white},
 		Right:     40,
-		Y:         defaultHandleY,
 		MaxWidth:  300,
 		IconSize:  34,
 		CharWidth: 0.55,
+		Shadow:    Border{Color: strongShadow, Size: 2.5},
 	}
 }
 
@@ -117,7 +110,23 @@ func (s *Style) handleRect() rect {
 	h := &s.Handle
 	height := max(int(math.Ceil(float64(h.Size)*lineHeightFactor)), h.IconSize)
 
-	return rect{left: FrameWidth - h.Right - h.MaxWidth, top: h.Y, right: FrameWidth - h.Right, bottom: h.Y + height}
+	top := s.handleY()
+
+	return rect{left: FrameWidth - h.Right - h.MaxWidth, top: top, right: FrameWidth - h.Right, bottom: top + height}
+}
+
+// handleY is the top of the handle: as set, or auto (handle.y 0) by the layout.
+func (s *Style) handleY() int {
+	switch {
+	case s.Handle.Y != 0:
+		return s.Handle.Y
+	case s.wordMode():
+		return wordHandleY
+	case s.Layout.Position == MiddlePosition:
+		return middleHandleY
+	default:
+		return phraseHandleY
+	}
 }
 
 // validateBrand checks the handle and the card: the values, and that the handle stays clear of the Instagram zones
@@ -149,6 +158,10 @@ func validateBrandValues(h *HandleStyle, c *EndCardStyle) []error {
 
 	if h.CharWidth < minCharWidth || h.CharWidth > maxCharWidth {
 		errs = append(errs, fmt.Errorf("handle.char_width must be %.1f..%.1f", minCharWidth, maxCharWidth))
+	}
+
+	if err := validateBorder("handle.shadow", h.Shadow); err != nil {
+		errs = append(errs, err)
 	}
 
 	if err := validateCardTimes(c); err != nil {
@@ -235,28 +248,42 @@ func sortedKeys(m map[string]rect) []string {
 	return keys
 }
 
-// brandEvents are the handle over the reel and the end card over its last seconds; "" without a valid handle. A reel
-// of unknown length (reelEnd 0) or shorter than the card and minCardLead gets no card. The handle fades out as the card
-// fades in.
+// brandEvents are the handle over the reel and the end card over its last seconds (cardTimes); "" without a valid
+// handle. The handle fades out as the card fades in.
 func brandEvents(branding *Branding, reelEnd float64, style *Style) string {
-	if branding == nil || CheckHandle(branding.Handle) != nil {
+	if branding == nil || editjob.CheckHandle(branding.Handle) != nil {
 		return ""
 	}
 
-	c := &style.EndCard
 	end := float64(untilTheEnd)
-
 	if reelEnd > 0 {
 		end = reelEnd
 	}
 
-	if !branding.EndCard || reelEnd < c.Duration+minCardLead {
+	start, duration := cardTimes(branding, reelEnd, style)
+	if duration == 0 {
 		return handleEvent(branding, end, 0, style)
 	}
 
-	start := roundCS(reelEnd - c.Duration)
+	fade := min(style.EndCard.Fade, int(duration*millisPerSecond)/2)
 
-	return handleEvent(branding, start, c.Fade, style) + cardEvents(branding, start, reelEnd, style)
+	return handleEvent(branding, start, fade, style) + cardEvents(branding, [2]float64{start, reelEnd}, fade, style)
+}
+
+// cardTimes are the start and the length of the end card: its duration, but at most cardShare of the reel, and only
+// when minCardLead seconds of the reel are left before it; 0, 0 without a card (off, no valid handle, a reel of
+// unknown length or too short).
+func cardTimes(branding *Branding, reelEnd float64, style *Style) (start, duration float64) {
+	if branding == nil || !branding.EndCard || reelEnd <= 0 || editjob.CheckHandle(branding.Handle) != nil {
+		return 0, 0
+	}
+
+	duration = min(style.EndCard.Duration, reelEnd/cardShare)
+	if reelEnd-duration < minCardLead {
+		return 0, 0
+	}
+
+	return roundCS(reelEnd - duration), duration
 }
 
 // handleEvent is the handle from the start of the reel to end, fading out over fadeOut ms: the icon (when on) and the
@@ -292,20 +319,21 @@ func handleText(branding *Branding, scale int, separator string, icon func() str
 	return icon() + separator + `{\q2}` + text
 }
 
-// cardEvents darken the frame from start to end and put the icon and the handle large in the middle, fading in.
-func cardEvents(branding *Branding, start, end float64, style *Style) string {
+// cardEvents darken the frame over the span and put the icon and the handle large in the middle, fading in over fade
+// ms.
+func cardEvents(branding *Branding, span [2]float64, fade int, style *Style) string {
 	c := &style.EndCard
 	alpha := opaque - int(math.Round(c.Shade*opaque))
 	shade := fmt.Sprintf("Dialogue: %d,%s,%s,%s,,0,0,0,,{\\an7\\pos(0,0)\\fad(%d,0)\\1c&H000000&\\1a&H%02X&\\bord0"+
-		"\\shad0\\p1}m 0 0 l %d 0 l %d %d l 0 %d{\\p0}\n", cardShadeLayer, formatTime(start), formatTime(end),
-		cardStyleName, c.Fade, alpha, FrameWidth, FrameWidth, FrameHeight, FrameHeight)
+		"\\shad0\\p1}m 0 0 l %d 0 l %d %d l 0 %d{\\p0}\n", cardShadeLayer, formatTime(span[0]), formatTime(span[1]),
+		cardStyleName, fade, alpha, FrameWidth, FrameWidth, FrameHeight, FrameHeight)
 
 	fit := max(int(float64(FrameWidth-2*SafeZoneRight)/(float64(c.Size)*style.Handle.CharWidth)), 1)
 	text := handleText(branding, charsScale(utf8.RuneCountInString(branding.Handle), fit), assLineBreak,
 		func() string { return iconDrawing(c.IconSize, c.Color, c.Size) })
 
 	return shade + fmt.Sprintf("Dialogue: %d,%s,%s,%s,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(%d,0)\\q2}%s\n", cardLayer,
-		formatTime(start), formatTime(end), cardStyleName, FrameWidth/2, FrameHeight/2, c.Fade, text)
+		formatTime(span[0]), formatTime(span[1]), cardStyleName, FrameWidth/2, FrameHeight/2, fade, text)
 }
 
 // scaleTag is \fscx of the scale, "" for the full width.
@@ -324,7 +352,7 @@ func scaleTag(scale int) string {
 func iconDrawing(size int, color string, textSize int) string {
 	lower := int(math.Round((float64(size) - capHeight*float64(textSize)) / 2))
 
-	return fmt.Sprintf(`{\1c%s\1a%s\bord0\shad0\pbo%d\p1}%s{\p0\r}`, assOverrideColor(color), assOverrideAlpha(color),
+	return fmt.Sprintf(`{\1c%s\1a%s\bord0\pbo%d\p1}%s{\p0\r}`, assOverrideColor(color), assOverrideAlpha(color),
 		lower, iconPath(float64(size)))
 }
 
@@ -449,17 +477,17 @@ func tenth(v float64) string {
 }
 
 // brandStyleLines are the styles of the handle (top right, Right px from the edge, its top at Y) and of the card
-// (centered), with the shadow of the subtitles.
+// (centered), with the shadow of the handle.
 func brandStyleLines(style *Style) string {
 	h, c := &style.Handle, &style.EndCard
 	handle := styleSpec{
-		name: handleStyleName, text: &h.TextStyle, outline: style.Outline.Color, back: style.Shadow.Color,
-		borderStyle: outlineBorderStyle, shadow: style.Shadow.Size,
-		alignment: topRightAlignment, marginR: h.Right, marginV: h.Y,
+		name: handleStyleName, text: &h.TextStyle, outline: style.Outline.Color, back: h.Shadow.Color,
+		borderStyle: outlineBorderStyle, shadow: h.Shadow.Size,
+		alignment: topRightAlignment, marginR: h.Right, marginV: style.handleY(),
 	}
 	card := styleSpec{
-		name: cardStyleName, text: &c.TextStyle, outline: style.Outline.Color, back: style.Shadow.Color,
-		borderStyle: outlineBorderStyle, shadow: style.Shadow.Size, alignment: centerAlignment,
+		name: cardStyleName, text: &c.TextStyle, outline: style.Outline.Color, back: h.Shadow.Color,
+		borderStyle: outlineBorderStyle, shadow: h.Shadow.Size, alignment: centerAlignment,
 	}
 
 	return handle.line() + "\n" + card.line() + "\n"

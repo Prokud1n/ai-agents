@@ -2,12 +2,11 @@ package editjob
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/Prokud1n/ai-agents/internal/subtitles"
 )
 
 func TestBrandingValidate(t *testing.T) {
@@ -22,6 +21,13 @@ func TestBrandingValidate(t *testing.T) {
 		{name: "empty", handle: "", invalid: true},
 		{name: "markup", handle: "@a}{\\N", invalid: true},
 		{name: "a space", handle: "@prokudina ana", invalid: true},
+		{name: "digits and an underscore", handle: "@fit_2026"},
+		{name: "no @", handle: "prokudina.ana", invalid: true},
+		{name: "capitals", handle: "@Prokudina", invalid: true},
+		{name: "a line break", handle: "@ana\n", invalid: true},
+		{name: "cyrillic", handle: "@анастасия", invalid: true},
+		{name: "too long", handle: "@" + strings.Repeat("a", 31), invalid: true},
+		{name: "only @", handle: "@", invalid: true},
 	}
 
 	for _, tt := range tests {
@@ -30,7 +36,7 @@ func TestBrandingValidate(t *testing.T) {
 
 			err := (&Branding{Handle: tt.handle}).Validate()
 			if tt.invalid {
-				require.ErrorIs(t, err, subtitles.ErrInvalidHandle)
+				require.ErrorIs(t, err, ErrInvalidHandle)
 
 				return
 			}

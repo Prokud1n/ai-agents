@@ -63,12 +63,22 @@ func buildASS(
 func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues int) {
 	result := data.Transcript
 	end := hookEnd(data.Hook, result, style)
-	blocks := noteBlocks(data.Notes, end, result.Duration, style)
+
+	// Under the end card nothing of the speech or the notes is drawn: they end where it starts (limit; 0 without a
+	// card).
+	limit, _ := cardTimes(data.Branding, result.Duration, style)
+
+	notesEnd := result.Duration
+	if limit > 0 {
+		notesEnd = limit
+	}
+
+	blocks := noteBlocks(data.Notes, end, notesEnd, style)
 	extras := titleEvents(data.Titles, style) + hookEvent(data.Hook, end, style) + noteEvents(blocks, style) +
 		brandEvents(data.Branding, result.Duration, style)
 
 	if style.wordMode() {
-		words := wordCues(result, style)
+		words := clipWords(wordCues(result, style), limit)
 
 		var b strings.Builder
 
@@ -81,7 +91,7 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 	tokens := markAccents(tokensFromTranscript(result), data.Accents, style.Accent.Words)
 	limits := layoutLimits{maxLines: style.Layout.MaxLines, maxLineChars: style.lineChars()}
 	units := buildUnits(tokens, limits.maxLineChars)
-	timed := timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(data.Accents)) > 0))
+	timed := clipCues(timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(data.Accents)) > 0)), limit)
 	layout := hookLayout{end: end, margin: style.hookSubtitlesMargin(style.hookLineCount(data.Hook)), notes: blocks}
 
 	return renderASS(timed, style, data.Karaoke, layout) + extras, len(timed)
@@ -405,4 +415,40 @@ func assOverrideAlpha(color string) string {
 	c := assColor(color) // &HAABBGGRR
 
 	return c[:len("&HAA")] + "&"
+}
+
+// clipWords drops the words that start at limit or later and ends the others there; limit 0 keeps them all.
+func clipWords(words []wordCue, limit float64) []wordCue {
+	if limit <= 0 {
+		return words
+	}
+
+	out := make([]wordCue, 0, len(words))
+
+	for _, w := range words {
+		if w.Start < limit {
+			w.End = min(w.End, limit)
+			out = append(out, w)
+		}
+	}
+
+	return out
+}
+
+// clipCues drops the subtitles that start at limit or later and ends the others there; limit 0 keeps them all.
+func clipCues(cues []cue, limit float64) []cue {
+	if limit <= 0 {
+		return cues
+	}
+
+	out := make([]cue, 0, len(cues))
+
+	for _, c := range cues {
+		if c.Start < limit {
+			c.End = min(c.End, limit)
+			out = append(out, c)
+		}
+	}
+
+	return out
 }

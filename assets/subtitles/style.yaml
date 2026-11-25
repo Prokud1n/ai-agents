@@ -24,7 +24,7 @@ layout:
   char_width: 0.5
   trim_end_punctuation: true
 
-# The word layout: every word (a number with its unit together, «10 повторений») alone, in small letters as it is
+# The word layout: every word (a quantity together: «10 повторений», «10 000 шагов») alone, in small letters as it is
 # said, without the punctuation of its sentence, black on an opaque white plate (ASS BorderStyle 3: the plate is
 # drawn around the word, padding px wider on every side, so it always fits it). The plate stands at x, y (its top
 # left corner: here the left side margin of Instagram, right under the hook and the screen notes, about 31 % of the
@@ -34,13 +34,13 @@ layout:
 # exercise titles and the handle.
 word_box:
   font: Manrope Medium
-  size: 44
+  size: 48
   bold: false
   uppercase: false
   color: "#111111"
   lowercase: true
   box: "#FFFFFF"
-  padding: 10
+  padding: 9
   x: 140
   y: 600
   max_width: 560
@@ -75,25 +75,36 @@ hook:
   # A plate under the lines, "#RRGGBBAA" (for example "#F28C38E6", orange); "" — none. box_padding: px around the text.
   box: ""
   box_padding: 12
+  # The shadow of the hook and the notes (a box has none).
+  shadow:
+    color: "#000000BF" # 75 % black: no vignette under the hook in the word layout
+    size: 3
 
-# The trainer's handle (REELS_HANDLE, «@prokudina.ana»; none without it) over the whole reel: small translucent text
+# The trainer's handle (REELS_HANDLE, «@prokudina.ana»; none without it) over the whole reel: small white text
 # with a simple Instagram icon before it (REELS_HANDLE_ICON), right-aligned `right` px from the right edge, its top at
 # y (here on the row of the words, about a third of the height: the Instagram buttons on the right start lower, at
 # 1000 px). A handle wider than max_width (the icon included) is squeezed.
 handle:
   font: Manrope Medium
-  size: 30
+  size: 32
   bold: false
   uppercase: false
-  color: "#FFFFFFB3" # white, 70 %
+  color: "#FFFFFF"
   right: 40
-  y: 620
+  # 0: auto — on the row of the words here (620 px); in the phrase layout under the subtitles shifted under the hook
+  # (840 px), between the hook and the subtitles in the middle (700 px).
+  y: 0
   max_width: 300
   icon_size: 34
   char_width: 0.55
+  # The shadow of the handle, its icon and the card's text: it keeps the white readable on a light wall.
+  shadow:
+    color: "#000000BF" # 75 % black
+    size: 2.5
 
-# The end card over the last `duration` seconds of the reel (REELS_END_CARD; the reel is not made longer, the sound
-# stays): the frame darkens smoothly (shade is the opacity of the black, fading in over `fade` ms) and the icon and
+# The end card over the last `duration` seconds of the reel, at most a third of it and with at least 2 s before it
+# (REELS_END_CARD; the reel is not made longer, the sound stays; the words and the notes end where it starts): the
+# frame darkens smoothly (shade is the opacity of the black, fading in over `fade` ms) and the icon and
 # the handle stand large in the middle.
 end_card:
   font: Manrope Medium

@@ -47,7 +47,7 @@ func countPixels(frame []byte, b area, check func(level byte) bool) int {
 
 // TestBurnReferenceStyleWithFFmpeg: libass draws the reference look (the default style) — the word black on its white
 // plate at the left edge at a third of the height, a callout at the top, the handle with its icon at the right edge —
-// and the end card darkens the last two seconds with the handle in the middle, the watermark gone.
+// and the end card darkens the last two seconds with the handle in the middle, the watermark and the words gone.
 func TestBurnReferenceStyleWithFFmpeg(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
@@ -63,8 +63,9 @@ func TestBurnReferenceStyleWithFFmpeg(t *testing.T) {
 		"color=c="+referenceGray+":s="+reelSize+":d=6:r=25", "-f", "lavfi", "-i", "sine=frequency=440:duration=6",
 		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", input)
 
-	// «10 приседаний» is one word cue from 0.3 to 1.0 s; the reel is 6 s, the card takes its last 2 s.
-	transcript := speech("Делаем 10 приседаний каждое утро.")
+	// «10 приседаний» is one word cue from 0.3 to 1.0 s; the speech goes on to the end of the reel (6 s), the card
+	// takes its last 2 s and hides it.
+	transcript := speech("Делаем 10 приседаний каждое утро.", "Держим спину ровно и дышим спокойно, не торопимся.")
 	transcript.Duration = 6
 
 	result, err := svc.BurnSubtitles(ctx, &BurnSubtitlesData{
@@ -98,7 +99,7 @@ func TestBurnReferenceStyleWithFFmpeg(t *testing.T) {
 	assert.Greater(t, countPixels(shown, handleBox, func(v byte) bool { return v >= handleLevel }), 150,
 		"the handle at the right edge")
 
-	card := grayFrame(ctx, t, output, 5.6)
+	card := grayFrame(ctx, t, output, 4.8) // the card faded in, the speech goes on under it
 	center := area{x0: FrameWidth/2 - 250, y0: FrameHeight/2 - 120, x1: FrameWidth/2 + 250, y1: FrameHeight/2 + 120}
 
 	assert.Less(t, int(card[1500*FrameWidth+900]), cardDarkLevel, "the card darkens the frame")
@@ -106,7 +107,7 @@ func TestBurnReferenceStyleWithFFmpeg(t *testing.T) {
 		"the icon and the handle in the middle of the card")
 	assert.Zero(t, countPixels(card, handleBox, func(v byte) bool { return v >= handleLevel }),
 		"the watermark is gone under the card")
-	assert.Zero(t, countPixels(card, plateBox, func(v byte) bool { return v >= plateLevel }), "no word after the speech")
+	assert.Zero(t, countPixels(card, plateBox, func(v byte) bool { return v >= plateLevel }), "no word under the card")
 }
 
 // firstColumn is the first column of the row at least as bright as the level, -1 for none.

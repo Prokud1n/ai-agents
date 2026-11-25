@@ -14,41 +14,6 @@ const (
 	cardEvent  = ",Card,,"
 )
 
-func TestCheckHandle(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		input string
-		valid bool
-	}{
-		{name: "the trainer's handle", input: testHandle, valid: true},
-		{name: "digits and an underscore", input: "@fit_2026", valid: true},
-		{name: "no @", input: "prokudina.ana"},
-		{name: "capitals", input: "@Prokudina"},
-		{name: "markup", input: "@a{\\an7}b"},
-		{name: "a line break", input: "@ana\n"},
-		{name: "cyrillic", input: "@анастасия"},
-		{name: "too long", input: "@" + strings.Repeat("a", 31)},
-		{name: "only @", input: "@"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := CheckHandle(tt.input)
-			if tt.valid {
-				require.NoError(t, err)
-
-				return
-			}
-
-			require.ErrorIs(t, err, ErrInvalidHandle)
-		})
-	}
-}
-
 // TestBrandEvents: the handle over the reel (with the icon when on), the card over the last seconds (the frame
 // darkens, the icon and the handle in the middle) and the handle fading out as it comes; nothing without a valid
 // handle; no card for a reel of unknown length or too short.
@@ -74,8 +39,8 @@ func TestBrandEvents(t *testing.T) {
 		{
 			name: "the icon and the card", branding: &Branding{Handle: testHandle, Icon: true, EndCard: true}, reelEnd: 10,
 			expected: []string{
-				"Dialogue: 3,0:00:00.00,0:00:08.00,Handle,,0,0,0,,{\\q2\\fad(0,500)}{\\1c&HFFFFFF&\\1a&H4C&\\bord0\\shad0" +
-					"\\pbo6\\p1}m 9.5 0 l 24.5 0 ",
+				"Dialogue: 3,0:00:00.00,0:00:08.00,Handle,,0,0,0,,{\\q2\\fad(0,500)}{\\1c&HFFFFFF&\\1a&H00&\\bord0" +
+					"\\pbo5\\p1}m 9.5 0 l 24.5 0 ",
 				"{\\p0\\r} {\\q2}@prokudina.ana\n",
 				"Dialogue: 4,0:00:08.00,0:00:10.00,Card,,0,0,0,,{\\an7\\pos(0,0)\\fad(500,0)\\1c&H000000&\\1a&H4C&\\bord0" +
 					"\\shad0\\p1}m 0 0 l 1080 0 l 1080 1920 l 0 1920{\\p0}\n",
@@ -96,7 +61,7 @@ func TestBrandEvents(t *testing.T) {
 		{
 			name:     "a long handle is squeezed",
 			branding: &Branding{Handle: "@" + strings.Repeat("a", 30)}, reelEnd: 10,
-			expected: []string{"{\\q2}{\\fscx58}@aaaa"},
+			expected: []string{"{\\q2}{\\fscx54}@aaaa"},
 		},
 	}
 
@@ -113,6 +78,39 @@ func TestBrandEvents(t *testing.T) {
 			for _, part := range tt.notExpected {
 				assert.NotContains(t, got, part)
 			}
+		})
+	}
+}
+
+// TestCardTimes: the card takes its duration at the end of the reel, at most a third of it, leaving at least 2 s
+// before it; none when off or for a reel of unknown length or too short.
+func TestCardTimes(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+	on := &Branding{Handle: testHandle, EndCard: true}
+
+	tests := []struct {
+		name     string
+		branding *Branding
+		reelEnd  float64
+		expected [2]float64
+	}{
+		{name: "the duration at the end", branding: on, reelEnd: 10, expected: [2]float64{8, 2}},
+		{name: "a third of a short reel", branding: on, reelEnd: 4.5, expected: [2]float64{3, 1.5}},
+		{name: "too short", branding: on, reelEnd: 2.9},
+		{name: "unknown length", branding: on},
+		{name: "off", branding: &Branding{Handle: testHandle}, reelEnd: 10},
+		{name: "no handle", branding: &Branding{EndCard: true}, reelEnd: 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			start, duration := cardTimes(tt.branding, tt.reelEnd, &style)
+			assert.InDelta(t, tt.expected[0], start, 1e-9)
+			assert.InDelta(t, tt.expected[1], duration, 1e-9)
 		})
 	}
 }

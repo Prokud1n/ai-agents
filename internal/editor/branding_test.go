@@ -9,7 +9,6 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editjob"
-	"github.com/Prokud1n/ai-agents/internal/subtitles"
 )
 
 // testHandle is the trainer's handle.
@@ -45,7 +44,7 @@ func TestCheckBranding(t *testing.T) {
 
 			err := checkBranding(cfg)
 			if tt.invalid {
-				require.ErrorIs(t, err, subtitles.ErrInvalidHandle)
+				require.ErrorIs(t, err, editjob.ErrInvalidHandle)
 
 				return
 			}

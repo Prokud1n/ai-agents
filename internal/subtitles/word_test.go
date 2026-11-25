@@ -48,6 +48,26 @@ func TestWordCues(t *testing.T) {
 			input:    speech("Делаем 10 повторений и 3 подхода"),
 			expected: []string{wDelaem, tenRepeats, wI, "3 подхода"},
 		},
+		{
+			name:     "every quantity of its own",
+			input:    speech("Делаем 3 подхода 10 повторений"),
+			expected: []string{wDelaem, "3 подхода", tenRepeats},
+		},
+		{
+			name:     "a quantity after the end of a sentence",
+			input:    speech("Я тренируюсь 1,5 года.", "6 лет назад начала."),
+			expected: []string{"я", "тренируюсь", "1,5 года", "6 лет", "назад", "начала"},
+		},
+		{
+			name:     "a number with a space between the thousands",
+			input:    speech("Каждый день 10 000 шагов."),
+			expected: []string{"каждый", "день", "10 000 шагов"},
+		},
+		{
+			name:     "a dash said apart is not shown",
+			input:    speech("Планка — это база."),
+			expected: []string{"планка", "это", "база"},
+		},
 		{name: "a quick word goes with the next one", input: quick, expected: []string{"раз и", "два"}},
 		{name: "not across the end of a sentence", input: paused, expected: []string{"да", "нет"}},
 		{name: "no speech", input: &transcription.Result{Duration: 3}, expected: []string{}},
@@ -66,6 +86,67 @@ func TestWordCues(t *testing.T) {
 
 			assert.Equal(t, tt.expected, got)
 		})
+	}
+}
+
+// TestWordText: a word without the punctuation of its sentence and the quotes around it, «?», «!» and «…» kept; ""
+// for punctuation only.
+func TestWordText(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{input: "«Да?»,", expected: "да?"},
+		{input: "«ну»!", expected: "ну!"},
+		{input: "«Привет!»", expected: "привет!"},
+		{input: "во-первых,", expected: "во-первых"},
+		{input: "ну…", expected: "ну…"},
+		{input: "—", expected: ""},
+		{input: "...", expected: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, wordText(tt.input, &style.WordBox))
+		})
+	}
+}
+
+// TestCardHidesSpeech: the speech and the notes end where the end card starts, even when the trainer speaks to the
+// end of the reel; without the card they run to the end.
+func TestCardHidesSpeech(t *testing.T) {
+	t.Parallel()
+
+	result := speech("Держим спину ровно и дышим спокойно, не торопимся никуда сегодня и завтра тоже.")
+	result.Duration = result.Words[len(result.Words)-1].End
+	notes := []Note{{Kind: CalloutNote, Text: calloutYears, Start: result.Duration - 1}}
+
+	for _, style := range []Style{DefaultStyle(), PhraseStyle()} {
+		ass, _ := buildDocument(&CreateSubtitlesData{
+			Transcript: result, Notes: notes, Branding: &Branding{Handle: testHandle, EndCard: true},
+		}, &style)
+
+		cardStart, _ := cardTimes(&Branding{Handle: testHandle, EndCard: true}, result.Duration, &style)
+		require.Positive(t, cardStart)
+		speechEnd := 0.0
+
+		for _, line := range strings.Split(ass, "\n") {
+			if strings.Contains(line, ",Word,,") || strings.Contains(line, ",Main,,") || strings.Contains(line, ",Hook,,") {
+				speechEnd = max(speechEnd, parseASSTime(t, strings.Split(line, ",")[2]))
+			}
+		}
+
+		assert.InDelta(t, cardStart, speechEnd, 0.011, "the speech runs up to the card, %s", style.Layout.Mode)
+		assert.NotContains(t, ass, calloutYears, "the callout under the card is not drawn")
+
+		plain, _ := buildDocument(&CreateSubtitlesData{Transcript: result, Notes: notes}, &style)
+		assert.Contains(t, plain, calloutYears)
 	}
 }
 
@@ -118,7 +199,7 @@ func TestWordEvents(t *testing.T) {
 		{
 			name:     "a long word is squeezed",
 			input:    wordCue{Text: "электрокардиографического", Start: 0, End: 1},
-			expected: "Dialogue: 0,0:00:00.00,0:00:01.00,Word,,0,0,0,,{\\q2\\fscx88}электрокардиографического\n",
+			expected: "Dialogue: 0,0:00:00.00,0:00:01.00,Word,,0,0,0,,{\\q2\\fscx80}электрокардиографического\n",
 		},
 		{
 			name:     "markup is text",
@@ -143,8 +224,8 @@ func TestWordStyleLine(t *testing.T) {
 
 	style := DefaultStyle()
 
-	assert.Equal(t, "Style: Word,Manrope Medium,44,&H00111111,&H00111111,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,"+
-		"3,10,0,7,150,390,610,1", wordStyleLine(&style))
+	assert.Equal(t, "Style: Word,Manrope Medium,48,&H00111111,&H00111111,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,"+
+		"3,9,0,7,149,389,609,1", wordStyleLine(&style))
 }
 
 // TestValidateWordBox: the plate stays clear of the Instagram zones, the hook and the notes, the titles; its look is
