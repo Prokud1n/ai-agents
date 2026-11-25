@@ -70,7 +70,12 @@ type RenderOptions struct {
 	// audio sample, as the transcript does, so both streams are shifted by it before cutting.
 	Offset float64
 	// Mute silences the sound of the source: the audio track stays (silent), so the export has the same streams.
+	// A muted sound is neither denoised nor normalized.
 	Mute bool
+	// Denoise, if set, lightly reduces the noise of the joined sound (speech): the rumble and the stationary hiss.
+	Denoise *Denoise
+	// Loudness, if set, brings the joined sound to it after the noise reduction; nil keeps the level of the source.
+	Loudness *LoudnessTarget
 }
 
 // RenderSegments re-encodes the given fragments of src one after another into dst (MP4 regardless of its
@@ -265,14 +270,31 @@ func segmentsGraph(segments []Segment, opts RenderOptions, videoOut, audioOut st
 		b.WriteString("[a" + k + "];")
 	}
 
-	for i := range segments {
+	writeConcat(&b, len(segments), opts, videoOut, audioOut)
+
+	return b.String()
+}
+
+// writeConcat joins the pieces and processes the joined sound (soundChain), so it is denoised and normalized as one
+// whole, not piece by piece.
+func writeConcat(b *strings.Builder, n int, opts RenderOptions, videoOut, audioOut string) {
+	for i := range n {
 		k := strconv.Itoa(i)
 		b.WriteString("[v" + k + "][a" + k + "]")
 	}
 
-	b.WriteString("concat=n=" + n + ":v=1:a=1[" + videoOut + "][" + audioOut + "]")
+	sound := soundChain(opts)
+	joined := audioOut
 
-	return b.String()
+	if sound != "" {
+		joined = soundLabel
+	}
+
+	b.WriteString("concat=n=" + strconv.Itoa(n) + ":v=1:a=1[" + videoOut + "][" + joined + "]")
+
+	if sound != "" {
+		b.WriteString(";[" + joined + "]" + sound + "[" + audioOut + "]")
+	}
 }
 
 // videoTrim cuts a segment by frame numbers when the frame rate is known, by seconds otherwise.

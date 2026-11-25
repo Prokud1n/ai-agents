@@ -43,6 +43,10 @@ type pipelineFakes struct {
 	burner      *fakeBurner
 	// minSpeechShare of the pipeline; 0 turns the check of little speech off.
 	minSpeechShare float64
+	// loudness, denoise and zoom: MEDIA_WORKER_LOUDNESS, _DENOISE and _ZOOM; off by default.
+	loudness string
+	denoise  bool
+	zoom     float64
 }
 
 // newPipelineFakes: a 3-minute source with a picture and sound, two words, a plan that cuts it to 2:21 with nothing
@@ -78,7 +82,7 @@ func (f *pipelineFakes) pipeline(t *testing.T, workDir string) *Pipeline {
 		Store: f.store, Prober: f.prober, Keys: f.keys, Transcriber: f.transcriber, Cutter: f.cutter, Burner: f.burner,
 		Config: &config.MediaWorker{
 			WorkDir: workDir, MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 20, Fit: string(ffmpeg.PadFitMode),
-			MinSpeechShare: f.minSpeechShare,
+			MinSpeechShare: f.minSpeechShare, Loudness: f.loudness, Denoise: f.denoise, Zoom: f.zoom,
 		},
 		Log: slog.New(slog.DiscardHandler),
 	})
@@ -484,6 +488,22 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 			name:  "a speech share above 1",
 			input: config.MediaWorker{Fit: "pad", MaxSourceDuration: time.Minute, MaxSourceSize: 1, MinSpeechShare: 1.5},
 		},
+		{
+			name:  "a loudness that is not a number",
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "loud"},
+		},
+		{
+			name:  "a loudness louder than loudnorm takes",
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "-3"},
+		},
+		{
+			name:  "a loudness that is NaN",
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Loudness: "NaN"},
+		},
+		{
+			name:  "a zoom of 50 %",
+			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Zoom: 50},
+		},
 	}
 
 	for _, tt := range tests {
@@ -522,6 +542,113 @@ func TestPipelineDrawsHook(t *testing.T) {
 			assert.Equal(t, editjob.DoneStatus, result.Status)
 			require.NotNil(t, fakes.burner.got)
 			assert.Equal(t, tt.expected, fakes.burner.got.Hook)
+		})
+	}
+}
+
+// TestPipelineSoundAndZoom: the draft is brought to the loudness by the measurement of the source taken during the
+// transcription (one gain and the limiter); a talking head is denoised (the noise floor by the loudness of the
+// recording) and zoomed at the joints, a workout is not; a muted sound and a near-silent
+// source are not raised; without a measurement (a transcript stored before it) loudnorm works in one pass. The
+// decisions log tells what was done.
+func TestPipelineSoundAndZoom(t *testing.T) {
+	t.Parallel()
+
+	measured := &ffmpeg.Loudness{Integrated: -27.6, Threshold: -38.1, Range: 6.4, TruePeak: -9.3}
+
+	tests := []struct {
+		name     string
+		change   func(f *pipelineFakes)
+		measured *ffmpeg.Loudness
+		loudness bool
+		// noiseFloor of the noise reduction, dBFS; 0 — none.
+		noiseFloor float64
+		zoom       bool
+		decisions  string
+	}{
+		{
+			// The floor of the noise reduction is 36 dB under the speech: -27.6 - 36 ≈ -64 dBFS.
+			name: "a talking head", measured: measured, loudness: true, noiseFloor: -64, zoom: true,
+			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP) → -14.0 LUFS: усиление +13.6 dB, " +
+				"лимитер пиков на -2.0 dBTP\n- Шумодав: лёгкий (речь), порог шума -64 dBFS\n" +
+				"- Зумы на склейках: 0 (приближение 9%)\n",
+		},
+		{
+			name:     "a transcript without a measurement: one pass",
+			change:   func(f *pipelineFakes) { f.transcriber.result.Loudness = nil },
+			loudness: true, noiseFloor: -50, zoom: true,
+			decisions: "- Громкость: исходник не измерен → -14.0 LUFS: loudnorm без измерения (в один проход), " +
+				"пики до -2.0 dBTP\n- Шумодав: лёгкий (речь), порог шума -50 dBFS\n",
+		},
+		{
+			name:     "a workout: the loudness only",
+			change:   func(f *pipelineFakes) { f.cutter.result.Plan.Mode = roughcut.WorkoutMode },
+			measured: measured, loudness: true,
+			decisions: "- Шумодав: нет (тренировка, музыка)\n- Зумы на склейках: нет (тренировка)\n",
+		},
+		{
+			name:      "muted: silence stays silent",
+			change:    func(f *pipelineFakes) { f.cutter.result.Render.Mute = true },
+			zoom:      true,
+			decisions: "- Громкость: звук исходника убран\n- Шумодав: нет (звук убран)\n",
+		},
+		{
+			name: "a near-silent source is not raised",
+			change: func(f *pipelineFakes) {
+				f.transcriber.result.Loudness = &ffmpeg.Loudness{Integrated: -62, Threshold: -72, TruePeak: -40}
+			},
+			noiseFloor: -80, zoom: true,
+			decisions: "- Громкость: исходник -62.0 LUFS — почти тишина, оставлена как есть\n",
+		},
+		{
+			name:      "all off",
+			change:    func(f *pipelineFakes) { f.loudness, f.denoise, f.zoom = "off", false, 0 },
+			decisions: "- Громкость: как в исходнике (выравнивание выключено)\n- Шумодав: выключен\n- Зумы на склейках: выключены\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakes := newPipelineFakes(t)
+			fakes.loudness, fakes.denoise, fakes.zoom = testLoudness, true, testZoom
+			fakes.transcriber.result.Loudness = measured
+
+			if tt.change != nil {
+				tt.change(fakes)
+			}
+
+			_, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), testJob())
+			require.NoError(t, err)
+
+			require.NotNil(t, fakes.burner.got)
+			cut := fakes.burner.got.Cut
+			if tt.noiseFloor != 0 {
+				assert.Equal(t, &ffmpeg.Denoise{NoiseFloor: tt.noiseFloor}, cut.Options.Denoise)
+			} else {
+				assert.Nil(t, cut.Options.Denoise)
+			}
+
+			if tt.loudness {
+				require.NotNil(t, cut.Options.Loudness)
+				assert.Equal(t, ffmpeg.LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: tt.measured},
+					*cut.Options.Loudness)
+			} else {
+				assert.Nil(t, cut.Options.Loudness)
+			}
+
+			if tt.zoom {
+				assert.Equal(t, &ffmpeg.Zoom{Factor: 1.09, MinSegment: 1.2}, cut.Zoom)
+			} else {
+				assert.Nil(t, cut.Zoom)
+			}
+
+			files, err := editjob.Files(fakes.store, testSourceKey, 1)
+			require.NoError(t, err)
+			log := string(fakes.store.results[files.Decisions].data)
+			assert.True(t, strings.HasPrefix(log, roughcut.LogFile+"\nЗвук и кадр:\n"), log)
+			assert.Contains(t, log, tt.decisions)
 		})
 	}
 }

@@ -60,6 +60,13 @@ type MediaWorker struct {
 	// a workout, where cutting the silence cuts the exercises — and its plan is the safe workout one (nothing cut).
 	// 0 turns the check off: then only a source without words is decided. Why 0.6 — docs/SETUP.md.
 	MinSpeechShare float64 `env:"MEDIA_WORKER_MIN_SPEECH_SHARE" envDefault:"0.6"`
+	// Loudness the drafts are brought to: integrated loudness in LUFS (EBU R128; Instagram and other networks play
+	// at about -14), the true peaks at most -1.5 dBTP. "off" (or empty) keeps the level of the source.
+	Loudness string `env:"MEDIA_WORKER_LOUDNESS" envDefault:"-14"`
+	// Denoise lightly reduces the noise of speech (the rumble and the stationary hiss) in a talking-head draft.
+	Denoise bool `env:"MEDIA_WORKER_DENOISE" envDefault:"true"`
+	// Zoom of the jump-cut zoom of a talking head, percent (the framing alternates at the joints); 0 turns it off.
+	Zoom float64 `env:"MEDIA_WORKER_ZOOM" envDefault:"9"`
 	// HeartbeatFile is touched while the worker is healthy (it reaches Redis); the container healthcheck
 	// (media-worker healthcheck) reads its age. Empty: <WorkDir>/.heartbeat.
 	HeartbeatFile string `env:"MEDIA_WORKER_HEARTBEAT_FILE"`
