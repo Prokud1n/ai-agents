@@ -256,7 +256,7 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	if err != nil {
 		// A workout, a long talking head or a reel stopped only for the hook has a usable plan without the model:
 		// nothing cut, or the cleaning only (and no hook).
-		if (!isWorkout(req.Plan) && !req.Selecting() && !hookOnly(req)) || !e.fallBack(ctx, data, err) {
+		if (!isWorkout(req.Plan) && !req.Selecting() && !req.HookOnly()) || !e.fallBack(ctx, data, err) {
 			return err
 		}
 
@@ -287,12 +287,6 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	}
 
 	return &tasks.DeferredError{After: e.pollInterval}
-}
-
-// hookOnly: the first version stopped only for the hook title — no caption, no disputed repeats — so its automatic cut
-// is the draft it would have been without the hook.
-func hookOnly(req *editplan.Request) bool {
-	return req.Hook && strings.TrimSpace(req.Caption) == "" && len(req.Plan.Candidates) == 0
 }
 
 // fallBack reports whether the first version of a workout, of a long talking head or of a reel stopped only for the

@@ -16,6 +16,7 @@ package editplan
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 	"github.com/Prokud1n/ai-agents/internal/transcription"
@@ -57,6 +58,14 @@ const minTargetShare = 0.5
 func (r *Request) Selecting() bool {
 	return !r.IsRevision() && r.Plan != nil && roughcut.LongerThanTarget(r.Plan.Duration, r.TargetSeconds) &&
 		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
+}
+
+// HookOnly reports whether the first version stopped only for the hook title: the hook is on, no caption, no disputed
+// repeats, a talking head within the recommended length. Then nothing is to be cut: the short reel is not cut on the
+// model's own initiative (Apply refuses it), and without the model its automatic cut is the draft.
+func (r *Request) HookOnly() bool {
+	return !r.IsRevision() && r.Hook && strings.TrimSpace(r.Caption) == "" && r.Plan != nil &&
+		len(r.Plan.Candidates) == 0 && !r.Selecting() && previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 
 // TargetRange is the recommended length of a reel, in seconds: 30–60 s for TargetSeconds 60.

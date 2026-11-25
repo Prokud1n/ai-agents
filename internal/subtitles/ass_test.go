@@ -175,7 +175,7 @@ func TestRenderASS(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderASS(cues, tt.style, false, 0)
+			got := renderASS(cues, tt.style, false, hookLayout{})
 			for _, part := range tt.expected {
 				assert.Contains(t, got, part)
 			}

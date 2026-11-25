@@ -207,6 +207,10 @@ func checkInput(req *Request, in *Input) error {
 		return err
 	}
 
+	if err := checkHookOnly(req, in); err != nil {
+		return err
+	}
+
 	return checkTarget(req, in.TargetSeconds)
 }
 

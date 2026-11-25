@@ -1,6 +1,7 @@
 package mediaworker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -136,8 +137,15 @@ func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
 func (env *editEnv) grayFrame(t *testing.T, key string, at float64) []byte {
 	t.Helper()
 
+	return reelFrame(t, env.read(t, key), at)
+}
+
+// reelFrame decodes the frame of the reel at the second as 8-bit gray pixels, row by row.
+func reelFrame(t *testing.T, reel []byte, at float64) []byte {
+	t.Helper()
+
 	path := filepath.Join(t.TempDir(), "reel.mp4")
-	require.NoError(t, os.WriteFile(path, env.read(t, key), 0o600))
+	require.NoError(t, os.WriteFile(path, reel, 0o600))
 
 	frame := run(t, "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-ss",
 		strconv.FormatFloat(at, 'f', 2, 64), "-i", path, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-")
@@ -194,13 +202,73 @@ func TestIntegrationHookTitle(t *testing.T) {
 	assert.NotContains(t, string(env.read(t, files2.Decisions)), "Заголовок-хук")
 	assert.InDelta(t, env.reelDuration(t, v1.MediaKey), env.reelDuration(t, v2.MediaKey), 0.05, "the cut is the same")
 
-	// The band of the hook (two lines of its size from the subtitles' margin): in version 2 only a subtitle line is there.
+	checkHookDrawn(t, env.read(t, v1.MediaKey), env.read(t, v2.MediaKey))
+}
+
+// checkHookDrawn compares the reels with and without the hook in the band of the hook (two lines of its size from the
+// subtitles' margin; without the hook only a subtitle line is there): different while the hook is shown, the same
+// after it.
+func checkHookDrawn(t *testing.T, hooked, plain []byte) {
+	t.Helper()
+
 	style := subtitles.DefaultStyle()
 	from := style.Layout.MarginTop
 	to := from + int(hookBandLines*float64(style.Hook.Size))
 
-	assert.Greater(t, meanDiff(env.grayFrame(t, v1.MediaKey, withHookAt), env.grayFrame(t, v2.MediaKey, withHookAt),
-		from, to), hookDiff, "the hook is drawn in version 1 only")
-	assert.Less(t, meanDiff(env.grayFrame(t, v1.MediaKey, afterHookAt), env.grayFrame(t, v2.MediaKey, afterHookAt),
-		from, to), sameDiff, "after the hook the versions are the same")
+	assert.Greater(t, meanDiff(reelFrame(t, hooked, withHookAt), reelFrame(t, plain, withHookAt), from, to), hookDiff,
+		"the hook is drawn in the reel with it only")
+	assert.Less(t, meanDiff(reelFrame(t, hooked, afterHookAt), reelFrame(t, plain, afterHookAt), from, to), sameDiff,
+		"after the hook the reels are the same")
+}
+
+// TestIntegrationHookRender: the media worker alone (no Redis or S3, the ffmpeg, libass and fonts of the host or of the
+// media image) renders a decided version with the hook title and one without it from the stored transcript: the plan
+// keeps the hook, libass draws it over the first seconds and nothing of it is left after them.
+func TestIntegrationHookRender(t *testing.T) {
+	t.Parallel()
+	requireIntegrationFFmpeg(t)
+
+	words := talkTranscript().Words
+	spans := make([]roughcut.Interval, 0, len(words))
+
+	for _, w := range words {
+		spans = append(spans, roughcut.Interval{Start: w.Start, End: w.End})
+	}
+
+	source := filepath.Join(t.TempDir(), "talk.mkv")
+	makeToneClip(t, source, talkDuration, spans)
+
+	store := newLocalStore(map[string]string{testSourceKey: source})
+	speech := &fakeTranscriber{result: talkTranscript()}
+
+	first, err := editjob.Files(store, testSourceKey, 1)
+	require.NoError(t, err)
+
+	stored, err := json.Marshal(talkTranscript())
+	require.NoError(t, err)
+	require.NoError(t, store.PutResult(t.Context(), first.Transcript, bytes.NewReader(stored), editjob.JSONContentType))
+
+	p := realPipelineWith(t, store, speech)
+	render := func(version int, hook string) (reel, plan []byte) {
+		job := testJob()
+		job.ID, job.Version, job.Stage = editjob.JobID(job.TaskID, version), version, editjob.RenderStage
+		job.Settings = &roughcut.Settings{MaxPause: 0.4, PadBefore: 0.08, PadAfter: 0.12, RetakeSimilarity: 0.7}
+		job.Edit = &roughcut.Edit{Hook: hook}
+
+		result, err := p.Run(t.Context(), job)
+		require.NoError(t, err)
+		require.Equal(t, editjob.DoneStatus, result.Status)
+
+		files, err := editjob.Files(store, testSourceKey, version)
+		require.NoError(t, err)
+
+		return store.results[files.Reel].data, store.results[files.Plan].data
+	}
+
+	hooked, plan := render(1, hookText)
+	plain, _ := render(2, "")
+
+	assert.Zero(t, speech.calls, "a render reads the stored transcript")
+	assert.Contains(t, string(plan), `"hook":"`+hookText+`"`)
+	checkHookDrawn(t, hooked, plain)
 }

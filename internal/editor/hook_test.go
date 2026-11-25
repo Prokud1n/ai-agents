@@ -22,6 +22,7 @@ const (
 	overloadedRetried = "overloaded: retried by the task"
 	testHook          = "3 ошибки в планке"
 	testHookLine      = "Заголовок: «3 ошибки в планке»."
+	testFixLine       = "Исправил в субтитрах: «держим» → «держите»."
 )
 
 // TestExecutorHookInAutoJob: with EDITOR_HOOK_TITLE the auto job stops after the plan for the hook title.
@@ -88,6 +89,10 @@ func TestExecutorDecidesHook(t *testing.T) {
 		Kind: editplan.EditOutcome, Changes: []string{testHookLine},
 		Edit: roughcut.Edit{Hook: testHook, Notes: []string{"Решение по черновой склейке: хук"}},
 	}
+	unhooked := &editplan.Outcome{
+		Kind: editplan.EditOutcome, Changes: []string{testFixLine},
+		Edit: roughcut.Edit{Words: []roughcut.WordFix{{Index: 1, Text: "держите"}}},
+	}
 
 	tests := []struct {
 		name     string
@@ -100,6 +105,10 @@ func TestExecutorDecidesHook(t *testing.T) {
 		{
 			name: "the model's hook", decider: &fakeDecider{outcome: hooked}, edit: &hooked.Edit,
 			expected: &editjob.Summary{Changes: []string{testHookLine}},
+		},
+		{
+			name: "the model found no hook: a hint last", decider: &fakeDecider{outcome: unhooked}, edit: &unhooked.Edit,
+			expected: &editjob.Summary{Changes: []string{testFixLine, noHookHint}},
 		},
 		{
 			name:    "no API key: no hook",

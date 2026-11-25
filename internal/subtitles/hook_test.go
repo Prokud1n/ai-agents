@@ -16,7 +16,11 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
-const hookPlank = "Три ошибки в планке"
+const (
+	hookPlank = "Три ошибки в планке"
+	// shiftedUnderHook: a subtitle event under a hook of two lines at the top.
+	shiftedUnderHook = ",Main,,0,0,500,,"
+)
 
 func TestHookEnd(t *testing.T) {
 	t.Parallel()
@@ -24,6 +28,7 @@ func TestHookEnd(t *testing.T) {
 	style := DefaultStyle()
 	long := speech("Сегодня разберём три ошибки, которые все делают в планке каждый день.")
 	short := speech("Привет!", "Сегодня разберём три ошибки, которые все делают в планке.")
+	medium := speech("Сегодня разберём ошибки.", "Держим спину ровно и дышим.")
 	tiny := speech("Привет!")
 
 	tests := []struct {
@@ -34,7 +39,8 @@ func TestHookEnd(t *testing.T) {
 	}{
 		{name: "no hook", hook: " ", input: long, expected: 0},
 		{name: "the style's duration", hook: hookPlank, input: long, expected: 2.5},
-		{name: "half a second after the first phrase", hook: hookPlank, input: short, expected: 0.85},
+		{name: "half a second after the first phrase", hook: hookPlank, input: medium, expected: 1.55},
+		{name: "a short first phrase: not shorter than min_duration", hook: hookPlank, input: short, expected: 1.5},
 		{name: "not longer than the reel", hook: hookPlank, input: tiny, expected: 0.85},
 		{
 			name: "no speech: the style's duration", hook: hookPlank,
@@ -100,6 +106,15 @@ func TestHookEvent(t *testing.T) {
 			name: "a long line is squeezed", hook: "Суперинтенсивнейшаятренировкапресса", end: 2.5, style: &plain,
 			expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}{\fscx51}` +
 				`Суперинтенсивнейшаятренировкапресса` + "\n",
+		},
+		{
+			name: "control and invisible characters dropped", hook: "\u200bПланка\nбез\u2066 ошибок", end: 2.5,
+			style: &plain, expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}Планка без ошибок` + "\n",
+		},
+		{
+			name: "cut to 40 characters", hook: strings.Repeat("пресс ", 10), end: 2.5, style: &plain,
+			expected: `Dialogue: 2,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{\fad(150,150)}пресс пресс пресс\N` +
+				`{\fscx81}пресс пресс пресс прес` + "\n",
 		},
 		{name: "no hook", hook: "  ", end: 2.5, style: &style, expected: ""},
 		{name: "no time", hook: hookPlank, end: 0, style: &style, expected: ""},
@@ -172,7 +187,7 @@ func TestHookLayout(t *testing.T) {
 			assert.Equal(t, tt.hook[1], hookBottom)
 			assert.GreaterOrEqual(t, hookTop, SafeZoneTop)
 			assert.LessOrEqual(t, hookBottom, FrameHeight-SafeZoneBottom)
-			assert.Equal(t, tt.shift, tt.style.hookSubtitlesMargin())
+			assert.Equal(t, tt.shift, tt.style.hookSubtitlesMargin(hookLines))
 
 			subTop, subBottom := tt.style.subtitlesSpan()
 			if tt.shifts {
@@ -202,7 +217,9 @@ func TestValidateHook(t *testing.T) {
 		{name: "bad highlight", change: func(s *Style) { s.Hook.Highlight = "yellow" }},
 		{name: "translucent highlight", change: func(s *Style) { s.Hook.Highlight = "#F2B94B40" }},
 		{name: "too long", change: func(s *Style) { s.Hook.Duration = 8 }},
-		{name: "fade longer than half", change: func(s *Style) { s.Hook.Duration = 1; s.Hook.Fade = 500 }},
+		{name: "fade longer than half of min_duration", change: func(s *Style) { s.Hook.MinDuration = 1; s.Hook.Fade = 500 }},
+		{name: "min_duration over duration", change: func(s *Style) { s.Hook.MinDuration = 3 }},
+		{name: "no min_duration", change: func(s *Style) { s.Hook.MinDuration = 0 }},
 		{name: "comma in the font", change: func(s *Style) { s.Hook.Font = "Fira, Sans" }},
 		{name: "over the titles at the bottom", change: func(s *Style) {
 			s.Layout.Position = BottomPosition
@@ -247,7 +264,7 @@ func TestBuildASSWithHook(t *testing.T) {
 
 		start := strings.Split(line, ",")[1]
 		if start < "0:00:02.50" {
-			assert.Contains(t, line, ",Main,,0,0,500,,", "starts with the hook: under it")
+			assert.Contains(t, line, shiftedUnderHook, "starts with the hook: under it")
 			shifted++
 
 			continue
@@ -262,7 +279,7 @@ func TestBuildASSWithHook(t *testing.T) {
 
 	plain, _ := buildASS(result, &style, nil, false, nil, "")
 	assert.NotContains(t, plain, ",Hook,,")
-	assert.NotContains(t, plain, ",Main,,0,0,500,,")
+	assert.NotContains(t, plain, shiftedUnderHook)
 }
 
 // rowsBright is how many rows of [from, to) have a bright pixel.
@@ -321,4 +338,75 @@ func TestBurnHookWithFFmpeg(t *testing.T) {
 	assert.Positive(t, rowsBright(shown, hookBottom+style.Hook.Gap, FrameHeight/2), "the subtitles under it")
 
 	assert.Zero(t, rowsBright(grayFrame(ctx, t, output, 2.8), 0, FrameHeight), "the hook is gone after its time")
+}
+
+// TestHookShade: while the subtitles stand under the hook, a drawing extends the vignette down to them: the first
+// event, from the start to the end of the last shifted subtitle, mirrored at the bottom; none in the middle or without
+// a vignette. A one-line hook moves the subtitles less.
+func TestHookShade(t *testing.T) {
+	t.Parallel()
+
+	top := DefaultStyle()
+	bottom := DefaultStyle()
+	bottom.Layout.Position = BottomPosition
+	middle := DefaultStyle()
+	middle.Layout.Position = MiddlePosition
+	noVignette := DefaultStyle()
+	noVignette.Vignette.Enabled = false
+
+	result := speech("Сегодня разберём три ошибки, которые все делают в планке. Держим спину ровно и дышим.",
+		"А теперь самое главное.")
+
+	tests := []struct {
+		name    string
+		style   *Style
+		hook    string
+		shape   string
+		marginV string
+	}{
+		{name: "at the top", style: &top, hook: hookPlank, shape: "m -100 420 l 1180 420 l 1180 790 l -100 790{\\p0}",
+			marginV: shiftedUnderHook},
+		{name: "one line moves less", style: &top, hook: "Пресс за 10", shape: "m -100 420 l 1180 420 l 1180 680 l -100 680",
+			marginV: ",Main,,0,0,390,,"},
+		{name: "at the bottom: mirrored", style: &bottom, hook: hookPlank,
+			shape: "m -100 950 l 1180 950 l 1180 1320 l -100 1320", marginV: ",Main,,0,0,680,,"},
+		{name: "in the middle: none", style: &middle, hook: hookPlank},
+		{name: "no vignette: none", style: &noVignette, hook: hookPlank, marginV: shiftedUnderHook},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ass, _ := buildASS(result, tt.style, nil, false, nil, tt.hook)
+			events := strings.Split(ass[strings.Index(ass, eventFormat)+len(eventFormat)+1:], "\n")
+
+			if tt.shape == "" {
+				assert.NotContains(t, ass, ",Shade,,")
+				assert.NotContains(t, ass, "Style: Shade,")
+
+				if tt.marginV != "" {
+					assert.Contains(t, ass, tt.marginV)
+				}
+
+				return
+			}
+
+			require.True(t, strings.HasPrefix(events[0], "Dialogue: 0,0:00:00.00,"), "the shade is the first event")
+			assert.Contains(t, events[0], ",Shade,,0,0,0,,{\\an7\\pos(0,0)\\fad(150,150)\\1c&H000000&\\1a&H66&\\blur40\\p1}")
+			assert.Contains(t, events[0], tt.shape)
+			assert.Contains(t, ass, "Style: Shade,")
+
+			lastShifted := ""
+
+			for _, line := range events[1:] {
+				if strings.Contains(line, tt.marginV) {
+					lastShifted = strings.Split(line, ",")[2]
+				}
+			}
+
+			require.NotEmpty(t, lastShifted)
+			assert.Equal(t, lastShifted, strings.Split(events[0], ",")[2], "the shade ends with the last shifted subtitle")
+		})
+	}
 }

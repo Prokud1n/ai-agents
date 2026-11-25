@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	hookWords    = "от 2 до 6 слов"
+	hookWords    = "от 1 до 6 слов"
 	hookEmoji    = "без эмодзи и хештегов"
 	testHook     = "3 ошибки в планке"
 	oldHook      = "Спина ровно всегда"
@@ -32,7 +32,8 @@ func TestCheckHook(t *testing.T) {
 		{name: "a number sign and degrees are text", input: new("Растяжка № 1 на 90°")},
 		{name: "40 characters", input: new("Почему болит поясница после приседаний?!")},
 		{name: "longer than 40", input: new("Пять ошибок в планке, которые делают почти все"), expected: "длиннее 40 символов"},
-		{name: "one word", input: new("Планка"), expected: hookWords},
+		{name: "one word", input: new("Планка")},
+		{name: "quotes and a period are not counted", input: new("«Почему болит поясница после приседаний?!».")},
 		{name: "seven words", input: new("раз два три четыре пять шесть семь"), expected: hookWords},
 		{name: "emoji", input: new("Пресс за 10 минут 🔥"), expected: hookEmoji},
 		{name: "emoji by the selector", input: new("Пресс за 10 минут ❤️"), expected: hookEmoji},
@@ -105,7 +106,12 @@ func TestApplyHook(t *testing.T) {
 			input: Input{HookTitle: new("")}, err: hookNoChange,
 		},
 		{
-			name: "an invalid hook", version: 1, input: Input{HookTitle: new("Планка")}, err: hookWords,
+			name: "an invalid hook", version: 1, input: Input{HookTitle: new("раз два три четыре пять шесть семь")},
+			err: hookWords,
+		},
+		{
+			name: "quotes and the period are dropped", version: 1, input: Input{HookTitle: new(" «3 ошибки в планке.» ")},
+			hook: testHook, changes: []string{"Заголовок: «" + testHook + "»."},
 		},
 	}
 
@@ -165,11 +171,15 @@ func TestPromptHook(t *testing.T) {
 			},
 		},
 		{
-			name: "a short reel planned for the hook only",
+			name:     "a short reel planned for the hook only",
+			req:      hookOnlyRequest,
+			expected: []string{"Подписи нет — предложи только заголовок-хук; вырезать ничего не нужно."},
+		},
+		{
+			name: "a reel with disputed repeats and the hook",
 			req: func() *Request {
 				req := testRequest(1, nil)
 				req.Hook = true
-				req.Plan.Candidates = nil
 
 				return req
 			},
@@ -195,6 +205,105 @@ func TestPromptHook(t *testing.T) {
 			for _, part := range tt.expected {
 				assert.Contains(t, prompt, part)
 			}
+		})
+	}
+}
+
+func TestNormalizeHook(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "spaces", input: "  3  ошибки\tв планке ", expected: testHook},
+		{name: "guillemets and a period", input: "«3 ошибки в планке».", expected: testHook},
+		{name: "straight quotes", input: `"3 ошибки в планке"`, expected: testHook},
+		{name: "low quotes", input: "„3 ошибки в планке“", expected: testHook},
+		{name: "a period inside quotes", input: "«3 ошибки в планке.»", expected: testHook},
+		{name: "an ellipsis stays", input: "Планка, которая…", expected: "Планка, которая…"},
+		{name: "three dots stay", input: "Планка, которая...", expected: "Планка, которая..."},
+		{name: "quotes inside stay", input: "Упражнение «планка»", expected: "Упражнение «планка»"},
+		{name: "a question mark stays", input: "Болит спина?", expected: "Болит спина?"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, normalizeHook(tt.input))
+		})
+	}
+}
+
+// hookOnlyRequest is a short talking head stopped only for the hook title: no caption, no disputed repeats.
+func hookOnlyRequest() *Request {
+	req := testRequest(1, nil)
+	req.Hook = true
+	req.Plan.Candidates = nil
+
+	return req
+}
+
+// TestApplyHookOnly: a reel stopped only for the hook is not cut or trimmed by the model; the hook and the corrections
+// of the subtitles pass. With a caption, disputed repeats or the hook off the reel can be cut as before.
+func TestApplyHookOnly(t *testing.T) {
+	t.Parallel()
+
+	const refused = "ничего не вырезай и не обрезай"
+
+	tests := []struct {
+		name  string
+		req   func() *Request
+		input Input
+		err   string
+	}{
+		{name: "the hook", req: hookOnlyRequest, input: Input{HookTitle: new(testHook)}},
+		{name: "a correction", req: hookOnlyRequest, input: Input{FixWords: []FixInput{{Index: 7, Text: "делайте"}}}},
+		{name: "words cut", req: hookOnlyRequest, input: Input{Remove: []roughcut.WordRange{{From: 7, To: 8}}}, err: refused},
+		{name: "the start trimmed", req: hookOnlyRequest, input: Input{TrimStart: 1}, err: refused},
+		{name: "the end trimmed", req: hookOnlyRequest, input: Input{TrimEnd: 1}, err: refused},
+		{name: "seconds cut", req: hookOnlyRequest, input: Input{CutSeconds: []SecondsRange{{From: 1, To: 2}}}, err: refused},
+		{name: "a length", req: hookOnlyRequest, input: Input{TargetSeconds: 3}, err: refused},
+		{
+			name: "with a caption the reel is cut", input: Input{TrimStart: 1},
+			req: func() *Request {
+				req := hookOnlyRequest()
+				req.Caption = "убери начало"
+
+				return req
+			},
+		},
+		{
+			name: "with the hook off the reel is cut", input: Input{TrimStart: 1},
+			req: func() *Request {
+				req := hookOnlyRequest()
+				req.Hook = false
+
+				return req
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			in := tt.input
+			in.Decision, in.Reason = EditDecision, testReason
+
+			outcome, err := Apply(tt.req(), &in)
+			if tt.err != "" {
+				var check *CheckError
+				require.ErrorAs(t, err, &check)
+				assert.Contains(t, check.Message, tt.err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, EditOutcome, outcome.Kind)
 		})
 	}
 }

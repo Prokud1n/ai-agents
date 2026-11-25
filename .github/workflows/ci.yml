@@ -532,12 +532,12 @@ jobs:
           run_check load --memory=3g --memory-swap=3g
 
       # Subtitle rendering against the ffmpeg/libass of the image and the fonts in /app/fonts (SUBTITLES_FONTS_DIR):
-      # 1080x1920 output, H.264 + AAC, text outside the Instagram zones, no font fallback.
+      # 1080x1920 output, H.264 + AAC, text outside the Instagram zones, no font fallback; the hook title (T3.15b).
       - name: Run subtitle render tests inside the media image
         run: |
           CGO_ENABLED=0 go test -c -o subtitles.test ./internal/subtitles
           docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/subtitles.test:/app/subtitles.test:ro" \
-            --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestBurnSubtitlesWithFFmpeg'
+            --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestBurnSubtitlesWithFFmpeg|TestBurnHookWithFFmpeg'
 
       # Render speed of a draft (T3.11): a vertical 4K 60 fps 10-bit HEVC HLG source with grain, rough cut into several
       # fragments with subtitles in one pass, on 2 CPUs as the VPS has. The log line "render speed" is the measurement.
@@ -551,16 +551,17 @@ jobs:
 
       # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with
       # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export,
-      # the workout plan with the exercise title (the Title style on its box), the muted reel and a dense talk.
+      # the workout plan with the exercise title (the Title style on its box), the muted reel, a dense talk and the hook
+      # title (TestIntegrationHookRender: TestIntegrationHookTitle needs Redis and S3, it runs in compose-smoke).
       - name: Run the media worker pipeline inside the media image
         run: |
           CGO_ENABLED=0 go test -c -o mediaworker.test ./internal/mediaworker
           docker run --rm -e INTEGRATION=1 -v "$PWD/mediaworker.test:/app/mediaworker.test:ro" \
             --entrypoint /app/mediaworker.test ai-agents-media:ci -test.v -test.count=1 \
-            -test.run 'TestIntegrationPipeline|TestIntegrationWorkout|TestIntegrationNoSpeech|TestIntegrationTalkRendersAtOnce' \
+            -test.run 'TestIntegrationPipeline|TestIntegrationWorkout|TestIntegrationNoSpeech|TestIntegrationTalkRendersAtOnce|TestIntegrationHookRender' \
             | tee pipeline.txt
           for test in TestIntegrationPipeline TestIntegrationWorkoutKeepsPauses TestIntegrationNoSpeechIsPlanned \
-            TestIntegrationTalkRendersAtOnce; do
+            TestIntegrationTalkRendersAtOnce TestIntegrationHookRender; do
             grep -q -- "--- PASS: $test " pipeline.txt || { echo "::error::$test did not pass"; exit 1; }
           done
           if grep -q -- '--- SKIP' pipeline.txt; then echo "::error::the pipeline test was skipped"; exit 1; fi

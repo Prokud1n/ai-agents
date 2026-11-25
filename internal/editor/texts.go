@@ -54,7 +54,8 @@ const (
 	// «Не получилось применить правку.» above the previous draft).
 	// The note ends with «Можно одобрить эту версию или дать правку ещё раз.», so these texts do not ask for it again.
 	cannotRevisionText = "Такое я пока не умею: могу обрезать, сократить до нужной длины, убрать или вернуть фрагмент, " +
-		"выбрать дубль, поправить слово в субтитрах, подписать упражнения, поменять или убрать заголовок и убрать звук."
+		"выбрать дубль, поправить слово в субтитрах, подписать упражнения, добавить, поменять или убрать заголовок, " +
+		"убрать звук."
 	unclearRevisionText = "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или " +
 		"„оставь второй дубль“."
 	// modelFailedText: the decision failed for a technical reason after all the retries of the task.
@@ -75,7 +76,7 @@ const (
 	// captionCannotNote and captionUnclearNote: the first draft is made without the caption's instruction.
 	captionCannotNote = "Подпись как указание к монтажу не применил: такое я пока не умею. Могу обрезать, сократить до " +
 		"нужной длины, убрать или вернуть фрагмент, выбрать дубль, поправить слово в субтитрах, подписать упражнения, " +
-		"поменять или убрать заголовок и убрать звук — ответьте на черновик правкой."
+		"добавить, поменять или убрать заголовок, убрать звук — ответьте на черновик правкой."
 	captionUnclearNote = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
 		"правка, ответьте на черновик, например: „убери первые 3 секунды“."
 	// workoutFallbackNote: a source with little speech, the decision failed on our side: the whole video is the draft.
@@ -92,6 +93,9 @@ const (
 		"например: „сделай %s“."
 	longUnchosenNote = "Ролик длиннее рекомендованных для рилс %s: не смог выбрать, что оставить, поэтому вырезал только " +
 		"паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: „сделай %s“."
+	// noHookHint: the editor proposed no hook title for a first version without a caption (EDITOR_HOOK_TITLE).
+	noHookHint = "Заголовок не поставил: в ролике не нашёл короткой цепляющей мысли. Если нужен — ответьте правкой, " +
+		"например: „добавь заголовок …“"
 	// shortenedNote ends a description whose lists did not fit into the caption of the video.
 	shortenedNote = "Описание сокращено: не всё поместилось в подпись к видео."
 )
@@ -336,7 +340,19 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 		summary.CaptionApplied = len(outcome.Titles) > 0 && strings.TrimSpace(req.Caption) != ""
 	}
 
+	summary.Changes = append(summary.Changes, hookHint(req, outcome)...)
+
 	return summary
+}
+
+// hookHint says how to add a hook title when the editor was asked for one (EDITOR_HOOK_TITLE, no caption) and decided
+// without it; the last line of the changes.
+func hookHint(req *editplan.Request, outcome *editplan.Outcome) []string {
+	if !req.Hook || strings.TrimSpace(req.Caption) != "" || outcome.Edit.Hook != "" {
+		return nil
+	}
+
+	return []string{noHookHint}
 }
 
 // undecidedNote says why the first version is the automatic cut: the workout kept whole, the caption not applied, the

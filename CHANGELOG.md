@@ -9,15 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Hook title of a reel (T3.15b). The editor's model proposes a short hook (`hook_title` of `submit_edit`: 2–6 words,
-  at most 40 characters, in the language of the reel, from what the reel says — no emoji, hashtags or markup; checked
+- Hook title of a reel (T3.15b). The editor's model proposes a short hook (`hook_title` of `submit_edit`: 1–6 words,
+  at most 40 characters, quotes around it and a period at the end dropped, in the language of the reel, from what the reel says — no emoji, hashtags or markup; checked
   by `editplan` like the exercise titles) for every first version, talking head or workout, so with
   `EDITOR_HOOK_TITLE=true` (the default) every auto job stops after the plan (`editjob.Job.Hook`) — one more model call
-  for a short reel that had nothing else to decide; `false` keeps the old flow. Without the model the reel is rendered
-  without a hook. The media worker draws it with libass in the new `hook` style of `style.yaml` (Fira Sans Extra
+  for a short reel that had nothing else to decide (~0.03 USD without the prompt cache, ~0.007 USD with it); such a reel
+  is not cut by the model (`Request.HookOnly`: `Apply` refuses cuts and trims), and the draft of a first version the
+  model left without a hook says how to add one; `false` keeps the old flow. Without the model the reel is rendered
+  without a hook (on 429/5xx after the task's retries). The media worker draws it with libass in the new `hook` style of `style.yaml` (Fira Sans Extra
   Condensed ExtraBold 88 px capitals, ivory with one key word in the accent yellow, at most two lines squeezed to fit,
-  150 ms fade) at the subtitles' margin for 2.5 s at most (half a second after the first phrase at most, never past
-  the reel); the subtitles of that time stand right under it (`MarginV` of their events), and the style validation
+  150 ms fade) at the subtitles' margin for 2.5 s at most (half a second after the first phrase at most but at least
+  `min_duration` 1.5 s, never past the reel); the subtitles of that time stand right under it (`MarginV` of their
+  events, by the hook's actual number of lines) over an ASS drawing that extends the vignette down to them until the
+  last of them ends (the ffmpeg graph is unchanged); the subtitles also drop control and invisible characters of the
+  hook and cut it to 40 characters. A custom `SUBTITLES_STYLE_FILE` without a `hook` section gets the defaults. The
+  style validation
   keeps the hook and the shifted subtitles clear of each other, the exercise titles and the Instagram zones. The
   trainer changes, adds or removes it by a revision («поменяй заголовок на …», «убери заголовок»): a new version is
   rendered from the stored transcript, and the hook adds up over the versions (`roughcut.Edit.Hook`). The draft says

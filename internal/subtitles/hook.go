@@ -46,6 +46,8 @@ type HookStyle struct {
 	// Duration is the longest the hook is shown, in seconds; it ends at most phraseTail after the first phrase and
 	// at the end of the reel.
 	Duration float64 `yaml:"duration"`
+	// MinDuration: a short first phrase does not end the hook before this, in seconds (the reel still does).
+	MinDuration float64 `yaml:"min_duration"`
 	// Fade in and out, in milliseconds.
 	Fade int `yaml:"fade"`
 	// Gap between the hook and the subtitles shown with it, in pixels.
@@ -72,23 +74,63 @@ func (s *Style) hookMargin() int {
 	return s.Layout.MarginTop
 }
 
-// hookSpan is the vertical extent of a hook of hookLines lines.
+// hookSpan is the vertical extent of the tallest hook, of hookLines lines.
 func (s *Style) hookSpan() (top, bottom int) {
-	height := int(float64(hookLines*s.Hook.Size) * lineHeightFactor)
-
-	return blockSpan(s.hookPosition(), s.hookMargin(), height)
+	return blockSpan(s.hookPosition(), s.hookMargin(), s.hookHeight(hookLines))
 }
 
-// hookSubtitlesMargin is the margin of the subtitles shown with the hook: right after it from the same edge. 0 for
-// subtitles in the middle: they stay where they are.
-func (s *Style) hookSubtitlesMargin() int {
-	if s.Layout.Position == MiddlePosition {
+// hookHeight is the height of a hook of the lines.
+func (s *Style) hookHeight(lines int) int {
+	return int(float64(lines*s.Hook.Size) * lineHeightFactor)
+}
+
+// hookSubtitlesMargin is the margin of the subtitles shown with a hook of the lines: right after it from the same
+// edge. 0 for subtitles in the middle (they stay where they are) or without a hook.
+func (s *Style) hookSubtitlesMargin(lines int) int {
+	if s.Layout.Position == MiddlePosition || lines <= 0 {
 		return 0
 	}
 
-	top, bottom := s.hookSpan()
+	return s.hookMargin() + s.hookHeight(lines) + s.Hook.Gap
+}
 
-	return s.hookMargin() + (bottom - top) + s.Hook.Gap
+// hookLineCount is how many lines the hook takes, 0 without one.
+func (s *Style) hookLineCount(hook string) int {
+	words := hookWords(hook, s)
+	if len(words) == 0 {
+		return 0
+	}
+
+	return len(splitHook(words, s.hookLineChars()))
+}
+
+// hookWords are the words of the hook as it is drawn, in capitals when the style says so. Defense in depth (the app
+// checks the text): control characters become spaces, invisible format characters are dropped, the text is cut to
+// hookMaxRunes.
+func hookWords(hook string, style *Style) []string {
+	clean := strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsControl(r):
+			return ' '
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		default:
+			return r
+		}
+	}, hook)
+
+	if runes := []rune(clean); len(runes) > hookMaxRunes {
+		clean = string(runes[:hookMaxRunes])
+	}
+
+	words := strings.Fields(clean)
+	if style.Hook.Uppercase {
+		for i := range words {
+			words[i] = strings.ToUpper(words[i])
+		}
+	}
+
+	return words
 }
 
 // hookLineChars is how many characters of the hook fit on a line between the side margins.
@@ -128,8 +170,13 @@ func validateHookValues(h *HookStyle) []error {
 		errs = append(errs, fmt.Errorf("hook.duration must be %.0f..%.0f s", minHookDuration, maxHookDuration))
 	}
 
-	if h.Fade < 0 || h.Fade > maxHookFade || float64(2*h.Fade) >= h.Duration*millisPerSecond {
-		errs = append(errs, fmt.Errorf("hook.fade must be 0..%d ms and shorter than half of hook.duration", maxHookFade))
+	if h.MinDuration <= 0 || h.MinDuration > h.Duration {
+		errs = append(errs, errors.New("hook.min_duration must be positive and at most hook.duration"))
+	}
+
+	if h.Fade < 0 || h.Fade > maxHookFade || float64(2*h.Fade) >= h.MinDuration*millisPerSecond {
+		errs = append(errs, fmt.Errorf("hook.fade must be 0..%d ms and shorter than half of hook.min_duration",
+			maxHookFade))
 	}
 
 	if h.Gap < 0 || h.Gap > maxHookGap {
@@ -166,7 +213,7 @@ func validateHookPlace(s *Style) []error {
 			titleTop, titleBottom))
 	}
 
-	margin := s.hookSubtitlesMargin()
+	margin := s.hookSubtitlesMargin(hookLines)
 	if margin == 0 {
 		if subTop, subBottom := s.subtitlesSpan(); hookTop < subBottom && subTop < hookBottom {
 			errs = append(errs, fmt.Errorf("hook (%d..%d px) overlaps the subtitles in the middle (%d..%d px)",
@@ -192,16 +239,16 @@ func outsideZones(top, bottom int) bool {
 }
 
 // hookEnd is when the hook disappears: after the style's duration, at most phraseTail after the first phrase of the
-// speech and at the end of the reel; 0 without a hook.
+// speech but not before the style's min_duration, and at the end of the reel at the latest; 0 without a hook.
 func hookEnd(hook string, result *transcription.Result, style *Style) float64 {
-	if strings.TrimSpace(hook) == "" {
+	if len(hookWords(hook, style)) == 0 {
 		return 0
 	}
 
 	end := style.Hook.Duration
 
 	if phrase, ok := firstPhraseEnd(result); ok {
-		end = min(end, phrase+phraseTail)
+		end = max(style.Hook.MinDuration, min(end, phrase+phraseTail))
 	}
 
 	if result.Duration > 0 {
@@ -231,17 +278,12 @@ func firstPhraseEnd(result *transcription.Result) (float64, bool) {
 // the style says so, in at most two lines squeezed to fit, with its key word highlighted. The text is plain: it is
 // escaped like speech.
 func hookEvent(hook string, end float64, style *Style) string {
-	words := strings.Fields(hook)
+	words := hookWords(hook, style)
 	if len(words) == 0 || end <= 0 {
 		return ""
 	}
 
 	h := &style.Hook
-	if h.Uppercase {
-		for i := range words {
-			words[i] = strings.ToUpper(words[i])
-		}
-	}
 
 	fade := min(h.Fade, int(end*millisPerSecond)/2)
 	key := hookKey(words)
@@ -395,6 +437,78 @@ func hookStyleLine(style *Style) string {
 		formatFloat(style.Outline.Size), formatFloat(style.Shadow.Size),
 		strconv.Itoa(alignment), strconv.Itoa(style.Layout.MarginSide), strconv.Itoa(style.Layout.MarginSide),
 		strconv.Itoa(marginV), "1",
+	}
+
+	return "Style: " + strings.Join(fields, ",")
+}
+
+// hookLayout is the hook title of a document: shown until end (0: no hook), the subtitles that start before it stand
+// at margin (0: where they are).
+type hookLayout struct {
+	end    float64
+	margin int
+}
+
+// The shade under the subtitles shown with the hook: the vignette is static (burned by ffmpeg) and reaches only the
+// usual place of the subtitles, so while they stand under the hook an ASS drawing darkens the frame down to them.
+const (
+	shadeStyleName = "Shade"
+	// shadeOverlap: the shade starts this far inside the even part of the vignette, so the two merge.
+	shadeOverlap = 80
+	// shadePad: the shade goes this far past the subtitles under the hook.
+	shadePad = 50
+	// shadeBlur softens the edges of the shade (\blur), shadeOverhang keeps the blurred sides out of the frame.
+	shadeBlur     = 40
+	shadeOverhang = 100
+	// assBlack is opaque black in the ASS &HAABBGGRR form.
+	assBlack = "&H00000000"
+)
+
+// shadeEvent is the drawing that extends the vignette under the subtitles shown with the hook, from the start of the
+// reel to the end of the last of them, fading like the hook; "" without a hook, a vignette or shifted subtitles. It is
+// the first event, on layer 0, under every text.
+func shadeEvent(cues []cue, style *Style, hook hookLayout) string {
+	v := style.Vignette
+	if hook.end <= 0 || hook.margin == 0 || !v.Enabled || style.Layout.Position == MiddlePosition {
+		return ""
+	}
+
+	end := 0.0
+
+	for _, c := range cues {
+		if c.Start < hook.end {
+			end = max(end, c.End)
+		}
+	}
+
+	if end <= 0 {
+		return ""
+	}
+
+	plateau, bottom := style.vignetteSpan()
+	top, low := plateau-shadeOverlap, hook.margin+style.blockHeight()+shadePad
+
+	if bottom {
+		top, low = FrameHeight-low, FrameHeight-top
+	}
+
+	fade := min(style.Hook.Fade, int(end*millisPerSecond)/2)
+	alpha := opaque - int(math.Round(v.Opacity*opaque))
+
+	return fmt.Sprintf("Dialogue: 0,%s,%s,%s,,0,0,0,,{\\an7\\pos(0,0)\\fad(%d,%d)\\1c&H000000&\\1a&H%02X&\\blur%d\\p1}"+
+		"m %d %d l %d %d l %d %d l %d %d{\\p0}\n", formatTime(0), formatTime(end), shadeStyleName, fade, fade, alpha,
+		shadeBlur, -shadeOverhang, top, FrameWidth+shadeOverhang, top, FrameWidth+shadeOverhang, low, -shadeOverhang,
+		low)
+}
+
+// shadeStyleLine is the style of the shade drawing: black, no outline or shadow (the text font only keeps libass from
+// looking for another one).
+func shadeStyleLine(style *Style) string {
+	fields := []string{
+		shadeStyleName, style.Text.Font, strconv.Itoa(style.Text.Size),
+		assBlack, assBlack, assBlack, assBlack,
+		"0", "0", "0", "0", "100", "100", "0", "0", strconv.Itoa(outlineBorderStyle), "0", "0",
+		strconv.Itoa(topAlignment), "0", "0", "0", "1",
 	}
 
 	return "Style: " + strings.Join(fields, ",")

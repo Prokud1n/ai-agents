@@ -84,8 +84,9 @@ title:
 
 # Hook title over the first seconds of the reel («ТРИ ОШИБКИ В ПЛАНКЕ»): the editor's model proposes it, the trainer
 # changes or removes it by a revision. It stands at the subtitles' edge (at the top when they are in the middle) at
-# their margin; while it is shown the subtitles stand right under it (here 260..480 px the hook, from 500 px the
-# subtitles), clear of it, of the exercise titles and of the Instagram zones. At most 2 lines: a hook is at most 40
+# their margin; while it is shown the subtitles stand right under it (here 260..480 px a hook of two lines, from 500 px
+# the subtitles; a hook of one line moves them less), clear of it, of the exercise titles and of the Instagram zones.
+# The vignette is extended under them (an ASS drawing of the same opacity) until the last of them ends. At most 2 lines: a hook is at most 40
 # characters (the app checks it), a longer line is squeezed. Ivory capitals in the accent font, larger than any text
 # of the reel; highlight colors one key word (a number with its word, otherwise the longest word) in the accent
 # yellow, so the hook reads as the brand's without competing with the yellow accents of the subtitles under it.
@@ -96,8 +97,10 @@ hook:
   uppercase: true
   color: "#F5F0E1" # ivory, as the text
   highlight: "#F2B94B" # the accent yellow; "" — none
-  # Seconds at most; the hook also ends half a second after the first phrase and with the reel.
+  # Seconds at most; the hook also ends half a second after the first phrase, but not before min_duration, and with
+  # the reel at the latest.
   duration: 2.5
+  min_duration: 1.5
   # Fade in and out, ms.
   fade: 150
   # Between the hook and the subtitles under it, px.
