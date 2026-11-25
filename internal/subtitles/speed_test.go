@@ -48,10 +48,17 @@ const (
 	bitsPerKbit   = 1000
 	// maxRenderRatio is a coarse guard against a regression: before T3.11 the draft took about 7.5 s of render per
 	// second on 2 CPUs (ffmpeg 6.1, 50 Mbit/s source), after it about 2.7 s.
-	maxRenderRatio  = 5.5
-	estimateMinutes = 10
-	benchFontsEnv   = "SUBTITLES_FONTS_DIR"
-	benchFontsDir   = "../../assets/fonts"
+	maxRenderRatio = 5.5
+	// The sound and the zoom of the worker's defaults (MEDIA_WORKER_LOUDNESS -14, MEDIA_WORKER_ZOOM 9).
+	benchLoudness    = -14.0
+	benchTruePeak    = -2.0
+	benchRange       = 11.0
+	benchZoom        = 1.09
+	benchZoomSegment = 1.2
+	benchPercent     = 100
+	estimateMinutes  = 10
+	benchFontsEnv    = "SUBTITLES_FONTS_DIR"
+	benchFontsDir    = "../../assets/fonts"
 )
 
 var benchWords = []string{"Делаем", "три", "подхода", "эээ", "держим", "спину"}
@@ -104,19 +111,33 @@ func TestRenderSpeed(t *testing.T) {
 	burner, err := subtitles.NewService(runner, &config.Subtitles{FontsDir: fonts}, log)
 	require.NoError(t, err)
 
-	draft := &ffmpeg.Cut{Segments: cut.Segments(), Options: cut.Render}
+	// The same talk as before T3.15 (no sound processing, no zoom), on the same machine: the cost of T3.15 is the
+	// difference with the draft below.
+	plain := filepath.Join(dir, "plain.mp4")
+	elapsed := burnBench(ctx, t, burner, plain, &subtitles.BurnSubtitlesData{
+		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: &cut.Transcript},
+		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: &ffmpeg.Cut{Segments: cut.Segments(), Options: cut.Render},
+		ToneMap: info.HDR(),
+	})
+	plainRatio := logReel(ctx, t, "talk without the sound and the zoom", plain, elapsed, len(cut.Plan.Keep))
+
+	draft := benchDraft(ctx, t, runner, cut, source, filepath.Join(dir, "audio.mp3"))
 	reel := filepath.Join(dir, "reel.mp4")
-	elapsed := burnBench(ctx, t, burner, reel, &subtitles.BurnSubtitlesData{
+	elapsed = burnBench(ctx, t, burner, reel, &subtitles.BurnSubtitlesData{
 		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: &cut.Transcript},
 		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: draft, ToneMap: info.HDR(),
 	})
 	ratio := logReel(ctx, t, "talk", reel, elapsed, len(cut.Plan.Keep))
 	assert.Less(t, ratio, maxRenderRatio, "the render is as slow as before T3.11 (7.5 s per second on 2 CPUs)")
+	t.Logf("render speed: the sound and the zoom of T3.15 cost %+.1f %% of the talk render", (ratio/plainRatio-1)*benchPercent)
 
 	// A workout keeps the whole source: the time per second of the source shows how long a 10-minute one takes.
 	rate := cut.Render.FrameRate.Float()
+	// A workout: the loudness only, no noise reduction or zoom.
+	workoutSound := cut.Render
+	workoutSound.Loudness = draft.Options.Loudness
 	whole := &ffmpeg.Cut{
-		Segments: []ffmpeg.Segment{{Start: 0, End: math.Floor(cut.Plan.SourceDuration*rate) / rate}}, Options: cut.Render,
+		Segments: []ffmpeg.Segment{{Start: 0, End: math.Floor(cut.Plan.SourceDuration*rate) / rate}}, Options: workoutSound,
 	}
 	workout := filepath.Join(dir, "workout.mp4")
 	elapsed = burnBench(ctx, t, burner, workout, &subtitles.BurnSubtitlesData{
@@ -126,6 +147,35 @@ func TestRenderSpeed(t *testing.T) {
 	ratio = logReel(ctx, t, "workout", workout, elapsed, 1)
 	t.Logf("workout estimate: a %d-minute source renders in about %.1f min here (MEDIA_WORKER_FFMPEG_TIMEOUT 45m)",
 		estimateMinutes, ratio*estimateMinutes)
+}
+
+// benchDraft is the cut with the sound and the framing the worker renders a talking head with (T3.15, the defaults of
+// MEDIA_WORKER_*): the loudness by the measurement taken while the audio is extracted for the speech recognition (not
+// timed: it is that pass), the noise reduction and the jump-cut zoom.
+func benchDraft(
+	ctx context.Context,
+	t *testing.T,
+	runner *ffmpeg.Runner,
+	cut *roughcut.Result,
+	source, audio string,
+) *ffmpeg.Cut {
+	t.Helper()
+
+	measured, err := runner.ExtractAudioMeasured(ctx, source, audio)
+	require.NoError(t, err)
+	require.NotNil(t, measured)
+
+	talk := cut.Render
+	talk.Denoise = &ffmpeg.Denoise{NoiseFloor: ffmpeg.NoiseFloorFor(measured)}
+	talk.Loudness = &ffmpeg.LoudnessTarget{Integrated: benchLoudness, TruePeak: benchTruePeak, Range: benchRange, Measured: measured}
+	draft := &ffmpeg.Cut{
+		Segments: cut.Segments(), Options: talk, Zoom: &ffmpeg.Zoom{Factor: benchZoom, MinSegment: benchZoomSegment},
+	}
+
+	t.Logf("bench sound: source %.1f LUFS, true peak %.1f dBTP; zooms %d of %d fragments",
+		measured.Integrated, measured.TruePeak, draft.Zooms(), len(cut.Plan.Keep))
+
+	return draft
 }
 
 // burnBench renders data into out and returns the seconds it took.

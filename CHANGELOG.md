@@ -21,6 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overwritten; `~` in paths is expanded, `$` in texts is kept; an app image older than the code asks for `make up`
   (the check is shared with `make kb-*`, `scripts/image-age.sh`).
 
+- Sound and dynamics of the editor's drafts (T3.15a). The draft is brought to -14 LUFS integrated, whatever the phone
+  recorded: the loudness of the source is measured (`ebur128`) in the same ffmpeg pass that extracts the audio for the
+  speech recognition and stored in the source transcript (`loudness`); the render and every revision give the sound
+  one gain (`volume`, the target minus the measurement) and a peak limiter (`alimiter` at -2.0 dBTP, 5 ms lookahead
+  compensated, 50 ms release), so the dynamics of speech stay as recorded and the true peak after AAC is at most
+  -1.5 dBTP. A transcript stored before has no measurement and is normalized by `loudnorm` in one pass. A source
+  quieter than -50 LUFS (silence, noise) and a muted reel are not raised. A talking head gets a light noise reduction
+  of speech first (`highpass` 80 Hz + `afftdn` nr 10 dB, its noise floor 36 dB under the loudness of the recording,
+  within -80…-35 dBFS, -50 without a measurement; the 25 ms delay of `afftdn` is compensated, the sound stays in sync
+  with the picture); a workout does not (it would eat into the music). A talking head also gets the jump-cut zoom: at
+  the joints the framing alternates between the plain frame and one 9 % closer (static, the fixed point at the middle
+  across and 40 % down — the face), a piece shorter than 1.2 s keeps the framing; the 1080×1920 frame is zoomed after
+  the fit and the tone mapping, under the shade and the subtitles, and in `pad` mode the black bars stay black.
+  `decisions.log` ends with «Звук и кадр»: the loudness before → after and how (the gain in dB or `loudnorm` without a
+  measurement), the floor of the noise reduction and the number of zooms. New `MEDIA_WORKER_LOUDNESS` (`-14`, `off`),
+  `MEDIA_WORKER_DENOISE` (`true`), `MEDIA_WORKER_ZOOM` (`9` %, `0` off). Render speed (`TestRenderSpeed`, 4K60 HEVC
+  HLG, 2 CPUs, the talk rendered with and without them on the same runner, 2a1e23a): 3.05 → 3.10 s of render per
+  second of the reel, +1.4 % (an earlier run +3.1 %: 3.39 → 3.50); the workout 2.46 s (main: 2.85 on another runner). The synthetic bench does not cover
+  the expensive path: its sound is measured (the cheap gain and limiter, not the one-pass `loudnorm` at 192 kHz of an
+  old transcript; the zoom costs the same whatever the number of zoomed pieces).
 - Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more
   than `roughcut.TargetMargin` (10 %: over 66 s) after the cleaning is planned by the worker and given to the editor's
   model even without a caption or disputed repeats (shorter ones are rendered at once, no model call; the worker and
