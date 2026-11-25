@@ -432,9 +432,9 @@ func wait(ctx context.Context, delay time.Duration, wake <-chan struct{}) error 
 
 // listen signals wake when the worker announces a finished job of the task; stop ends the listener. A lost
 // announcement only delays the loop until the poll.
-func (r *Runner) listen(ctx context.Context, taskID int64) (<-chan struct{}, func()) {
+func (r *Runner) listen(ctx context.Context, taskID int64) (wake <-chan struct{}, stop func()) {
 	listenCtx, cancel := context.WithCancel(ctx)
-	wake := make(chan struct{}, 1)
+	signal := make(chan struct{}, 1)
 	done := make(chan struct{})
 
 	go func() {
@@ -446,7 +446,7 @@ func (r *Runner) listen(ctx context.Context, taskID int64) (<-chan struct{}, fun
 			}
 
 			select {
-			case wake <- struct{}{}:
+			case signal <- struct{}{}:
 			default:
 			}
 		})
@@ -455,7 +455,7 @@ func (r *Runner) listen(ctx context.Context, taskID int64) (<-chan struct{}, fun
 		}
 	}()
 
-	return wake, func() {
+	return signal, func() {
 		cancel()
 		<-done
 	}

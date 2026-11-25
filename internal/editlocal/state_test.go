@@ -11,7 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testSourceKey = "incoming/1/1000000000000000007/local.mov"
+const (
+	testSourceKey = "incoming/1/1000000000000000007/local.mov"
+	testCaption   = "подпись"
+	testRevision  = "сделай 40 секунд"
+	testClip      = "clip.mp4"
+)
 
 func TestTaskID(t *testing.T) {
 	t.Parallel()
@@ -74,18 +79,18 @@ func TestIsLocalTaskID(t *testing.T) {
 func TestStateNext(t *testing.T) {
 	t.Parallel()
 
-	first := &State{TaskID: TaskIDBase + 7, SourceKey: testSourceKey, Caption: "подпись", Version: 1}
+	first := &State{TaskID: TaskIDBase + 7, SourceKey: testSourceKey, Caption: testCaption, Version: 1}
 
-	second := first.Next("сделай 40 секунд")
+	second := first.Next(testRevision)
 	third := second.Next("убери начало")
 
 	assert.Equal(t, 1, first.Version, "the state is not changed")
 	assert.Empty(t, first.Revisions)
 	assert.Equal(t, 2, second.Version)
-	assert.Equal(t, []Revision{{Version: 2, Text: "сделай 40 секунд"}}, second.Revisions)
+	assert.Equal(t, []Revision{{Version: 2, Text: testRevision}}, second.Revisions)
 	assert.Equal(t, 3, third.Version)
-	assert.Equal(t, []Revision{{Version: 2, Text: "сделай 40 секунд"}, {Version: 3, Text: "убери начало"}}, third.Revisions)
-	assert.Equal(t, "подпись", third.Caption)
+	assert.Equal(t, []Revision{{Version: 2, Text: testRevision}, {Version: 3, Text: "убери начало"}}, third.Revisions)
+	assert.Equal(t, testCaption, third.Caption)
 	assert.Equal(t, testSourceKey, third.SourceKey)
 }
 
@@ -98,7 +103,7 @@ func TestSaveAndLoadState(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoState, "a new output directory")
 
 	state := &State{
-		TaskID: TaskIDBase + 7, SourceKey: testSourceKey, SourceFile: "clip.mov", Caption: "подпись", Version: 1,
+		TaskID: TaskIDBase + 7, SourceKey: testSourceKey, SourceFile: "clip.mov", Caption: testCaption, Version: 1,
 		UpdatedAt: time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC),
 	}
 	require.NoError(t, SaveState(dir, state))

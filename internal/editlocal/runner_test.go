@@ -21,7 +21,10 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
-const testTaskID = TaskIDBase + 7
+const (
+	testTaskID  = TaskIDBase + 7
+	testContent = "video"
+)
 
 // step is one run of the fake executor: its output or error.
 type step struct {
@@ -119,7 +122,7 @@ func newRunnerEnv(t *testing.T, alive bool, steps ...step) *runnerEnv {
 
 	env := &runnerEnv{executor: &fakeExecutor{steps: steps}, store: &fakeStore{}, out: t.TempDir()}
 	env.source = filepath.Join(t.TempDir(), "Clip.MOV")
-	require.NoError(t, os.WriteFile(env.source, []byte("video"), 0o600))
+	require.NoError(t, os.WriteFile(env.source, []byte(testContent), 0o600))
 
 	env.runner = NewRunner(&Params{
 		Executor: env.executor, Board: &fakeBoard{alive: alive}, Store: env.store, Sequence: fakeSequence{},
@@ -144,10 +147,11 @@ func TestRunnerFirstAndRevise(t *testing.T) {
 
 	env := newRunnerEnv(t, true, deferred(), deferred(), done("Черновик 1"), deferred(), done("Черновик 2"))
 
-	first, err := env.runner.First(t.Context(), &FirstData{Path: env.source, Caption: "подпись", OutDir: env.out})
+	first, err := env.runner.First(t.Context(), &FirstData{Path: env.source, Caption: testCaption, OutDir: env.out})
 	require.NoError(t, err)
 	assert.True(t, first.Done)
-	assert.Equal(t, "v1", first.Dir)
+	v1 := VersionDir(1)
+	assert.Equal(t, v1, first.Dir)
 	assert.Equal(t, testTaskID, first.TaskID)
 
 	require.Len(t, env.store.saved, 1)
@@ -155,18 +159,18 @@ func TestRunnerFirstAndRevise(t *testing.T) {
 		env.store.saved[0])
 
 	for _, name := range VersionFiles {
-		assert.FileExists(t, filepath.Join(env.out, "v1", name))
+		assert.FileExists(t, filepath.Join(env.out, v1, name))
 	}
 
-	reel, err := os.ReadFile(filepath.Join(env.out, "v1", ReelFile))
+	reel, err := os.ReadFile(filepath.Join(env.out, v1, ReelFile))
 	require.NoError(t, err)
 	assert.Equal(t, "edits/1/1000000000000000007/local-v1-reel.mp4", string(reel))
 
-	description, err := os.ReadFile(filepath.Join(env.out, "v1", DescriptionFile))
+	description, err := os.ReadFile(filepath.Join(env.out, v1, DescriptionFile))
 	require.NoError(t, err)
 	assert.Equal(t, "Черновик 1\n", string(description))
 
-	second, err := env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: "  сделай 40 секунд "})
+	second, err := env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: "  " + testRevision + " "})
 	require.NoError(t, err)
 	assert.Equal(t, 2, second.Version)
 	assert.FileExists(t, filepath.Join(env.out, "v2", ReelFile))
@@ -175,18 +179,18 @@ func TestRunnerFirstAndRevise(t *testing.T) {
 	require.Len(t, runs, 5)
 	assert.Equal(t, editor.AgentName, runs[0].Agent)
 	assert.Equal(t, "reels-edit", runs[0].Kind)
-	assert.Equal(t, "подпись", runs[0].Input)
+	assert.Equal(t, testCaption, runs[0].Input)
 	assert.Equal(t, []string{"incoming/1/1000000000000000007/local.mov"}, runs[0].Media)
 	assert.Equal(t, 1, runs[2].Version)
 	assert.Empty(t, runs[2].Revision)
 	assert.Equal(t, 2, runs[4].Version)
-	assert.Equal(t, "сделай 40 секунд", runs[4].Revision)
-	assert.Equal(t, "подпись", runs[4].Input, "the caption stays the task's input")
+	assert.Equal(t, testRevision, runs[4].Revision)
+	assert.Equal(t, testCaption, runs[4].Input, "the caption stays the task's input")
 
 	state, err := LoadState(env.out)
 	require.NoError(t, err)
 	assert.Equal(t, 2, state.Version)
-	assert.Equal(t, []Revision{{Version: 2, Text: "сделай 40 секунд"}}, state.Revisions)
+	assert.Equal(t, []Revision{{Version: 2, Text: testRevision}}, state.Revisions)
 }
 
 func TestRunnerRefusedRevisionKeepsVersion(t *testing.T) {
@@ -274,11 +278,11 @@ func TestRunnerChecksBeforeUpload(t *testing.T) {
 		existing bool
 		expected error
 	}{
-		{name: "no worker", alive: false, file: "clip.mp4", content: "video", expected: ErrWorkerNotRunning},
+		{name: "no worker", alive: false, file: testClip, content: testContent, expected: ErrWorkerNotRunning},
 		{name: "not a video", alive: true, file: "notes.txt", content: "text", expected: ErrInvalidSource},
-		{name: "empty", alive: true, file: "clip.mp4", content: "", expected: ErrInvalidSource},
-		{name: "too large", alive: true, file: "clip.mp4", content: strings.Repeat("x", 1<<20+1), expected: ErrInvalidSource},
-		{name: "an edit is there", alive: true, file: "clip.mp4", content: "video", existing: true, expected: ErrOutInUse},
+		{name: "empty", alive: true, file: testClip, content: "", expected: ErrInvalidSource},
+		{name: "too large", alive: true, file: testClip, content: strings.Repeat("x", 1<<20+1), expected: ErrInvalidSource},
+		{name: "an edit is there", alive: true, file: testClip, content: testContent, existing: true, expected: ErrOutInUse},
 	}
 
 	for _, tt := range tests {

@@ -55,7 +55,8 @@ func (s *State) Next(revision string) *State {
 
 	revisions := make([]Revision, 0, len(s.Revisions)+1)
 	revisions = append(revisions, s.Revisions...)
-	next.Revisions = append(revisions, Revision{Version: next.Version, Text: revision})
+	revisions = append(revisions, Revision{Version: next.Version, Text: revision})
+	next.Revisions = revisions
 
 	return &next
 }

@@ -13,6 +13,14 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
+const (
+	inFlag       = "-in"
+	outFlag      = "-out"
+	revisionFlag = "-revision"
+	testClip     = "/in/clip.mov"
+	testOut      = "/out"
+)
+
 func TestParseFlags(t *testing.T) {
 	t.Parallel()
 
@@ -24,26 +32,26 @@ func TestParseFlags(t *testing.T) {
 	}{
 		{
 			name:     "new edit",
-			args:     []string{"-in", "/in/clip.mov", "-out", "/out"},
-			expected: options{in: "/in/clip.mov", out: "/out"},
+			args:     []string{inFlag, testClip, outFlag, testOut},
+			expected: options{in: testClip, out: testOut},
 		},
 		{
 			name:     "new edit with a caption",
-			args:     []string{"-in", "/in/clip.mov", "-caption", "-5 кг за месяц", "-out", "/out"},
-			expected: options{in: "/in/clip.mov", caption: "-5 кг за месяц", out: "/out"},
+			args:     []string{inFlag, testClip, "-caption", "-5 кг за месяц", outFlag, testOut},
+			expected: options{in: testClip, caption: "-5 кг за месяц", out: testOut},
 		},
 		{
 			name:     "revision",
-			args:     []string{"-out", "/out", "-revision", "сделай 40 секунд"},
-			expected: options{out: "/out", revision: "сделай 40 секунд"},
+			args:     []string{outFlag, testOut, revisionFlag, "сделай 40 секунд"},
+			expected: options{out: testOut, revision: "сделай 40 секунд"},
 		},
-		{name: "no out", args: []string{"-in", "/in/clip.mov"}, expectErr: true},
-		{name: "nothing to do", args: []string{"-out", "/out"}, expectErr: true},
-		{name: "blank revision", args: []string{"-out", "/out", "-revision", "  "}, expectErr: true},
-		{name: "both", args: []string{"-in", "/in/clip.mov", "-out", "/out", "-revision", "короче"}, expectErr: true},
-		{name: "caption of a revision", args: []string{"-out", "/out", "-revision", "короче", "-caption", "x"}, expectErr: true},
-		{name: "extra argument", args: []string{"-in", "/in/clip.mov", "-out", "/out", "more"}, expectErr: true},
-		{name: "unknown flag", args: []string{"-file", "/in/clip.mov"}, expectErr: true},
+		{name: "no out", args: []string{inFlag, testClip}, expectErr: true},
+		{name: "nothing to do", args: []string{outFlag, testOut}, expectErr: true},
+		{name: "blank revision", args: []string{outFlag, testOut, revisionFlag, "  "}, expectErr: true},
+		{name: "both", args: []string{inFlag, testClip, outFlag, testOut, revisionFlag, "короче"}, expectErr: true},
+		{name: "caption of a revision", args: []string{outFlag, testOut, revisionFlag, "короче", "-caption", "x"}, expectErr: true},
+		{name: "extra argument", args: []string{inFlag, testClip, outFlag, testOut, "more"}, expectErr: true},
+		{name: "unknown flag", args: []string{"-file", testClip}, expectErr: true},
 	}
 
 	for _, tt := range tests {
@@ -73,7 +81,7 @@ func TestHelpExitsZero(t *testing.T) {
 
 	assert.Equal(t, 0, run([]string{"-h"}, &stdout, &stderr))
 	assert.Contains(t, stderr.String(), "usage:")
-	assert.Equal(t, usageExitCode, run([]string{"-out", "/out"}, &stdout, &stderr))
+	assert.Equal(t, usageExitCode, run([]string{outFlag, testOut}, &stdout, &stderr))
 }
 
 func TestPrintFailure(t *testing.T) {
