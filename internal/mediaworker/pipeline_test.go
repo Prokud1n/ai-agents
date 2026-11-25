@@ -505,7 +505,7 @@ func TestPipelineDrawsHook(t *testing.T) {
 		edit     *roughcut.Edit
 		expected string
 	}{
-		{name: "the hook of the edit", edit: &roughcut.Edit{Hook: "Планка без ошибок"}, expected: "Планка без ошибок"},
+		{name: "the hook of the edit", edit: &roughcut.Edit{Hook: hookText}, expected: hookText},
 		{name: "an edit without one", edit: &roughcut.Edit{}, expected: ""},
 		{name: "an automatic plan", edit: nil, expected: ""},
 	}

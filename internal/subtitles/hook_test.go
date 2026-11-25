@@ -156,9 +156,9 @@ func TestHookLayout(t *testing.T) {
 		shift  int
 		shifts bool
 	}{
-		{name: "top", style: &top, hook: [2]int{260, 480}, shift: 500, shifts: true},
+		{name: "at the top", style: &top, hook: [2]int{260, 480}, shift: 500, shifts: true},
 		{name: "at the bottom", style: &bottom, hook: [2]int{1260, 1480}, shift: 680, shifts: true},
-		{name: "middle", style: &middle, hook: [2]int{260, 480}, shift: 0},
+		{name: "in the middle", style: &middle, hook: [2]int{260, 480}, shift: 0},
 	}
 
 	for _, tt := range tests {

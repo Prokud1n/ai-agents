@@ -98,7 +98,7 @@ func startEditEnv(t *testing.T) *editEnv {
 	client := redistest.Connect(t)
 
 	files, err := media.NewStore(s3test.Connect(t),
-		&config.Media{KeyPrefix: "incoming", ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)
+		&config.Media{KeyPrefix: testKeyPrefix, ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)
 	require.NoError(t, err)
 
 	cfg := &config.Editor{
