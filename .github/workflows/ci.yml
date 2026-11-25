@@ -539,6 +539,16 @@ jobs:
           docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/subtitles.test:/app/subtitles.test:ro" \
             --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestBurnSubtitlesWithFFmpeg'
 
+      # Render speed of a draft (T3.11): a vertical 4K 60 fps 10-bit HEVC HLG source with grain, rough cut into several
+      # fragments with subtitles in one pass, on 2 CPUs as the VPS has. The log line "render speed" is the measurement.
+      - name: Measure the render speed inside the media image (2 CPUs)
+        run: |
+          docker run --rm --cpus=2 -e FFMPEG_TESTS_REQUIRED=1 -e RENDER_BENCH=1 \
+            -v "$PWD/subtitles.test:/app/subtitles.test:ro" --entrypoint /app/subtitles.test ai-agents-media:ci \
+            -test.v -test.count=1 -test.timeout=40m -test.run 'TestRenderSpeed' | tee bench.txt
+          grep -q -- '--- PASS: TestRenderSpeed ' bench.txt || { echo "::error::TestRenderSpeed did not pass"; exit 1; }
+          grep 'render speed:' bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
+
       # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with
       # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export,
       # the workout plan with the exercise title (the Title style on its box), the muted reel and a dense talk.
