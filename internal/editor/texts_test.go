@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -92,13 +93,9 @@ func TestDescribe(t *testing.T) {
 			name:    "a long talking head only cleaned",
 			result:  editjob.Result{SourceDuration: 182, Duration: 141},
 			version: 1,
-			summary: &editjob.Summary{Note: "Ролик длиннее рекомендованных для рилс 30–60 с: сократить его не " +
-				"получилось из-за технической ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если " +
-				"нужно короче, ответьте на черновик, например: „сделай 45 секунд“."},
+			summary: &editjob.Summary{Note: longFailed60},
 			expected: "Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (паузы, оговорки и неудачные дубли).\n" +
-				"Ролик длиннее рекомендованных для рилс 30–60 с: сократить его не получилось из-за технической ошибки, " +
-				"поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, " +
-				"например: „сделай 45 секунд“.",
+				longFailed60,
 		},
 		{
 			name:     "nothing to cut",
@@ -157,31 +154,25 @@ func TestFirstSummary(t *testing.T) {
 	}{
 		{
 			name: "a long talking head shortened", plan: longTalk, target: 60,
-			outcome: editplan.Outcome{Kind: editplan.EditOutcome, Selected: true, Changes: []string{"Не вошло: «привет»."}},
+			outcome: editplan.Outcome{Kind: editplan.EditOutcome, Selected: true, Changes: []string{droppedHello}},
 			expected: editjob.Summary{Selected: true, Changes: []string{
-				"Не вошло: «привет».", "Спорные повторы: вырезал 0, оставил 1.",
+				droppedHello, cutNoneOfOne,
 			}},
 		},
 		{
 			name: "a long talking head the model failed on", plan: longTalk, target: 60,
-			outcome: editplan.Outcome{Kind: editplan.FailedOutcome},
-			expected: editjob.Summary{Changes: []string{"Спорные повторы оставил в ролике: 1."}, Note: "Ролик " +
-				"длиннее рекомендованных для рилс 30–60 с: сократить его не получилось из-за технической ошибки, " +
-				"поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, " +
-				"например: „сделай 45 секунд“."},
+			outcome:  editplan.Outcome{Kind: editplan.FailedOutcome},
+			expected: editjob.Summary{Changes: []string{leftOneRepeat}, Note: longFailed60},
 		},
 		{
 			name: "a long talking head with a caption not understood", plan: longTalk, target: 60, caption: "красиво",
-			outcome: editplan.Outcome{Kind: editplan.InvalidOutcome},
-			expected: editjob.Summary{Changes: []string{"Спорные повторы оставил в ролике: 1."}, Note: captionUnclearNote +
-				" Ролик длиннее рекомендованных для рилс 30–60 с: не смог выбрать, что оставить, поэтому вырезал " +
-				"только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: " +
-				"„сделай 45 секунд“."},
+			outcome:  editplan.Outcome{Kind: editplan.InvalidOutcome},
+			expected: editjob.Summary{Changes: []string{leftOneRepeat}, Note: captionUnclearNote + " " + longUnchosen60},
 		},
 		{
 			name: "within the target: no note", plan: longTalk, target: 180,
 			outcome:  editplan.Outcome{Kind: editplan.NoAnswerOutcome},
-			expected: editjob.Summary{Changes: []string{"Спорные повторы оставил в ролике: 1."}},
+			expected: editjob.Summary{Changes: []string{leftOneRepeat}},
 		},
 		{
 			name: "repeats decided", plan: twoCandidates,
@@ -245,6 +236,29 @@ func TestFirstSummary(t *testing.T) {
 			assert.Equal(t, &tt.expected, firstSummary(req, &tt.outcome))
 		})
 	}
+}
+
+const (
+	droppedHello = "Не вошло: «привет»."
+	cutNoneOfOne = "Спорные повторы: вырезал 0, оставил 1."
+)
+
+// The notes of a long talking head only cleaned, for the recommended 30–60 s.
+var (
+	longFailed60   = fmt.Sprintf(longFailedNote, "30–60 с", "45 секунд")
+	longUnchosen60 = fmt.Sprintf(longUnchosenNote, "30–60 с", "45 секунд")
+)
+
+// TestLongNotes: the notes of a long talking head as the trainer reads them.
+func TestLongNotes(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "Ролик длиннее рекомендованных для рилс 30–60 с: сократить его не получилось из-за технической "+
+		"ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, "+
+		"например: „сделай 45 секунд“.", longFailed60)
+	assert.Equal(t, "Ролик длиннее рекомендованных для рилс 30–60 с: не смог выбрать, что оставить, поэтому вырезал "+
+		"только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: „сделай 45 "+
+		"секунд“.", longUnchosen60)
 }
 
 func TestSecondsText(t *testing.T) {

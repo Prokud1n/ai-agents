@@ -1035,12 +1035,10 @@ func TestExecutorSelectsLongTalk(t *testing.T) {
 	t.Parallel()
 
 	selected := &editplan.Outcome{
-		Kind: editplan.EditOutcome, Selected: true, Changes: []string{"Не вошло: «привет»."},
+		Kind: editplan.EditOutcome, Selected: true, Changes: []string{droppedHello},
 		Edit: roughcut.Edit{Remove: []roughcut.WordRange{{From: 0, To: 0}}, Notes: []string{"Отбор под рилс: —"}},
 	}
-	failedNote := "Ролик длиннее рекомендованных для рилс 20–40 с: сократить его не получилось из-за технической " +
-		"ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, " +
-		"например: „сделай 30 секунд“."
+	failedNote := fmt.Sprintf(longFailedNote, "20–40 с", "30 секунд")
 
 	tests := []struct {
 		name     string
@@ -1052,7 +1050,7 @@ func TestExecutorSelectsLongTalk(t *testing.T) {
 		{
 			name: "shortened", decider: &fakeDecider{outcome: selected}, edit: &selected.Edit,
 			expected: &editjob.Summary{Selected: true, Changes: []string{
-				"Не вошло: «привет».", "Спорные повторы: вырезал 0, оставил 1.",
+				droppedHello, cutNoneOfOne,
 			}},
 		},
 		{
@@ -1062,9 +1060,9 @@ func TestExecutorSelectsLongTalk(t *testing.T) {
 		{
 			name:    "the model could not pick: the cleaned cut",
 			decider: &fakeDecider{outcome: &editplan.Outcome{Kind: editplan.InvalidOutcome, Reason: "длина"}},
-			expected: &editjob.Summary{Changes: []string{leftOneRepeat}, Note: "Ролик длиннее рекомендованных для " +
-				"рилс 20–40 с: не смог выбрать, что оставить, поэтому вырезал только паузы, оговорки и неудачные дубли. " +
-				"Если нужно короче, ответьте на черновик, например: „сделай 30 секунд“."},
+			expected: &editjob.Summary{
+				Changes: []string{leftOneRepeat}, Note: fmt.Sprintf(longUnchosenNote, "20–40 с", "30 секунд"),
+			},
 		},
 		{
 			name:    "overloaded: retried by the task",
