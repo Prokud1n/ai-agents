@@ -14,8 +14,9 @@ type Editor struct {
 	// Stream is the Redis stream of the jobs; the job states and results are keys starting with it.
 	Stream string `env:"EDITOR_STREAM" envDefault:"editor:jobs"`
 	// JobTimeout bounds one edit from the moment a worker took it; a longer one fails with a timeout. The backlog
-	// criterion is 30 minutes for a 3-minute source.
-	JobTimeout time.Duration `env:"EDITOR_JOB_TIMEOUT" envDefault:"45m"`
+	// criterion is 30 minutes for a 3-minute source; 70m holds the render of a 10-minute 4K60 source on 2 CPUs
+	// (MEDIA_WORKER_FFMPEG_TIMEOUT 45m) with the download, the transcription and the upload.
+	JobTimeout time.Duration `env:"EDITOR_JOB_TIMEOUT" envDefault:"70m"`
 	// QueueTimeout bounds waiting in the queue before a worker takes the job: several sources in a row are edited one
 	// by one, so it is much longer than JobTimeout.
 	QueueTimeout time.Duration `env:"EDITOR_QUEUE_TIMEOUT" envDefault:"3h"`

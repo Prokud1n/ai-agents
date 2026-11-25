@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ func TestSegmentsFilter(t *testing.T) {
 			name:  "one segment, constant 30 fps, audio starting later",
 			input: []Segment{{Start: 1, End: 2.5}},
 			opts:  RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}, Offset: 0.1},
-			expected: "[0:v:0]setpts=PTS-0.100000/TB,fps=fps=30/1:start_time=0:round=down,settb=1/30,split=1[s0];" +
+			expected: "[0:v:0]setpts=PTS-0.104167/TB,fps=fps=30/1:start_time=0:round=up,settb=1/30,split=1[s0];" +
 				"[0:a:0]asetpts=PTS-0.100000/TB,asplit=1[t0];" +
 				"[s0]trim=start_pts=30:end_pts=75,setpts=PTS-STARTPTS[v0];" +
 				"[t0]atrim=start=1.000000:end=2.500000,asetpts=PTS-STARTPTS," +
@@ -48,7 +49,7 @@ func TestSegmentsFilter(t *testing.T) {
 			name:  "no fade, no offset, ntsc rate kept as a rational",
 			input: []Segment{{Start: 1.001, End: 2.002}},
 			opts:  RenderOptions{FrameRate: Rational{Num: 30000, Den: 1001}},
-			expected: "[0:v:0]setpts=PTS,fps=fps=30000/1001:start_time=0:round=down,settb=1001/30000,split=1[s0];" +
+			expected: "[0:v:0]setpts=PTS-0.004171/TB,fps=fps=30000/1001:start_time=0:round=up,settb=1001/30000,split=1[s0];" +
 				"[0:a:0]asetpts=PTS,asplit=1[t0];" +
 				"[s0]trim=start_pts=30:end_pts=60,setpts=PTS-STARTPTS[v0];" +
 				"[t0]atrim=start=1.001000:end=2.002000,asetpts=PTS-STARTPTS[a0];" +
@@ -289,7 +290,7 @@ func TestRunnerRenderSegments(t *testing.T) {
 		commonArgs(),
 		lavfiInput("aevalsrc=if(between(t\\,1\\,2)+between(t\\,4\\,5)\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=6"),
 		lavfiInput("testsrc=duration=6:size=180x320:rate=30"),
-		[]string{"-codec:v", videoCodec, "-codec:a", renderACodec, "-shortest", src},
+		[]string{"-codec:v", videoCodec, "-codec:a", renderACodec, shortestFlag, src},
 	), nil)
 	require.NoError(t, err)
 
@@ -316,6 +317,65 @@ func TestRunnerRenderSegments(t *testing.T) {
 
 	t.Logf("ffmpeg: rendered %d segments, %.3f s, streams %s", len(segments), duration,
 		strconv.Quote(probeStreams(t, r, dst)))
+}
+
+// TestRunnerRenderHalvesFrameRate: a 60 fps source whose frame n has the brightness 3n, cut at 30 fps into two
+// fragments: frame k of the reel (frame j of a fragment starting at frame s) is the source frame 2(s+j) exactly, the
+// frame of the sound's time, not the one after it. Matroska keeps the timestamps in milliseconds (16/60 s is stored as
+// 0.267 s, a little late), as a container can, and PCM audio starts with the picture.
+func TestRunnerRenderHalvesFrameRate(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	const (
+		brightnessStep = 3
+		sampleSize     = 16 // a 4×4 gray crop of the middle of the frame
+	)
+
+	ctx := t.Context()
+	r := newTestRunner(time.Minute)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "numbered.mkv")
+
+	_, err := r.run(ctx, r.ffmpegPath, concat(
+		commonArgs(),
+		lavfiInput("sine=frequency=440:sample_rate=48000:duration=1.2"),
+		lavfiInput("color=c=black:s=64x64:r=60:d=1.2,format=gray,geq=lum='N*3'"),
+		[]string{videoCodecFlag, "ffv1", audioCodecFlag, "pcm_s16le", shortestFlag, src},
+	), nil)
+	require.NoError(t, err)
+
+	info, err := r.Probe(ctx, src)
+	require.NoError(t, err)
+	require.Equal(t, Rational{Num: 60, Den: 1}, info.RealFrameRate)
+
+	dst := filepath.Join(dir, "reel.mp4")
+	// 30 fps frames 6–17 and 24–33.
+	segments := []Segment{{Start: 0.2, End: 0.6}, {Start: 0.8, End: 34.0 / 30}}
+	opts := RenderOptions{FrameRate: Rational{Num: 30, Den: 1}, Offset: info.AudioStart - info.FormatStart}
+	require.NoError(t, r.RenderSegments(ctx, src, dst, segments, opts))
+
+	in, err := localFile(dst)
+	require.NoError(t, err)
+
+	frames, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
+		[]string{"-vf", "crop=4:4,format=gray", formatFlag, "rawvideo", "-"}), nil)
+	require.NoError(t, err)
+
+	expected := make([]int, 0, len(frames)/sampleSize)
+	for _, rng := range [][2]int{{6, 18}, {24, 34}} {
+		for k := rng[0]; k < rng[1]; k++ {
+			expected = append(expected, 2*k)
+		}
+	}
+
+	got := make([]int, 0, len(frames)/sampleSize)
+	for i := 0; i+sampleSize <= len(frames); i += sampleSize {
+		got = append(got, int(math.Round(float64(frames[i])/brightnessStep)))
+	}
+
+	assert.Equal(t, expected, got, "reel frame k is the source frame 2k of its time")
+	t.Logf("60 → 30 fps: source frames of the reel %v", got)
 }
 
 func TestRunnerRenderSegmentsErrors(t *testing.T) {

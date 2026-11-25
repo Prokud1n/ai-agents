@@ -384,6 +384,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Faster render of the editor's drafts (T3.11): about 3 times faster on the same machine. The draft is at most 30 fps
+  (`roughcut.MaxFrameRate`: 60 → 30, 59.94 → 29.97, 50 → 25; 25 and 30 fps are kept), and the plan, the frame cuts and
+  the subtitles use that rate; at 60 → 30 every reel frame is the source frame of the sound's time (fps `round=up`, the
+  video moved 1/8 frame earlier for container rounding; `round=down` took the next frame, 1/60 s early). The frame is
+  scaled to 1080×1920 right after the cut and an HDR (HLG/PQ) picture is tone mapped after the scaling, not on the 4K
+  frame; the export uses x264 `veryfast` instead of `medium` (CRF 20, VBV 10 Mbit/s as before). CI (job media-image,
+  ffmpeg 8.1, 2 CPUs, a 4K 60 fps 10-bit HEVC HLG source at 50 Mbit/s with grain): a draft with a rough cut takes 3.5 s of
+  render per second of the reel, a whole source (a workout) 2.95 s per second, so 10 minutes of 4K60 take about
+  30 minutes. Before T3.11 the same benchmark in CI took 9.8 s per second of the reel, on an easier 13 Mbit/s source
+  (2.8 times slower; locally on ffmpeg 6.1 7.5 → 2.7 s at 50 Mbit/s). The defaults are raised:
+  `MEDIA_WORKER_FFMPEG_TIMEOUT` 30m → 45m, `EDITOR_JOB_TIMEOUT` 45m → 70m. `TestRenderSpeed` measures it in CI and
+  `TestBurnSubtitlesWithFFmpegToneMap` compares the colours of the new order with the old one for HLG and PQ.
 - The editor's prompt lists the transcript by phrases of at most 8 words (word index ranges, the start in the source,
   the length, the start in the reel or why they are cut) instead of a line per word: over 3 times shorter, the model
   still cuts by word indices. The

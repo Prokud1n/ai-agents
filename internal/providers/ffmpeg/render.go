@@ -24,6 +24,10 @@ const (
 	renderFormat   = "mp4"
 
 	filterPrecision = 6 // microseconds: frame edges like 1/30 s must not be rounded to milliseconds
+	// frameTolerance (of an output frame) is how much earlier the video is moved before fps with round=up: a frame
+	// stored a little after its time (millisecond or microsecond timestamps: 16/60 s is 0.267 s in Matroska) still
+	// lands on its own output frame instead of the next one, and is shown at most 1/8 frame early.
+	frameTolerance = 0.125
 
 	filterDirPattern = "ffmpeg-filter-*"
 	filterFileName   = "graph.txt"
@@ -202,7 +206,7 @@ func filterFileArgs(graph string, ffmpegMajor int) []string {
 // segment, trims every branch, resets its timestamps, fades its audio edges and concatenates the pieces
 // (30 fps, fade 0.01, audio starting at 0.1 s):
 //
-//	[0:v:0]setpts=PTS-0.100000/TB,fps=fps=30/1:start_time=0:round=down,settb=1/30,split=1[s0];
+//	[0:v:0]setpts=PTS-0.104167/TB,fps=fps=30/1:start_time=0:round=up,settb=1/30,split=1[s0];
 //	[0:a:0]asetpts=PTS-0.100000/TB,asplit=1[t0];
 //	[s0]trim=start_pts=30:end_pts=60,setpts=PTS-STARTPTS[v0];
 //	[t0]atrim=start=1.000000:end=2.000000,asetpts=PTS-STARTPTS,
@@ -210,9 +214,12 @@ func filterFileArgs(graph string, ffmpegMajor int) []string {
 //	[v0][a0]concat=n=1:v=1:a=1[v][a]
 //
 // split/asplit matter: referencing [0:v:0] once per segment makes ffmpeg queue decoded frames for every
-// branch, gigabytes for a 1080p clip. With a frame rate the picture is made constant (fps; round=down shows
-// each source frame from the first output frame at or after it, never earlier) and counted in
-// frames (settb=1/fps): the video is trimmed by frame numbers, so a segment on the frame grid holds exactly
+// branch, gigabytes for a 1080p clip. With a frame rate the picture is made constant (fps) and counted in
+// frames (settb=1/fps). round=up puts a source frame on the first output frame at or after it, so output frame k
+// shows the source frame of time k/fps, never a later one: 60 → 30 fps keeps the source frames 0, 2, 4…
+// (round=down kept 1, 3, 5…, the picture 1/60 s ahead of the sound); the video is moved frameTolerance of a frame
+// earlier for timestamps rounded up by the container (the sound is not). The video is trimmed by frame numbers,
+// so a segment on the frame grid holds exactly
 // as many frames as its audio lasts, with no rounding of timestamps in seconds.
 // Only numbers come from the caller, so nothing in the graph can be injected.
 func segmentsFilter(segments []Segment, opts RenderOptions) string {
@@ -225,11 +232,12 @@ func segmentsGraph(segments []Segment, opts RenderOptions, videoOut, audioOut st
 
 	n := strconv.Itoa(len(segments))
 
-	b.WriteString("[0:v:0]" + shiftExpr("setpts", opts.Offset))
-
-	if opts.FrameRate.Float() > 0 {
+	if rate := opts.FrameRate.Float(); rate > 0 {
 		inverse := Rational{Num: opts.FrameRate.Den, Den: opts.FrameRate.Num}
-		b.WriteString(",fps=fps=" + opts.FrameRate.String() + ":start_time=0:round=down,settb=" + inverse.String())
+		b.WriteString("[0:v:0]" + shiftExpr("setpts", opts.Offset+frameTolerance/rate))
+		b.WriteString(",fps=fps=" + opts.FrameRate.String() + ":start_time=0:round=up,settb=" + inverse.String())
+	} else {
+		b.WriteString("[0:v:0]" + shiftExpr("setpts", opts.Offset))
 	}
 
 	b.WriteString(",split=" + n + labels("s", len(segments)) + ";")

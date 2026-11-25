@@ -19,6 +19,9 @@ import (
 // requireFFmpegEnv makes the test fail instead of skipping when ffmpeg is missing (set in CI).
 const requireFFmpegEnv = "FFMPEG_TESTS_REQUIRED"
 
+// shortestFlag ends a generated clip with its shortest input.
+const shortestFlag = "-shortest"
+
 // MP3 encoder padding makes ffprobe report ~0.1 s more than the source; pauses found by silencedetect
 // on decoded audio stay exact.
 const timeDelta = 0.15 // seconds
@@ -41,7 +44,7 @@ func requireFFmpeg(t *testing.T) {
 }
 
 func lavfiInput(graph string) []string {
-	return []string{"-f", "lavfi", inputFlag, graph}
+	return []string{formatFlag, "lavfi", inputFlag, graph}
 }
 
 func newTestRunner(timeout time.Duration) *Runner {
@@ -57,7 +60,7 @@ func generateVideo(ctx context.Context, t *testing.T, r *Runner, path string, se
 		commonArgs(),
 		lavfiInput("aevalsrc=if(between(t\\,2\\,3)\\,0\\,0.5*sin(2*PI*440*t)):s=44100:d="+d),
 		lavfiInput("testsrc=duration="+d+":size=160x120:rate=10"),
-		[]string{"-c:v", "mpeg4", "-c:a", "aac", "-shortest", path},
+		[]string{videoCodecFlag, "mpeg4", audioCodecFlag, "aac", shortestFlag, path},
 	)
 
 	_, err := r.run(ctx, r.ffmpegPath, args, nil)
@@ -157,7 +160,7 @@ func TestRunnerErrors(t *testing.T) {
 	// A video without an audio track: extraction must fail and carry ffmpeg's reason.
 	silentVideo := filepath.Join(dir, "silent.mp4")
 	_, err := r.run(ctx, r.ffmpegPath, concat(
-		commonArgs(), lavfiInput("testsrc=duration=1:size=160x120:rate=10"), []string{"-c:v", "mpeg4", silentVideo},
+		commonArgs(), lavfiInput("testsrc=duration=1:size=160x120:rate=10"), []string{videoCodecFlag, "mpeg4", silentVideo},
 	), nil)
 	require.NoError(t, err)
 
