@@ -159,14 +159,13 @@ func appendDecisions(path string, notes []string) error {
 		b.WriteString("- " + note + "\n")
 	}
 
-	if _, err := f.WriteString(b.String()); err != nil {
-		_ = f.Close()
-
-		return fmt.Errorf("failed to write %s: %w", filepath.Base(path), err)
+	_, err = f.WriteString(b.String())
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
 	}
 
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("failed to write %s: %w", filepath.Base(path), err)
+	if err != nil {
+		return fmt.Errorf("failed to append to %s: %w", filepath.Base(path), err)
 	}
 
 	return nil

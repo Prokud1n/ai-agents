@@ -147,7 +147,7 @@ func TestRunnerLoudness(t *testing.T) {
 			ctx := t.Context()
 			r := newTestRunner(2 * time.Minute)
 			dir := t.TempDir()
-			src := filepath.Join(dir, "source.mp4")
+			src := filepath.Join(dir, "speech.mp4")
 
 			// A tone with a slow tremolo, like syllables: a steady sine would be taken for noise by nothing here, but
 			// the loudness range and the gate see a moving level.
@@ -155,7 +155,7 @@ func TestRunnerLoudness(t *testing.T) {
 				lavfiInput("sine=frequency=440:sample_rate=48000:duration=8"),
 				lavfiInput("testsrc=duration=8:size=180x320:rate=30"),
 				[]string{audioFilterFlag, "volume=" + strconv.FormatFloat(tt.gain, 'f', 1, 64) + "dB,apulsator=hz=0.7:amount=0.6",
-					videoCodecFlag, "mpeg4", audioCodecFlag, renderACodec, shortestFlag, src}), nil)
+					videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 			require.NoError(t, err)
 
 			measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "audio"+AudioExtension))

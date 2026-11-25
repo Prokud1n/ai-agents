@@ -571,7 +571,7 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 			t.Parallel()
 
 			fakes := newPipelineFakes(t)
-			fakes.loudness, fakes.denoise, fakes.zoom = "-14", true, 9
+			fakes.loudness, fakes.denoise, fakes.zoom = testLoudness, true, testZoom
 			fakes.transcriber.result.Loudness = measured
 
 			if tt.change != nil {
