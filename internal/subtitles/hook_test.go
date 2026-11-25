@@ -320,7 +320,7 @@ func TestBurnHookWithFFmpeg(t *testing.T) {
 
 	result, err := svc.BurnSubtitles(ctx, &BurnSubtitlesData{
 		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: hook},
-		VideoPath: input, OutputPath: output,
+		VideoPath:           input, OutputPath: output,
 	})
 	require.NoError(t, err)
 	assert.Empty(t, result.FontFallbacks)
