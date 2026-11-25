@@ -28,6 +28,8 @@ import (
 )
 
 const (
+	// matroskaType of the synthetic sources saved to S3.
+	matroskaType = "video/x-matroska"
 	hookText     = "Планка без ошибок"
 	proposeHook  = `{"decision": "edit", "reason": "ролик про планку", "hook_title": "` + hookText + `"}`
 	removeHook   = `{"decision": "edit", "reason": "убери заголовок", "hook_title": ""}`
@@ -86,7 +88,7 @@ func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
 	client := redistest.Connect(t)
 
 	files, err := media.NewStore(s3test.Connect(t),
-		&config.Media{KeyPrefix: "incoming", ResultPrefix: "edits", UploadTimeout: time.Minute}, log)
+		&config.Media{KeyPrefix: "incoming", ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)
 	require.NoError(t, err)
 
 	cfg := &config.Editor{
@@ -113,7 +115,7 @@ func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
 	t.Cleanup(func() { _ = f.Close() })
 
 	source, err := files.Save(t.Context(), &media.File{
-		ChatID: clipChat, MessageID: clipMsgID, FileUniqueID: "hook", MIMEType: "video/x-matroska",
+		ChatID: clipChat, MessageID: clipMsgID, FileUniqueID: "hook", MIMEType: matroskaType,
 	}, f)
 	require.NoError(t, err)
 

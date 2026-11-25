@@ -75,10 +75,10 @@ func nextHook(previous *roughcut.Edit, in *Input) string {
 func hookLines(previous *roughcut.Edit, in *Input) []string {
 	hook := nextHook(previous, in)
 
-	switch {
-	case hook == previous.Hook:
+	switch hook {
+	case previous.Hook:
 		return nil
-	case hook == "":
+	case "":
 		return []string{hookRemovedLine}
 	default:
 		return []string{"Заголовок: «" + hook + "»."}

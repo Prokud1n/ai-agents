@@ -944,7 +944,7 @@ func TestExecutorWorkoutWithoutModel(t *testing.T) {
 	}{
 		{name: "no API key", err: fmt.Errorf("run: %w", anthropic.ErrAPIKeyMissing), reported: true},
 		{name: "the answer was cut", err: fmt.Errorf("run: %w", agents.ErrMaxTokens), reported: true},
-		{name: "overloaded: retried by the task", err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable}, retried: true},
+		{name: overloadedRetried, err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable}, retried: true},
 		{
 			name: "overloaded on the last attempt", err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable},
 			lastAttempt: true, reported: true,
@@ -1065,7 +1065,7 @@ func TestExecutorSelectsLongTalk(t *testing.T) {
 			},
 		},
 		{
-			name:    "overloaded: retried by the task",
+			name:    overloadedRetried,
 			decider: &fakeDecider{err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable}}, retried: true,
 		},
 	}

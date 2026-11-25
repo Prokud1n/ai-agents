@@ -98,7 +98,7 @@ func startEditEnv(t *testing.T) *editEnv {
 	client := redistest.Connect(t)
 
 	files, err := media.NewStore(s3test.Connect(t),
-		&config.Media{KeyPrefix: "incoming", ResultPrefix: "edits", UploadTimeout: time.Minute}, log)
+		&config.Media{KeyPrefix: "incoming", ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)
 	require.NoError(t, err)
 
 	cfg := &config.Editor{
@@ -118,7 +118,7 @@ func startEditEnv(t *testing.T) *editEnv {
 	t.Cleanup(func() { _ = f.Close() })
 
 	source, err := files.Save(t.Context(), &media.File{
-		ChatID: clipChat, MessageID: clipMsgID, FileUniqueID: "uniq", MIMEType: "video/x-matroska",
+		ChatID: clipChat, MessageID: clipMsgID, FileUniqueID: "uniq", MIMEType: matroskaType,
 	}, f)
 	require.NoError(t, err)
 

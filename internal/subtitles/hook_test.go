@@ -157,7 +157,7 @@ func TestHookLayout(t *testing.T) {
 		shifts bool
 	}{
 		{name: "top", style: &top, hook: [2]int{260, 480}, shift: 500, shifts: true},
-		{name: "bottom", style: &bottom, hook: [2]int{1260, 1480}, shift: 680, shifts: true},
+		{name: "at the bottom", style: &bottom, hook: [2]int{1260, 1480}, shift: 680, shifts: true},
 		{name: "middle", style: &middle, hook: [2]int{260, 480}, shift: 0},
 	}
 

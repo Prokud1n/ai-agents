@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	hookWords    = "от 2 до 6 слов"
+	hookEmoji    = "без эмодзи и хештегов"
 	testHook     = "3 ошибки в планке"
 	oldHook      = "Спина ровно всегда"
 	hookNoChange = "ничего не меняет"
@@ -30,11 +32,11 @@ func TestCheckHook(t *testing.T) {
 		{name: "a number sign and degrees are text", input: new("Растяжка № 1 на 90°")},
 		{name: "40 characters", input: new("Почему болит поясница после приседаний?!")},
 		{name: "longer than 40", input: new("Пять ошибок в планке, которые делают почти все"), expected: "длиннее 40 символов"},
-		{name: "one word", input: new("Планка"), expected: "от 2 до 6 слов"},
-		{name: "seven words", input: new("раз два три четыре пять шесть семь"), expected: "от 2 до 6 слов"},
-		{name: "emoji", input: new("Пресс за 10 минут 🔥"), expected: "без эмодзи и хештегов"},
-		{name: "emoji by the selector", input: new("Пресс за 10 минут ❤️"), expected: "без эмодзи и хештегов"},
-		{name: "hashtag", input: new("Пресс за 10 #минут"), expected: "без эмодзи и хештегов"},
+		{name: "one word", input: new("Планка"), expected: hookWords},
+		{name: "seven words", input: new("раз два три четыре пять шесть семь"), expected: hookWords},
+		{name: "emoji", input: new("Пресс за 10 минут 🔥"), expected: hookEmoji},
+		{name: "emoji by the selector", input: new("Пресс за 10 минут ❤️"), expected: hookEmoji},
+		{name: "hashtag", input: new("Пресс за 10 #минут"), expected: hookEmoji},
 		{name: "line break", input: new("Пресс за\n10 минут"), expected: noLineBreaks},
 		{name: "markup", input: new(`Пресс {\b1} за 10`), expected: noLineBreaks},
 		{name: "invisible", input: new("Пресс за\u200b10 минут"), expected: noLineBreaks},
@@ -103,7 +105,7 @@ func TestApplyHook(t *testing.T) {
 			input: Input{HookTitle: new("")}, err: hookNoChange,
 		},
 		{
-			name: "an invalid hook", version: 1, input: Input{HookTitle: new("Планка")}, err: "от 2 до 6 слов",
+			name: "an invalid hook", version: 1, input: Input{HookTitle: new("Планка")}, err: hookWords,
 		},
 	}
 
