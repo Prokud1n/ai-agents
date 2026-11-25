@@ -241,16 +241,17 @@ func sourceFrameRate(info *ffmpeg.MediaInfo) ffmpeg.Rational {
 	return ffmpeg.Rational{}
 }
 
-// capFrameRate divides a rate above MaxFrameRate by the smallest whole number that brings it under the cap, so every
-// kept frame is a frame of the source and the motion stays even: 60 → 30, 60000/1001 → 30000/1001, 50 → 25, 120 → 30.
-// A rate that would fall below minDividedFrameRate (40 → 20) becomes MaxFrameRate. Lower rates are kept as they are.
+// capFrameRate divides a rate above MaxFrameRate by the smallest whole number (at least 2) that brings it under the
+// cap, so every kept frame is a frame of the source and the motion stays even: 60 → 30, 60000/1001 → 30000/1001,
+// 50 → 25, 120 → 30. A rate that would fall below minDividedFrameRate (40 → 20) becomes MaxFrameRate. Lower rates are
+// kept, reduced (60/2 → 30/1), so the same rate is always written the same way.
 func capFrameRate(rate ffmpeg.Rational) ffmpeg.Rational {
 	f := rate.Float()
 	if f <= MaxFrameRate {
-		return rate
+		return reduceRational(rate)
 	}
 
-	divisor := int64(math.Ceil(f/MaxFrameRate - frameEpsilon))
+	divisor := max(2, int64(math.Ceil(f/MaxFrameRate-frameEpsilon)))
 
 	capped := reduceRational(ffmpeg.Rational{Num: rate.Num, Den: rate.Den * divisor})
 	if capped.Float() < minDividedFrameRate {
@@ -260,7 +261,12 @@ func capFrameRate(rate ffmpeg.Rational) ffmpeg.Rational {
 	return capped
 }
 
+// reduceRational divides the numerator and the denominator by their greatest common divisor; unknown stays as is.
 func reduceRational(r ffmpeg.Rational) ffmpeg.Rational {
+	if r.Num <= 0 || r.Den <= 0 {
+		return r
+	}
+
 	a, b := r.Num, r.Den
 	for b != 0 {
 		a, b = b, a%b

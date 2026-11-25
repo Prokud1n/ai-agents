@@ -35,6 +35,9 @@ const (
 	benchRate     = 60
 	benchDuration = 15 // seconds
 	benchHLG      = "arib-std-b67"
+	// benchBitrate of the source: an iPhone records 4K60 HDR at 50-80 Mbit/s, and decoding the HEVC is the floor of
+	// the render; at the default ultrafast rate (~13 Mbit/s) it would look cheaper than it is.
+	benchBitrate = "50M"
 	// benchPhrase: a phrase starts every benchPhrase seconds, its words take about half of it, the pause is cut.
 	benchPhrase   = 3.5
 	benchWordLen  = 0.35
@@ -43,9 +46,9 @@ const (
 	benchTimeout  = 30 * time.Minute
 	bitsPerByte   = 8
 	bitsPerKbit   = 1000
-	// maxRenderRatio is a coarse guard against a regression: before T3.11 the draft took about 6.5 s of render per
-	// second on 2 CPUs, after it about 2.2 s.
-	maxRenderRatio  = 5.0
+	// maxRenderRatio is a coarse guard against a regression: before T3.11 the draft took about 7.5 s of render per
+	// second on 2 CPUs (ffmpeg 6.1, 50 Mbit/s source), after it about 2.7 s.
+	maxRenderRatio  = 5.5
 	estimateMinutes = 10
 	benchFontsEnv   = "SUBTITLES_FONTS_DIR"
 	benchFontsDir   = "../../assets/fonts"
@@ -70,8 +73,8 @@ func TestRenderSpeed(t *testing.T) {
 
 	started := time.Now()
 	makeBenchSource(ctx, t, source, codec)
-	t.Logf("bench source: %s %d fps %s 10-bit HLG, %d s, generated in %.1f s",
-		benchSize, benchRate, codec, benchDuration, time.Since(started).Seconds())
+	t.Logf("bench source: %s %d fps %s 10-bit HLG at %sbit/s, %d s, generated in %.1f s",
+		benchSize, benchRate, codec, benchBitrate, benchDuration, time.Since(started).Seconds())
 
 	log := slog.New(slog.DiscardHandler)
 	runner := ffmpeg.NewRunner(&config.FFmpeg{Timeout: benchTimeout})
@@ -108,7 +111,7 @@ func TestRenderSpeed(t *testing.T) {
 		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: draft, ToneMap: info.HDR(),
 	})
 	ratio := logReel(ctx, t, "talk", reel, elapsed, len(cut.Plan.Keep))
-	assert.Less(t, ratio, maxRenderRatio, "the render is as slow as before T3.11 (6.5 s per second on 2 CPUs)")
+	assert.Less(t, ratio, maxRenderRatio, "the render is as slow as before T3.11 (7.5 s per second on 2 CPUs)")
 
 	// A workout keeps the whole source: the time per second of the source shows how long a 10-minute one takes.
 	rate := cut.Render.FrameRate.Float()
@@ -155,7 +158,8 @@ func benchSourceCodec(ctx context.Context, t *testing.T) string {
 	return "libx264"
 }
 
-// makeBenchSource encodes moving test pictures with a little grain (a camera is never clean) and a tone.
+// makeBenchSource encodes moving test pictures with a little grain (a camera is never clean) and a tone, at the bitrate
+// of a phone.
 func makeBenchSource(ctx context.Context, t *testing.T, path, codec string) {
 	t.Helper()
 
@@ -165,7 +169,7 @@ func makeBenchSource(ctx context.Context, t *testing.T, path, codec string) {
 		"-f", "lavfi", "-i", "sine=frequency=220:sample_rate=48000:duration=" + d,
 		"-vf", "noise=alls=6:allf=t,format=yuv420p10le," +
 			"setparams=color_primaries=bt2020:color_trc=" + benchHLG + ":colorspace=bt2020nc",
-		"-c:v", codec, "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
+		"-c:v", codec, "-preset", "ultrafast", "-b:v", benchBitrate, "-pix_fmt", "yuv420p10le",
 		"-color_primaries", "bt2020", "-color_trc", benchHLG, "-colorspace", "bt2020nc",
 	}
 

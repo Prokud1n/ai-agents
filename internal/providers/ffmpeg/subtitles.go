@@ -12,11 +12,10 @@ import (
 	"strings"
 )
 
-// Output video for Instagram Reels: H.264 High (codec, CRF and pixel format as the rough cut render),
-// AAC 48 kHz, moov atom at the start. CRF keeps
-// the quality even; the bitrate is capped (VBV) so a busy frame cannot blow the file up: 10 Mbit/s is well
-// above what a talking head needs at CRF 20 (4-8 Mbit/s at 1080×1920) and what Instagram keeps after its own
-// encode.
+// Output video for Instagram Reels: H.264 High (codec, CRF and pixel format as the rough cut render), AAC 48 kHz,
+// moov atom at the start. CRF keeps the quality even; the bitrate is capped (VBV) so a busy frame cannot blow the file
+// up: 10 Mbit/s is well above what a talking head needs at CRF 20 (4-8 Mbit/s at 1080×1920) and what Instagram keeps
+// after its own encode.
 const (
 	// publishPreset: the draft is published to Instagram, which encodes it again for its own bitrate (a few Mbit/s
 	// at 1080×1920); veryfast at CRF 20 keeps more than that survives, and encodes about twice as fast as medium.

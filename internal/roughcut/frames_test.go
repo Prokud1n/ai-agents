@@ -96,12 +96,14 @@ func TestTargetFrameRate(t *testing.T) {
 		{name: "29.97 is kept", input: ffmpeg.MediaInfo{RealFrameRate: rate(30000, 1001)}, expected: rate(30000, 1001)},
 		{name: "25 is kept", input: ffmpeg.MediaInfo{RealFrameRate: rate(25, 1)}, expected: rate(25, 1)},
 		{name: "24 is kept", input: ffmpeg.MediaInfo{RealFrameRate: rate(24, 1)}, expected: rate(24, 1)},
+		{name: "a rate under the cap is reduced", input: ffmpeg.MediaInfo{RealFrameRate: rate(60, 2)}, expected: rate(30, 1)},
+		{name: "just above the cap becomes 30", input: ffmpeg.MediaInfo{RealFrameRate: rate(3000001, 100000)}, expected: rate(30, 1)},
 		{name: "slow motion 120 becomes 30", input: ffmpeg.MediaInfo{RealFrameRate: rate(120, 1)}, expected: rate(30, 1)},
 		{name: "40 would halve below 24, becomes 30", input: ffmpeg.MediaInfo{RealFrameRate: rate(40, 1)}, expected: rate(30, 1)},
 		{
 			name:     "variable frame rate: the average when the nominal is a timebase",
 			input:    ffmpeg.MediaInfo{RealFrameRate: rate(600, 1), AvgFrameRate: rate(17988, 600)},
-			expected: rate(17988, 600),
+			expected: rate(1499, 50),
 		},
 		{
 			name:     "variable 60 fps clip by its average",

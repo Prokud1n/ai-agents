@@ -290,7 +290,7 @@ func TestBurnGraphOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	order := []string{
-		"fps=fps=30/1:start_time=0:round=down,settb=1/30", "split=2", "trim=start_pts=30:end_pts=60",
+		"fps=fps=30/1:start_time=0:round=up,settb=1/30", "split=2", "trim=start_pts=30:end_pts=60",
 		"trim=start_pts=90:end_pts=135", "concat=n=2", "[cut]scale=1080:1920", "crop=1080:1920",
 		"zscale=t=linear", "format=yuv420p", "setsar=1[base]", "overlay=", "ass=filename=", "setparams=",
 	}
