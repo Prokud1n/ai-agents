@@ -87,7 +87,7 @@ func TestIntegrationBoardJobLifecycle(t *testing.T) {
 	assert.Equal(t, job.ID, d.Job.ID)
 
 	checkLock(t, board, job.ID)
-	checkStarted(t, board, job.ID)
+	checkStarted(t, board, job)
 
 	result := &Result{JobID: job.ID, Status: DoneStatus, SourceDuration: 180, Duration: 141, FinishedAt: testDeadline}
 	require.NoError(t, board.Finish(ctx, job, result))
@@ -154,19 +154,20 @@ func checkLock(t *testing.T, board *Board, jobID string) {
 }
 
 // checkStarted: the first take of the job is its start; a second one (after a crash) keeps it.
-func checkStarted(t *testing.T, board *Board, jobID string) {
+func checkStarted(t *testing.T, board *Board, job *Job) {
 	t.Helper()
 
 	ctx := context.Background()
+	jobID := job.ID
 
 	_, found, err := board.Started(ctx, jobID)
 	require.NoError(t, err)
 	assert.False(t, found)
 
-	first, err := board.MarkStarted(ctx, jobID, testDeadline.Add(-30*time.Minute))
+	first, err := board.MarkStarted(ctx, job, testDeadline.Add(-30*time.Minute))
 	require.NoError(t, err)
 
-	again, err := board.MarkStarted(ctx, jobID, testDeadline)
+	again, err := board.MarkStarted(ctx, job, testDeadline)
 	require.NoError(t, err)
 	assert.True(t, first.Equal(again), "the first start counts")
 
@@ -313,7 +314,7 @@ func TestIntegrationBoardReplace(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, replaced, "a job without a result is not replaced")
 
-	_, err = board.MarkStarted(ctx, job.ID, testDeadline)
+	_, err = board.MarkStarted(ctx, job, testDeadline)
 	require.NoError(t, err)
 
 	locked, err := board.Lock(ctx, job.ID, testOwner)
@@ -396,4 +397,94 @@ func checkRetry(t *testing.T, board *Board, delivery *Delivery, render *Job) {
 	require.NotNil(t, next.Job)
 	assert.Equal(t, render.Edit, next.Job.Edit, "the same decision")
 	assert.True(t, again.QueueDeadline.Equal(next.Job.QueueDeadline))
+}
+
+// TestIntegrationBoardStaleJob: a job the app forgot or replaced gets neither a start nor a result, so a job submitted
+// again under the same ID does not inherit them; the job on the board does.
+func TestIntegrationBoardStaleJob(t *testing.T) {
+	t.Parallel()
+
+	board := newTestBoard(t)
+	ctx := context.Background()
+	old := testJob(10)
+
+	checkForgottenIsStale(t, board, old)
+
+	// Submitted again under the same ID with a new creation time: the old delivery is stale, the new one is current.
+	resubmitted := *old
+	resubmitted.CreatedAt = old.CreatedAt.Add(time.Minute)
+
+	submitted, err := board.Submit(ctx, &resubmitted)
+	require.NoError(t, err)
+	require.True(t, submitted)
+
+	_, err = board.MarkStarted(ctx, old, testDeadline)
+	require.ErrorIs(t, err, ErrStale)
+	require.ErrorIs(t, board.Finish(ctx, old, Failed(old.ID, TemporaryCode, testDeadline)), ErrStale)
+
+	started, err := board.MarkStarted(ctx, &resubmitted, testDeadline)
+	require.NoError(t, err)
+	assert.True(t, started.Equal(testDeadline))
+
+	// A delivery decoded from the stream is the same job as the stored one.
+	d, err := board.Fetch(ctx, testOwner)
+	require.NoError(t, err)
+	require.NotNil(t, d)
+	require.NotNil(t, d.Job)
+
+	for d.Job.CreatedAt.Equal(old.CreatedAt) { // the old entry comes first: skip it as the worker does
+		require.NoError(t, board.Ack(ctx, d.MessageID))
+
+		d, err = board.Fetch(ctx, testOwner)
+		require.NoError(t, err)
+		require.NotNil(t, d)
+		require.NotNil(t, d.Job)
+	}
+
+	result := &Result{JobID: old.ID, Status: DoneStatus, Duration: 10, FinishedAt: testDeadline}
+	require.NoError(t, board.Finish(ctx, d.Job, result))
+
+	got, found, err := board.Result(ctx, old.ID)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, DoneStatus, got.Status)
+
+	// A render that replaced its planned job: the planned delivery is stale.
+	render := resubmitted
+	render.Stage = RenderStage
+	render.Settings = &roughcut.Settings{MaxPause: 0.5}
+
+	require.NoError(t, board.Forget(ctx, old.ID))
+	_, err = board.Submit(ctx, &resubmitted)
+	require.NoError(t, err)
+	require.NoError(t, board.Finish(ctx, &resubmitted, &Result{JobID: old.ID, Status: PlannedStatus}))
+
+	replaced, err := board.Replace(ctx, &render)
+	require.NoError(t, err)
+	require.True(t, replaced)
+	require.ErrorIs(t, board.Finish(ctx, &resubmitted, result), ErrStale, "the planned stage is replaced")
+	require.NoError(t, board.Finish(ctx, &render, result), "the render is current")
+}
+
+// checkForgottenIsStale: a submitted and forgotten job is neither started nor finished.
+func checkForgottenIsStale(t *testing.T, board *Board, job *Job) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	_, err := board.Submit(ctx, job)
+	require.NoError(t, err)
+	require.NoError(t, board.Forget(ctx, job.ID))
+
+	_, err = board.MarkStarted(ctx, job, testDeadline)
+	require.ErrorIs(t, err, ErrStale, "a forgotten job is not started")
+	require.ErrorIs(t, board.Finish(ctx, job, Failed(job.ID, QueueTimeoutCode, testDeadline)), ErrStale)
+
+	_, found, err := board.Result(ctx, job.ID)
+	require.NoError(t, err)
+	assert.False(t, found, "a forgotten job gets no result")
+
+	_, found, err = board.Started(ctx, job.ID)
+	require.NoError(t, err)
+	assert.False(t, found)
 }

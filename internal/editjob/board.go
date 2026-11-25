@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	consumerGroup = "media-workers"
+	// ConsumerGroup is the consumer group of the workers on the stream.
+	ConsumerGroup = "media-workers"
 	jobField      = "job"
 	fetchBlock    = 2 * time.Second // the longest a worker waits for a job before it checks for stop
 	// defaultLockTTL is how long a job lock lives without a heartbeat: a worker that died mid-job frees its job
@@ -29,6 +30,8 @@ const (
 	// recordTTL keeps job states and results long enough for retries and the next step (T3.4c), then Redis drops
 	// them; the files stay in S3.
 	recordTTL = 7 * 24 * time.Hour
+	// maxJobLifetime bounds the queue and the run of a job well within recordTTL, so a current job never expires.
+	maxJobLifetime = recordTTL / 2
 	// presenceTTL: the worker's presence key outlives a few heartbeats.
 	presenceTTL = time.Minute
 
@@ -57,6 +60,21 @@ redis.call('DEL', KEYS[2], KEYS[3], KEYS[5])
 redis.call('XADD', KEYS[4], '*', ARGV[4], ARGV[1])
 return 1
 `)
+	// finishScript stores the result (once) only while the job on the board is the given one; 0 when it is not (the
+	// app forgot or replaced the job while it ran: the result would answer a job that is not there).
+	finishScript = goredis.NewScript(currentJobLua + `
+if not current() then return 0 end
+redis.call('SET', KEYS[2], ARGV[3], 'NX', 'PX', ARGV[4])
+return 1
+`)
+	// startScript records the first take of the job only while the job on the board is the given one and returns the
+	// recorded start; nil when the job is not there (a start left by a forgotten job would shorten the timeout of
+	// the job submitted next under the same ID).
+	startScript = goredis.NewScript(currentJobLua + `
+if not current() then return false end
+redis.call('SET', KEYS[2], ARGV[3], 'NX', 'PX', ARGV[4])
+return redis.call('GET', KEYS[2])
+`)
 	// refreshScript extends the lock only if it is still the caller's.
 	refreshScript = goredis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
@@ -65,7 +83,24 @@ return 0
 
 	// ErrInvalidConfig: an invalid EDITOR_* setting.
 	ErrInvalidConfig = errors.New("invalid editor config")
+	// ErrStale: the job on the board is not the given one any more: the app forgot it (a timeout, a failure, no
+	// worker) or replaced it with another stage or a new submit under the same ID.
+	ErrStale = errors.New("edit job is not on the board")
 )
+
+// currentJobLua defines current(): the job stored under KEYS[1] has the stage ARGV[1] (an empty one is AutoStage)
+// and the creation time ARGV[2] (createdAt), as Job.Same checks in Go.
+var currentJobLua = fmt.Sprintf(`
+local function current()
+  local stored = redis.call('GET', KEYS[1])
+  if not stored then return false end
+  local ok, job = pcall(cjson.decode, stored)
+  if not ok or type(job) ~= 'table' then return false end
+  local stage = job['stage']
+  if type(stage) ~= 'string' or stage == '' then stage = '%s' end
+  return stage == ARGV[1] and job['created_at'] == ARGV[2]
+end
+`, AutoStage)
 
 // Board is where the app and the media worker exchange jobs and results, in Redis:
 //
@@ -92,6 +127,11 @@ func NewBoard(client *redis.Client, cfg *config.Editor, log *slog.Logger) (*Boar
 		return nil, fmt.Errorf("EDITOR_STREAM is empty: %w", ErrInvalidConfig)
 	case cfg.JobTimeout <= 0 || cfg.PollInterval <= 0 || cfg.QueueTimeout <= 0 || cfg.WorkerWait <= 0:
 		return nil, fmt.Errorf("EDITOR_JOB_TIMEOUT, _POLL_INTERVAL, _QUEUE_TIMEOUT and _WORKER_WAIT must be positive: %w",
+			ErrInvalidConfig)
+	// A job lives on the board for recordTTL: one that waits and runs longer would expire while it is current, and
+	// the worker skips a job that is not on the board.
+	case cfg.QueueTimeout+cfg.JobTimeout >= maxJobLifetime:
+		return nil, fmt.Errorf("EDITOR_QUEUE_TIMEOUT + EDITOR_JOB_TIMEOUT must be under %s: %w", maxJobLifetime,
 			ErrInvalidConfig)
 	}
 
@@ -248,24 +288,32 @@ func (b *Board) ListenDone(ctx context.Context, handle func(ctx context.Context,
 }
 
 // MarkStarted records that a worker took the job, once: it returns the moment of the first take (a job restarted after
-// a crash keeps its start, so its timeout is not extended).
-func (b *Board) MarkStarted(ctx context.Context, id string, now time.Time) (time.Time, error) {
-	key := b.startedKey(id)
+// a crash keeps its start, so its timeout is not extended). ErrStale when the job on the board is not this one: the
+// start is not recorded.
+func (b *Board) MarkStarted(ctx context.Context, job *Job, now time.Time) (time.Time, error) {
+	keys := []string{b.jobKey(job.ID), b.startedKey(job.ID)}
 
-	if err := b.rdb.SetNX(ctx, key, now.UTC().Format(time.RFC3339Nano), recordTTL).Err(); err != nil {
-		return time.Time{}, fmt.Errorf("failed to mark job %s started: %w", id, err)
+	raw, err := startScript.Run(ctx, b.rdb, keys, string(job.EffectiveStage()), createdAt(job),
+		now.UTC().Format(time.RFC3339Nano), recordTTL.Milliseconds()).Text()
+	if errors.Is(err, goredis.Nil) {
+		return time.Time{}, fmt.Errorf("failed to mark job %s started: %w", job.ID, ErrStale)
 	}
 
-	started, found, err := b.Started(ctx, id)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, fmt.Errorf("failed to mark job %s started: %w", job.ID, err)
 	}
 
-	if !found { // expired between the two calls: a week later, only in theory
-		return now, nil
+	started, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse the start of job %s: %w", job.ID, err)
 	}
 
 	return started, nil
+}
+
+// createdAt is Job.CreatedAt as it is stored in the job's JSON (time.Time marshals as RFC 3339 with nanoseconds).
+func createdAt(job *Job) string {
+	return job.CreatedAt.Format(time.RFC3339Nano)
 }
 
 // Started returns when a worker took the job; false if none has.

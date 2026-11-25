@@ -21,7 +21,7 @@ type Delivery struct {
 // Init creates the consumer group of the workers if it does not exist; it starts from the beginning of the stream,
 // so jobs submitted before the first worker started are taken too.
 func (b *Board) Init(ctx context.Context) error {
-	err := b.rdb.XGroupCreateMkStream(ctx, b.stream, consumerGroup, "0").Err()
+	err := b.rdb.XGroupCreateMkStream(ctx, b.stream, ConsumerGroup, "0").Err()
 	if err != nil && !strings.HasPrefix(err.Error(), busyGroupError) {
 		return fmt.Errorf("failed to create consumer group: %w", err)
 	}
@@ -33,7 +33,7 @@ func (b *Board) Init(ctx context.Context) error {
 // nil when there is none.
 func (b *Board) Fetch(ctx context.Context, consumer string) (*Delivery, error) {
 	msgs, _, err := b.rdb.XAutoClaim(ctx, &goredis.XAutoClaimArgs{
-		Stream: b.stream, Group: consumerGroup, Consumer: consumer, MinIdle: b.claimIdle, Start: "0-0", Count: 1,
+		Stream: b.stream, Group: ConsumerGroup, Consumer: consumer, MinIdle: b.claimIdle, Start: "0-0", Count: 1,
 	}).Result()
 	if err != nil {
 		return nil, b.fetchError(ctx, "failed to claim stale jobs", err)
@@ -41,7 +41,7 @@ func (b *Board) Fetch(ctx context.Context, consumer string) (*Delivery, error) {
 
 	if len(msgs) == 0 {
 		streams, err := b.rdb.XReadGroup(ctx, &goredis.XReadGroupArgs{
-			Group: consumerGroup, Consumer: consumer, Streams: []string{b.stream, ">"}, Count: 1, Block: b.block,
+			Group: ConsumerGroup, Consumer: consumer, Streams: []string{b.stream, ">"}, Count: 1, Block: b.block,
 		}).Result()
 		if errors.Is(err, goredis.Nil) {
 			return nil, nil
@@ -90,7 +90,7 @@ func parseDelivery(msg *goredis.XMessage) *Delivery {
 // Ack confirms the entry and deletes it from the stream, so the stream does not grow.
 func (b *Board) Ack(ctx context.Context, messageID string) error {
 	_, err := b.rdb.TxPipelined(ctx, func(p goredis.Pipeliner) error {
-		p.XAck(ctx, b.stream, consumerGroup, messageID)
+		p.XAck(ctx, b.stream, ConsumerGroup, messageID)
 		p.XDel(ctx, b.stream, messageID)
 
 		return nil
@@ -132,15 +132,25 @@ func (b *Board) Unlock(ctx context.Context, jobID, owner string) error {
 }
 
 // Finish stores the result and tells the app the task can be run. The result is stored once: a result already
-// there (a duplicate run) is kept. The message is best effort: the app also polls.
+// there (a duplicate run) is kept. It is stored only while the job on the board is this one (checked at once with the
+// write): ErrStale when the app forgot or replaced the job, nothing is stored or announced, otherwise a retry
+// submitted under the same ID would find the result of the old run. The message is best effort: the app also polls.
 func (b *Board) Finish(ctx context.Context, job *Job, result *Result) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("failed to encode result: %w", err)
 	}
 
-	if err := b.rdb.SetNX(ctx, b.resultKey(job.ID), data, recordTTL).Err(); err != nil {
+	keys := []string{b.jobKey(job.ID), b.resultKey(job.ID)}
+
+	n, err := finishScript.Run(ctx, b.rdb, keys, string(job.EffectiveStage()), createdAt(job), data,
+		recordTTL.Milliseconds()).Int()
+	if err != nil {
 		return fmt.Errorf("failed to store result of job %s: %w", job.ID, err)
+	}
+
+	if n != 1 {
+		return fmt.Errorf("failed to store result of job %s: %w", job.ID, ErrStale)
 	}
 
 	b.NotifyDone(ctx, job)
