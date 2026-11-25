@@ -444,7 +444,7 @@ jobs:
           cat edit.out
           echo "--- exit $code; stderr:"
           grep -v '^{' edit.err || true
-          [[ $code -eq 2 ]] && fail "make edit stopped before the run (exit 2)"
+          grep -q '^--- make edit ---' edit.out || fail "make edit stopped before the run"
           [[ $code -ne 0 ]] || fail "make edit without OPENAI_API_KEY must fail"
           grep -q 'Тренер получил бы: Монтаж сейчас недоступен' edit.err || fail "expected the trainer's text of a technical failure"
           grep -qE '^Задача: 1[0-9]{18} ' edit.out || fail "expected a synthetic task ID above 10^18"
