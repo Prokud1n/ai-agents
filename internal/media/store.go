@@ -23,6 +23,7 @@ const tempFilePattern = TempFilePrefix + "*"
 type objectStorage interface {
 	PutObject(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 	GetObject(ctx context.Context, key string) (io.ReadCloser, error)
+	ObjectExists(ctx context.Context, key string) (bool, error)
 }
 
 // Store copies incoming files to S3 and gives them back as local files. Files made from them (the editor's results)
@@ -247,6 +248,20 @@ func (s *Store) Read(ctx context.Context, key string, maxSize int64) ([]byte, er
 	}
 
 	return data, nil
+}
+
+// Exists reports whether a file of this store is stored under the key (a HEAD request: nothing is downloaded).
+func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
+	if _, err := s.parseOwnKey(key); err != nil {
+		return false, err
+	}
+
+	exists, err := s.storage.ObjectExists(ctx, key)
+	if err != nil {
+		return false, fmt.Errorf("failed to check media file: %w", err)
+	}
+
+	return exists, nil
 }
 
 // parseOwnKey parses the key and checks that it is under one of this store's prefixes.

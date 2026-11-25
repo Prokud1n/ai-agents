@@ -77,18 +77,14 @@ func (r *Runner) checkSource(ctx context.Context, key string) error {
 	return nil
 }
 
-// exists reports whether S3 has an object under the key; at most two bytes of it are read.
+// exists reports whether S3 has an object under the key (a HEAD request).
 func (r *Runner) exists(ctx context.Context, key string) (bool, error) {
-	_, err := r.store.Read(ctx, key, 1)
-
-	switch {
-	case err == nil || errors.Is(err, media.ErrFileTooLarge):
-		return true, nil
-	case errors.Is(err, media.ErrFileNotFound):
-		return false, nil
-	default:
+	found, err := r.store.Exists(ctx, key)
+	if err != nil {
 		return false, fmt.Errorf("failed to check %s in S3: %w", key, err)
 	}
+
+	return found, nil
 }
 
 // download copies the reel, the plan and the decisions of the version into dir.

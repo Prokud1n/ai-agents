@@ -55,6 +55,14 @@ func TestIntegrationClientObjects(t *testing.T) {
 	_, err = client.GetObject(ctx, "incoming/-100/1/missing.mp4")
 	require.ErrorIs(t, err, s3.ErrObjectNotFound)
 
+	exists, err := client.ObjectExists(ctx, testKey)
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	exists, err = client.ObjectExists(ctx, "incoming/-100/1/missing.mp4")
+	require.NoError(t, err)
+	assert.False(t, exists)
+
 	// Above the 16 MiB part size: uploaded in parts.
 	big := bytes.Repeat([]byte("0123456789abcdef"), (17<<20)/16)
 	require.NoError(t, client.PutObject(ctx, "big.mp4", bytes.NewReader(big), int64(len(big)), testContentType))

@@ -62,6 +62,19 @@ func (f *fakeStorage) PutObject(_ context.Context, key string, r io.Reader, size
 	return nil
 }
 
+func (f *fakeStorage) ObjectExists(_ context.Context, key string) (bool, error) {
+	if f.getErr != nil {
+		return false, f.getErr
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	_, ok := f.objects[key]
+
+	return ok, nil
+}
+
 func (f *fakeStorage) GetObject(_ context.Context, key string) (io.ReadCloser, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
@@ -319,4 +332,30 @@ func TestStoreRead(t *testing.T) {
 			assert.Equal(t, tt.expected, string(data))
 		})
 	}
+}
+
+func TestStoreExists(t *testing.T) {
+	t.Parallel()
+
+	storage := newFakeStorage()
+	store := newTestStore(t, storage)
+
+	file := &File{ChatID: 1, MessageID: 7, FileUniqueID: "local-0a1b2c3d", FileName: "clip.mov"}
+
+	key, err := store.Key(file)
+	require.NoError(t, err)
+
+	exists, err := store.Exists(t.Context(), key)
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	_, err = store.Save(t.Context(), file, strings.NewReader(testContent))
+	require.NoError(t, err)
+
+	exists, err = store.Exists(t.Context(), key)
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	_, err = store.Exists(t.Context(), "other/1/7/x.mov")
+	require.ErrorIs(t, err, ErrInvalidKey)
 }

@@ -86,7 +86,7 @@ type store interface {
 	Save(ctx context.Context, f *media.File, r io.ReadSeeker) (string, error)
 	ResultKey(sourceKey, name, ext string) (string, error)
 	Download(ctx context.Context, key, dir string, maxSize int64) (*media.LocalFile, error)
-	Read(ctx context.Context, key string, maxSize int64) ([]byte, error)
+	Exists(ctx context.Context, key string) (bool, error)
 }
 
 type sequence interface {
@@ -213,9 +213,11 @@ func (r *Runner) First(ctx context.Context, data *FirstData) (*Report, error) {
 	}
 	defer release()
 
-	_, err = LoadState(data.OutDir)
+	existing, err := LoadState(data.OutDir)
 
 	switch {
+	case err == nil && existing.Pending > 0:
+		return nil, fmt.Errorf("%s: %w, version %d: %w", data.OutDir, ErrOutInUse, existing.Pending, ErrPendingDownload)
 	case err == nil:
 		return nil, fmt.Errorf("%s: %w", data.OutDir, ErrOutInUse)
 	case !errors.Is(err, ErrNoState):

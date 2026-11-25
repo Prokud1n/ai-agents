@@ -79,3 +79,22 @@ func TestAcquireLockStale(t *testing.T) {
 func lockContent(pid, host, since string) string {
 	return strings.Join([]string{pid, host, since, ""}, "\n")
 }
+
+func TestReleaseKeepsAnotherLock(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	release, err := acquireLock(dir, time.Hour, time.Now())
+	require.NoError(t, err)
+
+	// The lock was removed by hand and another run took the directory.
+	other := lockContent("1", "other-host", time.Now().UTC().Format(time.RFC3339))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, LockFile), []byte(other), 0o600))
+
+	release()
+
+	content, err := os.ReadFile(filepath.Join(dir, LockFile))
+	require.NoError(t, err)
+	assert.Equal(t, other, string(content), "the lock of another run is not removed")
+}

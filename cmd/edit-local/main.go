@@ -222,7 +222,8 @@ var hints = []struct {
 		"не идёт (docker ps), и удалите OUT/.lock"},
 	{err: editlocal.ErrSourceMissing, hint: "исходник не найден в S3 (хранилище очищено?) — начните заново: " +
 		"make edit FILE=<видео> с новым OUT"},
-	{err: editlocal.ErrPendingDownload, hint: "последняя версия не скачана: сначала make edit OUT=<папка> без FILE и REVISION"},
+	{err: editlocal.ErrPendingDownload, hint: "последняя версия не скачана — докачать: make edit OUT=<эта папка> " +
+		"(без FILE и REVISION)"},
 	{err: editlocal.ErrNothingPending, hint: "всё уже скачано: для правки передайте REVISION"},
 	{err: context.Canceled, hint: "монтаж остановлен (Ctrl+C), задание снято с очереди воркера"},
 }

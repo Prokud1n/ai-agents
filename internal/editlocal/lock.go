@@ -63,7 +63,17 @@ func acquireLock(dir string, staleAfter time.Duration, now time.Time) (func(), e
 		return nil, fmt.Errorf("failed to write %s: %w", path, err)
 	}
 
-	return func() { _ = os.Remove(path) }, nil
+	return func() { releaseLock(path, content) }, nil
+}
+
+// releaseLock removes the lock only while it is this run's own: a lock removed by hand and taken by another run stays.
+func releaseLock(path, content string) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil || string(raw) != content {
+		return
+	}
+
+	_ = os.Remove(path)
 }
 
 // lockError tells a live lock from a stale one.

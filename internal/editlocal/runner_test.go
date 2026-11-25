@@ -110,20 +110,16 @@ func (s *fakeStore) Save(_ context.Context, f *media.File, _ io.ReadSeeker) (str
 	return key, nil
 }
 
-func (s *fakeStore) Read(_ context.Context, key string, _ int64) ([]byte, error) {
+func (s *fakeStore) Exists(_ context.Context, key string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	info, err := media.ParseKey(key)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
-	if !s.keys[key] && info.MessageID != s.takeAll {
-		return nil, media.ErrFileNotFound
-	}
-
-	return []byte(testContent), nil
+	return s.keys[key] || info.MessageID == s.takeAll, nil
 }
 
 func (s *fakeStore) setFailDownload(fail bool) {
@@ -449,6 +445,10 @@ func TestRunnerResumesDownload(t *testing.T) {
 
 	_, err = env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: testRevision})
 	require.ErrorIs(t, err, ErrPendingDownload)
+
+	_, err = env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+	require.ErrorIs(t, err, ErrOutInUse)
+	require.ErrorIs(t, err, ErrPendingDownload, "a new source in OUT says to download the version first")
 
 	env.store.setFailDownload(false)
 

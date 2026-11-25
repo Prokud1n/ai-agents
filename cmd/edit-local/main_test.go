@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -105,6 +106,11 @@ func TestPrintFailure(t *testing.T) {
 		{name: "no state", err: editlocal.ErrNoState, expected: []string{"в OUT нет state.json"}},
 		{name: "stale lock", err: editlocal.ErrStaleLock, expected: []string{"удалите OUT/.lock"}},
 		{name: "source gone", err: editlocal.ErrSourceMissing, expected: []string{"исходник не найден в S3"}},
+		{
+			name:     "an edit with a version to download",
+			err:      fmt.Errorf("out: %w, version 1: %w", editlocal.ErrOutInUse, editlocal.ErrPendingDownload),
+			expected: []string{"в OUT уже есть монтаж", "докачать: make edit OUT="},
+		},
 	}
 
 	for _, tt := range tests {

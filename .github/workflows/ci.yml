@@ -439,6 +439,8 @@ jobs:
           mkdir -p ci-edit
           ffmpeg -hide_banner -nostdin -loglevel error -y -f lavfi -i "sine=frequency=440:duration=3" \
             -f lavfi -i "testsrc=duration=3:size=360x640:rate=30" -c:v mpeg4 -c:a aac -shortest ci-edit/clip.mp4
+          # A lock left by a killed container (its hostname is the container ID): removed with a message.
+          mkdir -p edits/ci && printf '1\n0123456789ab\n2026-01-01T00:00:00Z\n' > edits/ci/.lock
           timeout 300 make edit FILE=./ci-edit/clip.mp4 OUT=./edits/ci > edit.out 2> edit.err
           code=$?
           cat edit.out
@@ -446,6 +448,7 @@ jobs:
           grep -v '^{' edit.err || true
           grep -q '^--- make edit ---' edit.out || fail "make edit stopped before the run"
           [[ $code -ne 0 ]] || fail "make edit without OPENAI_API_KEY must fail"
+          grep -q 'предыдущий запуск прерван, снимаю блокировку' edit.err || fail "the lock of a gone container must be removed"
           grep -q 'Тренер получил бы: Монтаж сейчас недоступен' edit.err || fail "expected the trainer's text of a technical failure"
           grep -qE '^Задача: 1[0-9]{18} ' edit.out || fail "expected a synthetic task ID above 10^18"
           [[ ! -e edits/ci/state.json ]] || fail "a failed version must not write state.json"
