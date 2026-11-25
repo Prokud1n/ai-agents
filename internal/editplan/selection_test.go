@@ -192,7 +192,7 @@ func TestApplyKeepWhole(t *testing.T) {
 	req := selectionRequest(t, 1)
 	req.Caption = "не сокращай"
 
-	outcome, err := Apply(req, &Input{Decision: EditDecision, Reason: "тренер просит целиком", TargetSeconds: 12.2})
+	outcome, err := Apply(req, &Input{Decision: EditDecision, Reason: "тренер просит целиком", TargetSeconds: 12.1})
 	require.NoError(t, err)
 
 	assert.False(t, outcome.Selected)

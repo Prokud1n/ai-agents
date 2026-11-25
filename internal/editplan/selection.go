@@ -32,6 +32,14 @@ type selection struct {
 	keep     []roughcut.Interval
 }
 
+// newSelection is the selection of a decision with the plan it builds: on only when the reel got shorter.
+func newSelection(req *Request, in *Input, mode roughcut.Mode, plan *roughcut.Plan) selection {
+	return selection{
+		on:     isSelected(req, in, mode) && plan.Duration < req.Plan.Duration-minShortenSeconds,
+		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep,
+	}
+}
+
 // isSelected: a talking head shortened for a reel — a first version longer than the target, or a length asked for.
 func isSelected(req *Request, in *Input, mode roughcut.Mode) bool {
 	return mode == roughcut.TalkMode && (req.Selecting() || in.TargetSeconds > 0)

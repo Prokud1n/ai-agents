@@ -126,13 +126,8 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	// A workout is trimmed by time: the exercise before the first word goes too.
 	mode := nextMode(req, in)
-	trimmed := trimWords(req, in.TrimStart, in.TrimEnd)
-
-	if mode == roughcut.WorkoutMode {
-		trimmed = trimTime(req, in.TrimStart, in.TrimEnd)
-	}
+	trimmed := trimFor(req, in, mode)
 
 	edit, err := mergeEdit(req, in, trimmed.ranges)
 	if err != nil {
@@ -149,10 +144,7 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	sel := selection{
-		on:     isSelected(req, in, mode) && plan.Duration < req.Plan.Duration-minShortenSeconds,
-		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep,
-	}
+	sel := newSelection(req, in, mode, &plan)
 	edit.Notes, edit.Details = notes(req, in, reason, &sel), details(req, in, &sel)
 
 	shown, err := checkTitlesShown(&edit, &plan)
@@ -333,6 +325,15 @@ type trim struct {
 type span struct {
 	start, end float64
 	ok         bool
+}
+
+// trimFor is the trim of the decision: by words, or by time in a workout (the exercise before the first word goes too).
+func trimFor(req *Request, in *Input, mode roughcut.Mode) trim {
+	if mode == roughcut.WorkoutMode {
+		return trimTime(req, in.TrimStart, in.TrimEnd)
+	}
+
+	return trimWords(req, in.TrimStart, in.TrimEnd)
 }
 
 // trimWords: a word is trimmed when its middle is within the first trimStart or the last trimEnd seconds. The first

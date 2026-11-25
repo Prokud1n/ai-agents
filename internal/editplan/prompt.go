@@ -2,6 +2,7 @@ package editplan
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -104,9 +105,9 @@ func writeWords(b *strings.Builder, transcript *transcription.Result, plan *roug
 		return
 	}
 
-	b.WriteString("\nРасшифровка по фразам — индексы слов from–to | начало в исходнике | длительность | начало в " +
-		"ролике («ролик 0:12.3») или «вырезано: причина» | слова. Во фразе не больше 8 слов; индекс слова внутри " +
-		"фразы — from плюс его номер во фразе с нуля.\n")
+	fmt.Fprintf(b, "\nРасшифровка по фразам — индексы слов from–to | начало в исходнике | длительность | начало в "+
+		"ролике («ролик 0:12.3») или «вырезано: причина» | слова. Во фразе не больше %d слов; индекс слова внутри "+
+		"фразы — from плюс его номер во фразе с нуля.\n", maxPhraseWords)
 
 	words := transcript.Words
 
@@ -340,17 +341,26 @@ func writeLength(b *strings.Builder, req *Request) {
 	case req.IsRevision():
 		fmt.Fprintf(b, "Длина: ролик сейчас %s, рекомендуемая длина рилс — %.0f–%.0f с. Если тренер просит длину "+
 			"(«сделай 40 секунд», «до 30 секунд», «оставь минуту»), сделай редакторский отбор под неё и укажи "+
-			"target_seconds. %s\n", now, low, high, keepWhole(req))
+			"target_seconds. Если просит длиннее, верни лучшие вырезанные фразы через restore_words и укажи "+
+			"target_seconds; если вернуть нечего, укажи target_seconds = %.1f (текущая длина ролика).\n", now, low,
+			high, floorTenths(req.Plan.Duration))
 	default:
 		fmt.Fprintf(b, "Длина: ролик %s, рекомендуемая длина рилс — %.0f–%.0f с. Сокращай, только если тренер "+
 			"просит в подписи; названную длину укажи в target_seconds. %s\n", now, low, high, keepWhole(req))
 	}
 }
 
-// keepWhole tells the model what to answer when the trainer asks not to shorten the reel or for more than there is.
+// keepWhole tells the model of a first version what to answer when the trainer asks not to shorten the reel or for
+// more than the speech left after the cleaning.
 func keepWhole(req *Request) string {
 	return fmt.Sprintf("Если тренер просит не сокращать («не сокращай», «оставь целиком») или называет длину больше, "+
-		"чем длится ролик, укажи target_seconds = %.1f (текущая длина ролика).", req.Plan.Duration)
+		"чем есть речи после чистки исходника, укажи target_seconds = %.1f (текущая длина ролика).",
+		floorTenths(req.Plan.Duration))
+}
+
+// floorTenths rounds the seconds down to tenths, so a length given back is never above the reel (or the source).
+func floorTenths(seconds float64) float64 {
+	return math.Floor(seconds*tenths) / tenths
 }
 
 // writeMode says the mode of the current plan and, for the first version with a caption or planned as a workout by
