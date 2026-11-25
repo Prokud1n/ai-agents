@@ -40,8 +40,8 @@ const (
 type Stage string
 
 const (
-	// AutoStage transcribes the source and plans the cut; with nothing to decide (no Decide, no disputed repeats)
-	// it renders the reel at once, otherwise it stops with PlannedStatus after storing the transcript and the plan.
+	// AutoStage transcribes the source and plans the cut; with nothing to decide (no Decide, no disputed repeats,
+	// a cleaned talking head within TargetDuration) it renders the reel at once, otherwise it stops with PlannedStatus after storing the transcript and the plan.
 	// An empty stage is AutoStage.
 	AutoStage Stage = "auto"
 	// RenderStage renders the reel with the editor's Edit from the stored transcript of the source: the speech
@@ -103,6 +103,9 @@ type Job struct {
 	// Decide stops an AutoStage job after the plan even without disputed repeats: the trainer's caption is
 	// applied by the editor first.
 	Decide bool `json:"decide,omitempty"`
+	// TargetDuration (seconds) of a talking-head reel: an AutoStage job whose cleaned plan is longer stops after the
+	// plan, so the editor picks the best phrases for the reel (EDITOR_REELS_TARGET_DURATION); 0 turns it off.
+	TargetDuration float64 `json:"target_duration,omitempty"`
 	// Settings and Edit of a RenderStage job: the plan is built with the settings of the plan the editor
 	// decided on (so the IDs of its candidates hold) and the editor's changes, checked by the app.
 	Settings *roughcut.Settings `json:"settings,omitempty"`
@@ -138,6 +141,9 @@ type Summary struct {
 	Mode roughcut.Mode `json:"mode,omitempty"`
 	// CaptionApplied: the exercise titles were placed by the caption, so the description does not quote it.
 	CaptionApplied bool `json:"caption_applied,omitempty"`
+	// Selected: the editor picked the best phrases of a talking head for the length of a reel, so the description
+	// says the reel was shortened, not only cleaned.
+	Selected bool `json:"selected,omitempty"`
 }
 
 // EffectiveStage is the stage of the job; empty is AutoStage.

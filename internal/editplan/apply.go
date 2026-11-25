@@ -60,6 +60,9 @@ type Input struct {
 	// Hide are words left out of the subtitles only (a phrase made up by the speech recognition on music): the video
 	// and the sound stay.
 	Hide []roughcut.WordRange `json:"hide_words"`
+	// TargetSeconds is the length of the reel the trainer asked for («сделай 40 секунд»), 0 without one: the reel
+	// built with the decision must be within lengthTolerance of it.
+	TargetSeconds float64 `json:"target_seconds"`
 }
 
 // CandidateDecision decides a disputed repeat: Cut removes its earlier phrase (the repeat stays), otherwise both stay.
@@ -133,12 +136,13 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	edit.Notes = notes(req, in, reason)
-
-	plan, err := buildPlan(req, &edit)
+	plan, err := buildSized(req, in, mode, &edit)
 	if err != nil {
 		return nil, err
 	}
+
+	sel := selection{on: isSelected(req, in, mode), target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep}
+	edit.Notes = notes(req, in, reason, &sel)
 
 	shown, err := checkTitlesShown(&edit, &plan)
 	if err != nil {
@@ -154,8 +158,10 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	cut, kept := countCandidates(in.Candidates)
 
 	return &Outcome{
-		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}), Cut: cut, Kept: kept,
+		Kind: EditOutcome, Edit: edit, Cut: cut, Kept: kept,
+		Changes:  describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}, &sel),
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
+		Selected: sel.on, Target: in.TargetSeconds,
 	}, nil
 }
 
@@ -193,7 +199,11 @@ func checkInput(req *Request, in *Input) error {
 		return err
 	}
 
-	return checkFixes(req, in.FixWords)
+	if err := checkFixes(req, in.FixWords); err != nil {
+		return err
+	}
+
+	return checkTarget(req, in.TargetSeconds)
 }
 
 func validSeconds(s float64) bool {
@@ -542,16 +552,25 @@ func countCandidates(decisions []CandidateDecision) (cut, kept int) {
 	return cut, kept
 }
 
-// notes explain the decision in the decisions log: the trainer's request and every disputed repeat.
-func notes(req *Request, in *Input, reason string) []string {
-	out := make([]string, 0, len(in.Candidates)+1)
+// notes explain the decision in the decisions log: the trainer's request or the model's reason (always, so the log
+// of a first version without a caption is not «Решения монтажёра: 0»), the selection for the length of a reel, every
+// disputed repeat — those the model left undecided of a first version too.
+func notes(req *Request, in *Input, reason string, sel *selection) []string {
+	out := make([]string, 0, len(in.Candidates)+len(in.Remove)+len(req.Plan.Candidates)+2)
 
 	switch {
 	case req.IsRevision():
 		out = append(out, fmt.Sprintf("Правка тренера к версии %d: %s", req.Version-1, orDash(reason)))
 	case strings.TrimSpace(req.Caption) != "":
 		out = append(out, "Подпись тренера к исходнику: "+orDash(reason))
+	case sel.on:
+		out = append(out, "Отбор под рилс: "+orDash(reason))
+	default:
+		out = append(out, "Решение по черновой склейке: "+orDash(reason))
 	}
+
+	out = append(out, selectionNotes(req, in, sel)...)
+	decided := make(map[int]bool, len(in.Candidates))
 
 	for _, d := range in.Candidates {
 		verdict := "оставлены обе фразы"
@@ -559,7 +578,18 @@ func notes(req *Request, in *Input, reason string) []string {
 			verdict = "первая фраза вырезана, оставлен повтор"
 		}
 
+		decided[d.ID] = true
 		out = append(out, fmt.Sprintf("Повтор %d: %s — %s", d.ID, verdict, orDash(oneLine(d.Reason))))
+	}
+
+	if req.IsRevision() {
+		return out
+	}
+
+	for i := range req.Plan.Candidates {
+		if id := req.Plan.Candidates[i].ID; !decided[id] {
+			out = append(out, fmt.Sprintf("Повтор %d: решения нет — оставлены обе фразы", id))
+		}
 	}
 
 	return out

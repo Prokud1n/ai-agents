@@ -1007,3 +1007,107 @@ func TestExecutorLongReel(t *testing.T) {
 		})
 	}
 }
+
+// testTarget: the 45 s of testPlan are longer than the recommended 20–40 s.
+const testTarget = 40 * time.Second
+
+// TestExecutorTargetInAutoJob: the worker gets the target length in the auto job, so it stops a long talking head for
+// the selection.
+func TestExecutorTargetInAutoJob(t *testing.T) {
+	t.Parallel()
+
+	b := &fakeBoard{}
+	e := newTestExecutor(b)
+	e.reelsTarget = testTarget
+
+	_, err := e.Execute(t.Context(), editData())
+
+	var deferred *tasks.DeferredError
+	require.ErrorAs(t, err, &deferred)
+	require.Len(t, b.submitted, 1)
+	assert.InDelta(t, 40, b.submitted[0].TargetDuration, 1e-9)
+}
+
+// TestExecutorSelectsLongTalk: a talking head longer than the target after the cleaning is planned by the worker and
+// shortened by the model; when the model is unavailable or cannot pick the phrases, the cleaned cut is rendered with
+// a note, and a temporary failure is retried by the task first.
+func TestExecutorSelectsLongTalk(t *testing.T) {
+	t.Parallel()
+
+	selected := &editplan.Outcome{
+		Kind: editplan.EditOutcome, Selected: true, Changes: []string{"Не вошло: «привет»."},
+		Edit: roughcut.Edit{Remove: []roughcut.WordRange{{From: 0, To: 0}}, Notes: []string{"Отбор под рилс: —"}},
+	}
+	failedNote := "Ролик длиннее рекомендованных для рилс 20–40 с: сократить его не получилось из-за технической " +
+		"ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, " +
+		"например: „сделай 30 секунд“."
+
+	tests := []struct {
+		name     string
+		decider  *fakeDecider
+		retried  bool
+		edit     *roughcut.Edit
+		expected *editjob.Summary
+	}{
+		{
+			name: "shortened", decider: &fakeDecider{outcome: selected}, edit: &selected.Edit,
+			expected: &editjob.Summary{Selected: true, Changes: []string{
+				"Не вошло: «привет».", "Спорные повторы: вырезал 0, оставил 1.",
+			}},
+		},
+		{
+			name: "no API key: the cleaned cut", decider: &fakeDecider{err: fmt.Errorf("run: %w", anthropic.ErrAPIKeyMissing)},
+			expected: &editjob.Summary{Changes: []string{leftOneRepeat}, Note: failedNote},
+		},
+		{
+			name:    "the model could not pick: the cleaned cut",
+			decider: &fakeDecider{outcome: &editplan.Outcome{Kind: editplan.InvalidOutcome, Reason: "длина"}},
+			expected: &editjob.Summary{Changes: []string{leftOneRepeat}, Note: "Ролик длиннее рекомендованных для " +
+				"рилс 20–40 с: не смог выбрать, что оставить, поэтому вырезал только паузы, оговорки и неудачные дубли. " +
+				"Если нужно короче, ответьте на черновик, например: „сделай 30 секунд“."},
+		},
+		{
+			name:    "overloaded: retried by the task",
+			decider: &fakeDecider{err: &anthropic.APIError{StatusCode: http.StatusServiceUnavailable}}, retried: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			planned := pendingJob(time.Hour)
+			planned.Stage = editjob.AutoStage
+			b := &fakeBoard{
+				job:    planned,
+				result: &editjob.Result{JobID: testJobID, Status: editjob.PlannedStatus, Candidates: 1},
+			}
+			e := newTestExecutorWith(&testDeps{board: b, store: testStore{files: storedFiles(t)}, decider: tt.decider,
+				tech: &fakeTech{}})
+			e.reelsTarget = testTarget
+
+			data := editData()
+			data.Input = ""
+
+			_, err := e.Execute(t.Context(), data)
+
+			require.Len(t, tt.decider.requests, 1)
+			assert.InDelta(t, 40, tt.decider.requests[0].TargetSeconds, 1e-9)
+			assert.True(t, tt.decider.requests[0].Selecting())
+
+			if tt.retried {
+				var temporary *tasks.TemporaryError
+				require.ErrorAs(t, err, &temporary)
+				assert.Empty(t, b.replaced)
+
+				return
+			}
+
+			var deferred *tasks.DeferredError
+			require.ErrorAs(t, err, &deferred)
+			require.Len(t, b.replaced, 1)
+			assert.Equal(t, tt.edit, b.replaced[0].Edit, "without a decision: the cleaned plan (no edit)")
+			assert.Equal(t, tt.expected, b.replaced[0].Summary)
+		})
+	}
+}

@@ -39,6 +39,25 @@ type Request struct {
 	// Caption is the trainer's caption to the source (the first version), Revision the text of the revision.
 	Caption  string
 	Revision string
+	// TargetSeconds is the longest talking-head reel recommended (EDITOR_REELS_TARGET_DURATION): a first version
+	// longer than it after the cleaning is shortened by the editor to TargetSeconds·minTargetShare–TargetSeconds; 0
+	// turns the selection off. The trainer's caption or revision may ask for another length (Input.TargetSeconds).
+	TargetSeconds float64
+}
+
+// minTargetShare: the recommended reel is from this share of TargetSeconds up to it (30–60 s for 60 s).
+const minTargetShare = 0.5
+
+// Selecting reports whether the editor shortens the first version to the recommended length: a talking head that is
+// longer than TargetSeconds after the cleaning.
+func (r *Request) Selecting() bool {
+	return !r.IsRevision() && r.TargetSeconds > 0 && r.Plan != nil && r.Plan.Duration > r.TargetSeconds &&
+		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
+}
+
+// TargetRange is the recommended length of a reel, in seconds: 30–60 s for TargetSeconds 60.
+func (r *Request) TargetRange() (low, high float64) {
+	return r.TargetSeconds * minTargetShare, r.TargetSeconds
 }
 
 // IsRevision reports whether the request revises a version.
@@ -93,4 +112,8 @@ type Outcome struct {
 	// are the exercises the editor could not place in time.
 	Titles  []string
 	Untimed []string
+	// Selected: the editor picked phrases for the length of a reel (the first version longer than the target, or a
+	// length the trainer asked for) in a talking head; Target is that length, 0 for the recommended range.
+	Selected bool
+	Target   float64
 }

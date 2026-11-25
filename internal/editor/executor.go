@@ -104,15 +104,18 @@ type Executor struct {
 	pollInterval time.Duration
 	// reelsMax is the longest reel Instagram publishes (EDITOR_REELS_MAX_DURATION): a longer draft gets a note.
 	reelsMax time.Duration
-	log      *slog.Logger
-	now      func() time.Time
+	// reelsTarget is the longest talking-head reel recommended (EDITOR_REELS_TARGET_DURATION): a longer cleaned first
+	// version is shortened by the editor's selection; 0 turns it off.
+	reelsTarget time.Duration
+	log         *slog.Logger
+	now         func() time.Time
 }
 
 func NewExecutor(b board, s store, d decider, tech techReporter, cfg *config.Editor, log *slog.Logger) *Executor {
 	return &Executor{
 		board: b, store: s, decider: d, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
-		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, reelsMax: cfg.ReelsMaxDuration, log: log,
-		now: time.Now,
+		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, reelsMax: cfg.ReelsMaxDuration,
+		reelsTarget: max(cfg.ReelsTargetDuration, 0), log: log, now: time.Now,
 	}
 }
 
@@ -211,11 +214,13 @@ func (e *Executor) dropStaleRevision(ctx context.Context, data *tasks.ExecuteDat
 	return nil
 }
 
-// autoJob is the first edit: the worker stops after the plan when the caption is to be applied or a repeat decided.
+// autoJob is the first edit: the worker stops after the plan when the caption is to be applied, a repeat decided or
+// a talking head longer than the target shortened.
 func (e *Executor) autoJob(data *tasks.ExecuteData) *editjob.Job {
 	job := e.newJob(data)
 	job.Stage = editjob.AutoStage
 	job.Decide = strings.TrimSpace(data.Input) != ""
+	job.TargetDuration = e.reelsTarget.Seconds()
 
 	return job
 }
@@ -241,10 +246,12 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	}
 
 	req.Caption = data.Input
+	req.TargetSeconds = e.reelsTarget.Seconds()
 
 	outcome, err := e.decide(ctx, data, req)
 	if err != nil {
-		if !isWorkout(req.Plan) || !e.fallBack(ctx, data, err) {
+		// A workout or a long talking head has a usable plan without the model: nothing cut, or the cleaning only.
+		if (!isWorkout(req.Plan) && !req.Selecting()) || !e.fallBack(ctx, data, err) {
 			return err
 		}
 
@@ -270,14 +277,16 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 
 	if replaced {
 		e.log.InfoContext(ctx, "editor: decided, render submitted", "job_id", job.ID, "task_id", data.TaskID,
-			"decision", outcome.Kind, "changes", len(outcome.Changes), "cut", outcome.Cut, "kept", outcome.Kept)
+			"decision", outcome.Kind, "changes", len(outcome.Changes), "cut", outcome.Cut, "kept", outcome.Kept,
+			"selected", outcome.Selected, "duration", outcome.Duration)
 	}
 
 	return &tasks.DeferredError{After: e.pollInterval}
 }
 
-// fallBack reports whether the first version of a workout is rendered without the model: its plan cuts nothing, so
-// it is a usable draft, better than no draft. A technical failure (already told to «Техничка») falls back at once, a
+// fallBack reports whether the first version of a workout or of a long talking head is rendered without the model:
+// its plan cuts nothing (a workout) or only cleans the speech (a talking head), so it is a usable draft, better than
+// no draft. A technical failure (already told to «Техничка») falls back at once, a
 // temporary one only on the last attempt of the task (before it, the task retries the model).
 func (e *Executor) fallBack(ctx context.Context, data *tasks.ExecuteData, err error) bool {
 	var temporary *tasks.TemporaryError
@@ -289,7 +298,7 @@ func (e *Executor) fallBack(ctx context.Context, data *tasks.ExecuteData, err er
 		e.report(ctx, data, modelFailedCode, err)
 	}
 
-	e.log.WarnContext(ctx, "editor: the model is unavailable, the workout is rendered as planned",
+	e.log.WarnContext(ctx, "editor: the model is unavailable, the first version is rendered as planned",
 		"task_id", data.TaskID, "error", err)
 
 	return true
@@ -314,6 +323,7 @@ func (e *Executor) revise(ctx context.Context, data *tasks.ExecuteData) error {
 	}
 
 	req.Revision = revision
+	req.TargetSeconds = e.reelsTarget.Seconds()
 
 	outcome, err := e.decide(ctx, data, req)
 	if err != nil {
