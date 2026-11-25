@@ -340,7 +340,50 @@ func TestBurnHookWithFFmpeg(t *testing.T) {
 	assert.Positive(t, rowsBright(shown, margin, margin+style.blockHeight()), "the subtitles under it")
 
 	assert.Zero(t, rowsBright(grayFrame(ctx, t, output, 2.8), 0, FrameHeight), "the hook is gone after its time")
+
+	// The hook is set in Manrope Regular, not a silent fallback to the Medium of the subtitles.
+	regular := false
+
+	for _, f := range result.Fonts {
+		if f.Family == style.Hook.Font {
+			assert.Equal(t, "Manrope-Regular", f.PostScriptName, "the hook font: %s", f.Font)
+			regular = true
+		}
+	}
+
+	assert.True(t, regular, "libass reports the hook font")
+
+	// On a white frame the vignette and the shade under the shifted subtitles darken the side of the frame (x=60, no
+	// text) evenly: no band darker than the plateau under the hook.
+	white, shaded := filepath.Join(dir, "white.mp4"), filepath.Join(dir, "white-out.mp4")
+	runTool(ctx, t, "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+		"color=c=white:s="+reelSize+":d=3:r=25", "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264",
+		"-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", white)
+
+	_, err = svc.BurnSubtitles(ctx, &BurnSubtitlesData{
+		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: hook},
+		VideoPath:           white, OutputPath: shaded,
+	})
+	require.NoError(t, err)
+
+	frame := grayFrame(ctx, t, shaded, 1)
+	plateau := int(frame[shadePlateauRow*FrameWidth+shadeSideColumn])
+
+	for y := shadeBandFrom; y < shadeBandTo; y++ {
+		level := int(frame[y*FrameWidth+shadeSideColumn])
+		assert.LessOrEqual(t, max(level-plateau, plateau-level), maxShadeStep, "row %d: %d against the plateau %d", y,
+			level, plateau)
+	}
 }
+
+// The side of the frame checked for an even shade: the plateau of the vignette and the band where the shade joins it.
+const (
+	shadeSideColumn = 60
+	shadePlateauRow = 400
+	shadeBandFrom   = 460
+	shadeBandTo     = 560
+	maxShadeStep    = 20
+)
 
 // TestHookShade: while the subtitles stand under the hook, a drawing extends the vignette down to them: the first
 // event, from the start to the end of the last shifted subtitle, mirrored at the bottom; none in the middle or without
@@ -368,15 +411,15 @@ func TestHookShade(t *testing.T) {
 	}{
 		{
 			name: "one line at the top", style: &top, hook: hookPlank,
-			shape: "m -100 420 l 1180 420 l 1180 645 l -100 645{\\p0}", marginV: shiftedUnderHook,
+			shape: "m -100 600 l 1180 600 l 1180 645 l -100 645{\\p0}", marginV: shiftedUnderHook,
 		},
 		{
 			name: "two lines move further", style: &top, hook: "Видео для тех, кто боится начать тренироваться дома",
-			shape: "m -100 420 l 1180 420 l 1180 720 l -100 720", marginV: ",Main,,0,0,430,,",
+			shape: "m -100 600 l 1180 600 l 1180 720 l -100 720", marginV: ",Main,,0,0,430,,",
 		},
 		{
 			name: "at the bottom: mirrored", style: &bottom, hook: hookPlank,
-			shape: "m -100 1095 l 1180 1095 l 1180 1320 l -100 1320", marginV: ",Main,,0,0,535,,",
+			shape: "m -100 1095 l 1180 1095 l 1180 1140 l -100 1140", marginV: ",Main,,0,0,535,,",
 		},
 		{name: "in the middle: none", style: &middle, hook: hookPlank},
 		{name: "no vignette: none", style: &noVignette, hook: hookPlank, marginV: shiftedUnderHook},
@@ -401,7 +444,7 @@ func TestHookShade(t *testing.T) {
 			}
 
 			require.True(t, strings.HasPrefix(events[0], "Dialogue: 0,0:00:00.00,"), "the shade is the first event")
-			assert.Contains(t, events[0], ",Shade,,0,0,0,,{\\an7\\pos(0,0)\\fad(150,150)\\1c&H000000&\\1a&H66&\\blur40\\p1}")
+			assert.Contains(t, events[0], ",Shade,,0,0,0,,{\\an7\\pos(0,0)\\fad(150,150)\\1c&H000000&\\1a&H66&\\blur60\\p1}")
 			assert.Contains(t, events[0], tt.shape)
 			assert.Contains(t, ass, "Style: Shade,")
 

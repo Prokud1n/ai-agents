@@ -95,7 +95,7 @@ const (
 		"паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: „сделай %s“."
 	// noHookHint: the editor proposed no hook title for a first version without a caption (EDITOR_HOOK_TITLE).
 	noHookHint = "Заголовок не поставил: в ролике не нашёл короткой цепляющей мысли. Если нужен — ответьте правкой, " +
-		"например: „добавь заголовок …“"
+		"например: „добавь заголовок …“."
 	// shortenedNote ends a description whose lists did not fit into the caption of the video.
 	shortenedNote = "Описание сокращено: не всё поместилось в подпись к видео."
 )

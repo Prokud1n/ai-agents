@@ -57,4 +57,6 @@ type BurnResult struct {
 	FontFallbacks []string
 	// MissingGlyphs are libass reports of characters absent in the fonts (e.g. emoji in the transcript).
 	MissingGlyphs []string
+	// Fonts are the fonts libass selected for the style families.
+	Fonts []ffmpeg.FontSelection
 }

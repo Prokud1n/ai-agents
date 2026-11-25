@@ -85,16 +85,20 @@ func trimHookPeriod(text string) string {
 	return text
 }
 
-// checkHookOnly refuses cuts and trims in a first version stopped only for the hook title: the reel is short and the
-// trainer asked for nothing, so the model does not cut it on its own initiative.
+// checkHookOnly refuses cuts, trims, the workout mode, exercise titles and muting in a first version stopped only for
+// the hook title: there is no caption, the trainer asked for nothing, so the model does not change the reel on its own
+// initiative.
 func checkHookOnly(req *Request, in *Input) error {
 	if !req.HookOnly() {
 		return nil
 	}
 
-	if in.TrimStart > 0 || in.TrimEnd > 0 || len(in.Remove) > 0 || len(in.CutSeconds) > 0 || in.TargetSeconds > 0 {
-		return checkFailedf("в этом ролике ничего не вырезай и не обрезай: подписи нет, ролик короткий — укажи только " +
-			"hook_title (или не указывай его)")
+	cuts := in.TrimStart > 0 || in.TrimEnd > 0 || len(in.Remove) > 0 || len(in.CutSeconds) > 0 || in.TargetSeconds > 0
+	extras := in.Mode == roughcut.WorkoutMode || len(in.AddTitles) > 0 || (in.Mute != nil && *in.Mute)
+
+	if cuts || extras {
+		return checkFailedf("в этом ролике ничего не вырезай, не обрезай и не меняй режим, подписи упражнений и звук: " +
+			"подписи нет, тренер ни о чём не просила — укажи только hook_title (или не указывай его)")
 	}
 
 	return nil

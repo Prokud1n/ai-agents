@@ -504,12 +504,13 @@ type hookLayout struct {
 // usual place of the subtitles, so while they stand under the hook an ASS drawing darkens the frame down to them.
 const (
 	shadeStyleName = "Shade"
-	// shadeOverlap: the shade starts this far inside the even part of the vignette, so the two merge.
-	shadeOverlap = 80
+	// shadeInset: the shade starts this far below the even part of the vignette, where the vignette fades, so the two
+	// do not darken the same band twice.
+	shadeInset = 100
 	// shadePad: the shade goes this far past the subtitles under the hook.
 	shadePad = 50
 	// shadeBlur softens the edges of the shade (\blur), shadeOverhang keeps the blurred sides out of the frame.
-	shadeBlur     = 40
+	shadeBlur     = 60
 	shadeOverhang = 100
 	// assBlack is opaque black in the ASS &HAABBGGRR form.
 	assBlack = "&H00000000"
@@ -533,7 +534,7 @@ func shadeEvent(cues []cue, style *Style, hook hookLayout) string {
 	}
 
 	plateau, bottom := style.vignetteSpan()
-	top, low := plateau-shadeOverlap, hook.margin+style.blockHeight()+shadePad
+	top, low := plateau+shadeInset, hook.margin+style.blockHeight()+shadePad
 
 	if bottom {
 		top, low = FrameHeight-low, FrameHeight-top

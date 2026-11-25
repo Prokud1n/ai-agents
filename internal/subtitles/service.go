@@ -132,7 +132,10 @@ func (s *Service) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*
 		return nil, err
 	}
 
-	result := &BurnResult{Cues: cues, FontFallbacks: fontFallbacks(&style, report.Fonts, cues > 0), MissingGlyphs: report.MissingGlyphs}
+	result := &BurnResult{
+		Cues: cues, FontFallbacks: fontFallbacks(&style, report.Fonts, cues > 0), MissingGlyphs: report.MissingGlyphs,
+		Fonts: report.Fonts,
+	}
 	s.logResult(ctx, result)
 
 	return result, nil

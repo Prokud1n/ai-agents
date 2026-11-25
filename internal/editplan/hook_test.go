@@ -258,7 +258,7 @@ func hookOnlyRequest() *Request {
 func TestApplyHookOnly(t *testing.T) {
 	t.Parallel()
 
-	const refused = "ничего не вырезай и не обрезай"
+	const refused = "ничего не вырезай, не обрезай"
 
 	tests := []struct {
 		name  string
@@ -273,6 +273,12 @@ func TestApplyHookOnly(t *testing.T) {
 		{name: "the end trimmed", req: hookOnlyRequest, input: Input{TrimEnd: 1}, err: refused},
 		{name: "seconds cut", req: hookOnlyRequest, input: Input{CutSeconds: []SecondsRange{{From: 1, To: 2}}}, err: refused},
 		{name: "a length", req: hookOnlyRequest, input: Input{TargetSeconds: 3}, err: refused},
+		{name: "the workout mode", req: hookOnlyRequest, input: Input{Mode: roughcut.WorkoutMode}, err: refused},
+		{
+			name: "an exercise title", req: hookOnlyRequest, err: refused,
+			input: Input{AddTitles: []TitleInput{{Text: "Планка", Word: new(7)}}},
+		},
+		{name: "muted", req: hookOnlyRequest, input: Input{Mute: new(true)}, err: refused},
 		{
 			name: "with a caption the reel is cut", input: Input{TrimStart: 1},
 			req: func() *Request {
