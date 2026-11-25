@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more
+  than `roughcut.TargetMargin` (10 %: over 66 s) after the cleaning is planned by the worker and given to the editor's
+  model even without a caption or disputed repeats (shorter ones are rendered at once, no model call; the worker and
+  the app decide by the same `roughcut.LongerThanTarget`): the model keeps the best phrases — a hook in the first seconds, one
+  thought in finished sentences, the closing thought or call to action — so the reel is 30–60 s, cutting whole
+  phrases with `remove_words`/trim (no reordering, no render changes). A length in the caption or a revision («сделай
+  40 секунд», «оставь минуту»; «до 30 секунд» as 0.85 of it, «не сокращай» as the current length) goes to the new
+  `target_seconds` of `submit_edit`; `Apply` checks the
+  reel within ±15 % of it (or of the recommended range), otherwise the model gets the reason once more. The draft of a reel that got shorter says
+  «сократил под рилс», how the reel starts and ends and what did not make it; `decisions.log` has the reason and, as
+  details not counted among the decisions (`roughcut.Edit.Details`), the length and every phrase left out.
+  `fix_words` takes the word as the model reads it at the index and refuses a wrong index. Without a decision the cleaned cut is rendered with a note that the reel is longer
+  than recommended. The selection rules are a section of `agents/editor/agent.md`, with a section for the trainer's own
+  style to be filled from her best reels.
 - Onboarding in the chat (T4.3a). `/help` and `/start` explain what each role does, where to send what, the commands,
   examples of revisions for the editor and how to give feedback; in a topic the part about that topic comes first. On
   start the gateway sets the command menu of the group for the marketer's bot (`setMyCommands`: `/help`, `/idea`,
@@ -370,6 +384,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The editor's prompt lists the transcript by phrases of at most 8 words (word index ranges, the start in the source,
+  the length, the start in the reel or why they are cut) instead of a line per word: over 3 times shorter, the model
+  still cuts by word indices. The
+  editor's refusal texts name «сократить до нужной длины» among what it can do.
 - Dead ends point to `/help`: an unknown command answers «Такой команды нет. Команды — /help.» instead of listing
   every command; the editor's answer to a text, the designer's stub and the answers to voice messages, video notes,
   photos and audio files end with a pointer to `/help`. `/help`, `/start`, `/feedback` and `/onboard` are team commands
@@ -442,6 +460,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `decisions.log` of a first version without a caption no longer says «Решения монтажёра: 0» when the model decided:
+  the model's reason is always logged, and the disputed repeats it left undecided are named.
 - Transcription: a high Whisper `compression_ratio` alone no longer drops a segment, so counting reps and rhythmic cues
   are kept; such a segment is dropped only when it is also poorly decoded or over silence.
 - ffmpeg errors tell the runner's own timeout (`FFMPEG_TIMEOUT`) from the caller's deadline or cancellation.

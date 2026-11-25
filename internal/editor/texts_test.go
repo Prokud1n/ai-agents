@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -76,6 +77,26 @@ func TestDescribe(t *testing.T) {
 				"только указанное (0:10).\n" + workoutFallbackNote,
 		},
 		{
+			name:    "a talking head shortened for a reel",
+			result:  editjob.Result{SourceDuration: 182, Duration: 48},
+			version: 1,
+			summary: &editjob.Summary{Selected: true, Changes: []string{
+				"Оставил главное: начало «планка укрепляет спину…», финал «…сохраняйте и пробуйте завтра».",
+				"Не вошло: «привет сегодня расскажу про планку».",
+			}},
+			expected: "Черновик рилс готов: было 3:02, стало 0:48 — сократил под рилс.\n" +
+				"Оставил главное: начало «планка укрепляет спину…», финал «…сохраняйте и пробуйте завтра».\n" +
+				"Не вошло: «привет сегодня расскажу про планку».",
+		},
+		{
+			name:    "a long talking head only cleaned",
+			result:  editjob.Result{SourceDuration: 182, Duration: 141},
+			version: 1,
+			summary: &editjob.Summary{Note: longFailed60},
+			expected: "Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (паузы, оговорки и неудачные дубли).\n" +
+				longFailed60,
+		},
+		{
 			name:     "nothing to cut",
 			result:   editjob.Result{SourceDuration: 30.2, Duration: 30},
 			version:  1,
@@ -120,13 +141,38 @@ func TestFirstSummary(t *testing.T) {
 
 	twoCandidates := &roughcut.Plan{Candidates: []roughcut.Candidate{{ID: 0}, {ID: 1}}}
 
+	longTalk := &roughcut.Plan{Duration: 141, Candidates: []roughcut.Candidate{{ID: 0}}}
+
 	tests := []struct {
 		name     string
 		caption  string
 		plan     *roughcut.Plan
+		target   float64
 		outcome  editplan.Outcome
 		expected editjob.Summary
 	}{
+		{
+			name: "a long talking head shortened", plan: longTalk, target: 60,
+			outcome: editplan.Outcome{Kind: editplan.EditOutcome, Selected: true, Changes: []string{droppedHello}},
+			expected: editjob.Summary{Selected: true, Changes: []string{
+				droppedHello, cutNoneOfOne,
+			}},
+		},
+		{
+			name: "a long talking head the model failed on", plan: longTalk, target: 60,
+			outcome:  editplan.Outcome{Kind: editplan.FailedOutcome},
+			expected: editjob.Summary{Changes: []string{leftOneRepeat}, Note: longFailed60},
+		},
+		{
+			name: "a long talking head with a caption not understood", plan: longTalk, target: 60, caption: "красиво",
+			outcome:  editplan.Outcome{Kind: editplan.InvalidOutcome},
+			expected: editjob.Summary{Changes: []string{leftOneRepeat}, Note: captionUnclearNote + " " + longUnchosen60},
+		},
+		{
+			name: "within the target: no note", plan: longTalk, target: 180,
+			outcome:  editplan.Outcome{Kind: editplan.NoAnswerOutcome},
+			expected: editjob.Summary{Changes: []string{leftOneRepeat}},
+		},
 		{
 			name: "repeats decided", plan: twoCandidates,
 			outcome:  editplan.Outcome{Kind: editplan.EditOutcome, Cut: 1, Kept: 1},
@@ -184,9 +230,56 @@ func TestFirstSummary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			req := &editplan.Request{Version: 1, Caption: tt.caption, Plan: tt.plan}
+			req := &editplan.Request{Version: 1, Caption: tt.caption, Plan: tt.plan, TargetSeconds: tt.target}
 
 			assert.Equal(t, &tt.expected, firstSummary(req, &tt.outcome))
+		})
+	}
+}
+
+const (
+	droppedHello = "Не вошло: «привет»."
+	cutNoneOfOne = "Спорные повторы: вырезал 0, оставил 1."
+)
+
+// The notes of a long talking head only cleaned, for the recommended 30–60 s.
+var (
+	longFailed60   = fmt.Sprintf(longFailedNote, "30–60 с", "45 секунд")
+	longUnchosen60 = fmt.Sprintf(longUnchosenNote, "30–60 с", "45 секунд")
+)
+
+// TestLongNotes: the notes of a long talking head as the trainer reads them.
+func TestLongNotes(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "Ролик длиннее рекомендованных для рилс 30–60 с: сократить его не получилось из-за технической "+
+		"ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, "+
+		"например: „сделай 45 секунд“.", longFailed60)
+	assert.Equal(t, "Ролик длиннее рекомендованных для рилс 30–60 с: не смог выбрать, что оставить, поэтому вырезал "+
+		"только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: „сделай 45 "+
+		"секунд“.", longUnchosen60)
+}
+
+func TestSecondsText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input    float64
+		expected string
+	}{
+		{input: 45, expected: "45 секунд"},
+		{input: 21, expected: "21 секунду"},
+		{input: 22.5, expected: "23 секунды"},
+		{input: 12, expected: "12 секунд"},
+		{input: 111, expected: "111 секунд"},
+		{input: 30, expected: "30 секунд"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, secondsText(tt.input))
 		})
 	}
 }
@@ -197,7 +290,8 @@ func TestRevisionTexts(t *testing.T) {
 	for _, text := range []string{
 		cannotRevisionText, unclearRevisionText, modelFailedText, artifactsMissingText, captionCannotNote,
 		captionUnclearNote, captionFailedNote, modelFailedRevisionText, editFailedRevisionText, technicalRevisionText,
-		workoutFallbackNote, titlesHint, longReelNote(180), untimedNote([]string{"Мост"}),
+		workoutFallbackNote, titlesHint, longReelNote(180), untimedNote([]string{"Мост"}), longFailedNote,
+		longUnchosenNote,
 	} {
 		assert.NotContains(t, text, "S3")
 		assert.NotContains(t, text, "Claude")
@@ -205,8 +299,8 @@ func TestRevisionTexts(t *testing.T) {
 		assert.NotContains(t, text, "Whisper")
 	}
 
-	assert.Equal(t, "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль, поправить "+
-		"слово в субтитрах, подписать упражнения и убрать звук.", cannotRevisionText)
+	assert.Equal(t, "Такое я пока не умею: могу обрезать, сократить до нужной длины, убрать или вернуть фрагмент, "+
+		"выбрать дубль, поправить слово в субтитрах, подписать упражнения и убрать звук.", cannotRevisionText)
 	assert.Equal(t, "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или "+
 		"„оставь второй дубль“.", unclearRevisionText)
 

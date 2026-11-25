@@ -168,3 +168,24 @@ func TestDecisionsLogOfEdit(t *testing.T) {
 	assert.Contains(t, log, "«по десять приседаний»")
 	assert.Contains(t, log, "Решения монтажёра: 1\n- Правка тренера к версии 1: без конца")
 }
+
+// TestDecisionsLogCountsDecisionsOnly: the details of a decision (the length of a shortened reel, the phrases left
+// out) are listed after the decisions and are not counted as decisions.
+func TestDecisionsLogCountsDecisionsOnly(t *testing.T) {
+	t.Parallel()
+
+	src := speech(editSpeech)
+	edit := Edit{
+		Remove: []WordRange{{From: 8, To: 10}}, Notes: []string{"Отбор под рилс: главное"},
+		Details: []string{"Длина рилс: 0:03.0 (рекомендуется 2–4 с)", "Не вошло в рилс: слова 8–10 «по десять приседаний»"},
+	}
+
+	plan, err := BuildPlanEdited(src, src.Duration, testSettings(), &edit)
+	require.NoError(t, err)
+
+	plan.Edit = &edit
+	log := DecisionsLog(&plan)
+
+	assert.Contains(t, log, "Решения монтажёра: 1\n- Отбор под рилс: главное\n")
+	assert.Contains(t, log, "Подробности:\n- Длина рилс: 0:03.0 (рекомендуется 2–4 с)\n- Не вошло в рилс: слова 8–10")
+}

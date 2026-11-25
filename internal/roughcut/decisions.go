@@ -233,6 +233,14 @@ func DecisionsLog(p *Plan) string {
 		for _, note := range p.Edit.Notes {
 			fmt.Fprintf(&b, "- %s\n", note)
 		}
+
+		if len(p.Edit.Details) > 0 {
+			b.WriteString("\nПодробности:\n")
+
+			for _, line := range p.Edit.Details {
+				fmt.Fprintf(&b, "- %s\n", line)
+			}
+		}
 	}
 
 	return b.String()

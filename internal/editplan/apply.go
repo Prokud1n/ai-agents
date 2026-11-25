@@ -42,7 +42,7 @@ type Input struct {
 	Remove     []roughcut.WordRange `json:"remove_words"`
 	Restore    []roughcut.WordRange `json:"restore_words"`
 	Candidates []CandidateDecision  `json:"candidates"`
-	FixWords   []roughcut.WordFix   `json:"fix_words"`
+	FixWords   []FixInput           `json:"fix_words"`
 	// Mode: talk or workout; empty keeps the mode of the previous version.
 	Mode roughcut.Mode `json:"mode"`
 	// CutSeconds are stretches of the timeline cut by time; RestoreCuts bring back the cuts by time of the
@@ -60,6 +60,17 @@ type Input struct {
 	// Hide are words left out of the subtitles only (a phrase made up by the speech recognition on music): the video
 	// and the sound stay.
 	Hide []roughcut.WordRange `json:"hide_words"`
+	// TargetSeconds is the length of the reel the trainer asked for («сделай 40 секунд»), 0 without one: the reel
+	// built with the decision must be within lengthTolerance of it.
+	TargetSeconds float64 `json:"target_seconds"`
+}
+
+// FixInput corrects the subtitle word Index to Text; Word is the word the model means as it reads it in the
+// transcript: a word that is not there is a wrong index (a word counted wrong inside a phrase).
+type FixInput struct {
+	Index int    `json:"index"`
+	Text  string `json:"text"`
+	Word  string `json:"word,omitempty"`
 }
 
 // CandidateDecision decides a disputed repeat: Cut removes its earlier phrase (the repeat stays), otherwise both stay.
@@ -115,13 +126,8 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	// A workout is trimmed by time: the exercise before the first word goes too.
 	mode := nextMode(req, in)
-	trimmed := trimWords(req, in.TrimStart, in.TrimEnd)
-
-	if mode == roughcut.WorkoutMode {
-		trimmed = trimTime(req, in.TrimStart, in.TrimEnd)
-	}
+	trimmed := trimFor(req, in, mode)
 
 	edit, err := mergeEdit(req, in, trimmed.ranges)
 	if err != nil {
@@ -133,12 +139,13 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
-	edit.Notes = notes(req, in, reason)
-
-	plan, err := buildPlan(req, &edit)
+	plan, err := buildSized(req, in, mode, &edit)
 	if err != nil {
 		return nil, err
 	}
+
+	sel := newSelection(req, in, mode, &plan)
+	edit.Notes, edit.Details = notes(req, in, reason, &sel), details(req, in, &sel)
 
 	shown, err := checkTitlesShown(&edit, &plan)
 	if err != nil {
@@ -154,8 +161,10 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	cut, kept := countCandidates(in.Candidates)
 
 	return &Outcome{
-		Kind: EditOutcome, Edit: edit, Changes: describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}), Cut: cut, Kept: kept,
+		Kind: EditOutcome, Edit: edit, Cut: cut, Kept: kept,
+		Changes:  describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}, &sel),
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
+		Selected: sel.on, Target: in.TargetSeconds,
 	}, nil
 }
 
@@ -176,13 +185,8 @@ func checkInput(req *Request, in *Input) error {
 			timelineDuration(req))
 	}
 
-	for _, ranges := range [][]roughcut.WordRange{in.Remove, in.Restore, in.Hide} {
-		for _, r := range ranges {
-			if r.From < 0 || r.To < r.From || r.To >= words {
-				return checkFailedf("отрезок слов %d–%d вне расшифровки: индексы от 0 до %d, from не больше to",
-					r.From, r.To, words-1)
-			}
-		}
+	if err := checkRanges(words, in.Remove, in.Restore, in.Hide); err != nil {
+		return err
 	}
 
 	if err := checkCandidates(req.Plan, in.Candidates); err != nil {
@@ -193,7 +197,25 @@ func checkInput(req *Request, in *Input) error {
 		return err
 	}
 
-	return checkFixes(req, in.FixWords)
+	if err := checkFixes(req, in.FixWords); err != nil {
+		return err
+	}
+
+	return checkTarget(req, in.TargetSeconds)
+}
+
+// checkRanges: every range of words is within the transcript, from not above to.
+func checkRanges(words int, lists ...[]roughcut.WordRange) error {
+	for _, ranges := range lists {
+		for _, r := range ranges {
+			if r.From < 0 || r.To < r.From || r.To >= words {
+				return checkFailedf("отрезок слов %d–%d вне расшифровки: индексы от 0 до %d, from не больше to",
+					r.From, r.To, words-1)
+			}
+		}
+	}
+
+	return nil
 }
 
 func validSeconds(s float64) bool {
@@ -223,9 +245,9 @@ func checkCandidates(plan *roughcut.Plan, decisions []CandidateDecision) error {
 	return nil
 }
 
-// checkFixes: every corrected word exists, once, fits and changes the word as it is now (the transcript or an earlier
-// correction).
-func checkFixes(req *Request, fixes []roughcut.WordFix) error {
+// checkFixes: every corrected word exists, is the word the model means (Word), once, fits and changes the word as it is
+// now (the transcript or an earlier correction).
+func checkFixes(req *Request, fixes []FixInput) error {
 	words := len(req.Transcript.Words)
 	seen := make(map[int]bool, len(fixes))
 
@@ -235,6 +257,9 @@ func checkFixes(req *Request, fixes []roughcut.WordFix) error {
 		switch {
 		case f.Index < 0 || f.Index >= words:
 			return checkFailedf("слова с индексом %d нет в расшифровке", f.Index)
+		case !sameWord(req, f.Index, f.Word):
+			return checkFailedf("слово %d в расшифровке — «%s», а не «%s»: пересчитай индекс от начала фразы",
+				f.Index, strings.TrimSpace(req.Transcript.Words[f.Index].Word), oneLine(f.Word))
 		case seen[f.Index]:
 			return checkFailedf("слово %d исправлено дважды", f.Index)
 		case text == "" || utf8.RuneCountInString(text) > maxWordRunes:
@@ -249,6 +274,20 @@ func checkFixes(req *Request, fixes []roughcut.WordFix) error {
 	}
 
 	return nil
+}
+
+// sameWord: the model's reading of the word (empty: not given) is the word of the transcript or of the subtitles,
+// whatever the case and the punctuation around it.
+func sameWord(req *Request, index int, word string) bool {
+	if strings.TrimSpace(word) == "" {
+		return true
+	}
+
+	normalize := func(s string) string { return strings.ToLower(strings.TrimFunc(s, unicode.IsPunct)) }
+	want := normalize(strings.TrimSpace(word))
+
+	return want == normalize(strings.TrimSpace(req.Transcript.Words[index].Word)) ||
+		want == normalize(currentWord(req, index))
 }
 
 // currentWord is the word as the subtitles show it now: an earlier correction, or the transcript.
@@ -286,6 +325,15 @@ type trim struct {
 type span struct {
 	start, end float64
 	ok         bool
+}
+
+// trimFor is the trim of the decision: by words, or by time in a workout (the exercise before the first word goes too).
+func trimFor(req *Request, in *Input, mode roughcut.Mode) trim {
+	if mode == roughcut.WorkoutMode {
+		return trimTime(req, in.TrimStart, in.TrimEnd)
+	}
+
+	return trimWords(req, in.TrimStart, in.TrimEnd)
 }
 
 // trimWords: a word is trimmed when its middle is within the first trimStart or the last trimEnd seconds. The first
@@ -469,7 +517,7 @@ func stateRanges(state []wordState, s wordState) []roughcut.WordRange {
 }
 
 // mergeFixes: a new correction of a word replaces the previous one; ordered by word, nil without corrections.
-func mergeFixes(previous, fixes []roughcut.WordFix) []roughcut.WordFix {
+func mergeFixes(previous []roughcut.WordFix, fixes []FixInput) []roughcut.WordFix {
 	if len(previous)+len(fixes) == 0 {
 		return nil
 	}
@@ -542,8 +590,9 @@ func countCandidates(decisions []CandidateDecision) (cut, kept int) {
 	return cut, kept
 }
 
-// notes explain the decision in the decisions log: the trainer's request and every disputed repeat.
-func notes(req *Request, in *Input, reason string) []string {
+// notes are the decisions in the decisions log: the trainer's request or the model's reason (always, so the log of a
+// first version without a caption is not «Решения монтажёра: 0»), and every disputed repeat decided.
+func notes(req *Request, in *Input, reason string, sel *selection) []string {
 	out := make([]string, 0, len(in.Candidates)+1)
 
 	switch {
@@ -551,6 +600,10 @@ func notes(req *Request, in *Input, reason string) []string {
 		out = append(out, fmt.Sprintf("Правка тренера к версии %d: %s", req.Version-1, orDash(reason)))
 	case strings.TrimSpace(req.Caption) != "":
 		out = append(out, "Подпись тренера к исходнику: "+orDash(reason))
+	case sel.on:
+		out = append(out, "Отбор под рилс: "+orDash(reason))
+	default:
+		out = append(out, "Решение по черновой склейке: "+orDash(reason))
 	}
 
 	for _, d := range in.Candidates {
@@ -560,6 +613,33 @@ func notes(req *Request, in *Input, reason string) []string {
 		}
 
 		out = append(out, fmt.Sprintf("Повтор %d: %s — %s", d.ID, verdict, orDash(oneLine(d.Reason))))
+	}
+
+	return out
+}
+
+// details explain the decision in the decisions log without being decisions: the length of a shortened reel, every
+// phrase left out of it, and the disputed repeats of a first version the model left undecided while both phrases
+// stay in the reel.
+func details(req *Request, in *Input, sel *selection) []string {
+	out := selectionNotes(req, in, sel)
+
+	if req.IsRevision() {
+		return out
+	}
+
+	decided := make(map[int]bool, len(in.Candidates))
+	for _, d := range in.Candidates {
+		decided[d.ID] = true
+	}
+
+	kept := keptSet(req.Transcript.Words, sel.keep)
+
+	for i := range req.Plan.Candidates {
+		c := &req.Plan.Candidates[i]
+		if !decided[c.ID] && anyKept(kept, c.EarlierWords) && anyKept(kept, c.LaterWords) {
+			out = append(out, fmt.Sprintf("Повтор %d: решения нет — оставлены обе фразы", c.ID))
+		}
 	}
 
 	return out
