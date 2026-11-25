@@ -57,7 +57,7 @@ func TestRoughCutTranscriptToSubtitles(t *testing.T) {
 	svc, err := subtitles.NewService(nil, &config.Subtitles{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
-	style := svc.Style()
+	style := subtitles.PhraseStyle()
 	style.Accent.MaxPerCue = 0 // plain text: the test is about words, punctuation and times
 
 	result, err := svc.CreateSubtitles(&subtitles.CreateSubtitlesData{Transcript: &transcript, Style: &style})
@@ -78,6 +78,54 @@ func TestRoughCutTranscriptToSubtitles(t *testing.T) {
 		"punctuation of the cut transcript reaches the subtitles; the filler is gone")
 	assert.InDelta(t, plan.Duration, end, 0.2, "subtitles follow the new timeline, not the source")
 	assert.Less(t, end, source.Duration-2, "the cut pause and filler shortened the timeline")
+}
+
+var wordRe = regexp.MustCompile(`(?m)^Dialogue: 0,[^,]*,[^,]*,Word,,0,0,0,,\{\\q2\}(.*)$`)
+
+// TestRoughCutTranscriptToWords: in the word layout (the default) the subtitles of a cut come one word at a time from
+// the transcript of the edit — a word hidden in the subtitles is not shown, a corrected one is shown as corrected, the
+// filler cut by the plan is gone.
+func TestRoughCutTranscriptToWords(t *testing.T) {
+	t.Parallel()
+
+	source := &transcription.Result{
+		Language: "ru",
+		Duration: 6,
+		Segments: []transcription.Segment{
+			{Start: 0.5, End: 2.4, Text: "Привет, друзья! Делаем, эээ, присед."},
+			{Start: 3, End: 4.5, Text: "Держим спину ровно."},
+		},
+		Words: []transcription.Word{
+			{Word: "Привет", Start: 0.5, End: 0.9}, {Word: "друзья", Start: 0.95, End: 1.3},
+			{Word: "Делаем", Start: 1.35, End: 1.7}, {Word: "эээ", Start: 1.75, End: 2.0},
+			{Word: "присед", Start: 2.05, End: 2.4},
+			{Word: "Держим", Start: 3.0, End: 3.4}, {Word: "спину", Start: 3.45, End: 3.9}, {Word: "ровно", Start: 3.95, End: 4.5},
+		},
+	}
+	edit := &roughcut.Edit{
+		Hide:  []roughcut.WordRange{{From: 1, To: 1}},
+		Words: []roughcut.WordFix{{Index: 5, Text: "Держите"}},
+	}
+
+	plan, err := roughcut.BuildPlanEdited(source, source.Duration, roughcut.Settings{
+		MaxPause: 0.4, PadBefore: 0.1, PadAfter: 0.15, RetakeSimilarity: 0.7, Fillers: []string{"э"},
+	}, edit)
+	require.NoError(t, err)
+
+	transcript := roughcut.SubtitleTranscript(source, plan.Keep, edit)
+
+	svc, err := subtitles.NewService(nil, &config.Subtitles{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	result, err := svc.CreateSubtitles(&subtitles.CreateSubtitlesData{Transcript: &transcript})
+	require.NoError(t, err)
+
+	words := make([]string, 0, result.Cues)
+	for _, m := range wordRe.FindAllStringSubmatch(string(result.ASS), -1) {
+		words = append(words, strings.TrimRight(m[1], "!"))
+	}
+
+	assert.Equal(t, []string{"привет", "делаем", "присед", "держите", "спину", "ровно"}, words)
 }
 
 func assTime(t *testing.T, h, m, s string) float64 {
