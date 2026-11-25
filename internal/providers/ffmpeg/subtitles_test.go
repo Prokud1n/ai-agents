@@ -15,7 +15,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 
 	base := BurnSubtitlesData{SubtitlesName: "subtitles.ass", FontsName: "fonts", Width: 1080, Height: 1920, Fit: PadFitMode}
 	encode := []string{
-		videoCodecFlag, "libx264", "-preset", "medium", "-crf", "20", "-maxrate", "10M", "-bufsize", "20M",
+		videoCodecFlag, "libx264", "-preset", "veryfast", "-crf", "20", "-maxrate", "10M", "-bufsize", "20M",
 		"-profile:v", "high", "-pix_fmt", "yuv420p",
 		"-colorspace", bt709, "-color_primaries", bt709, "-color_trc", bt709, "-color_range", "tv",
 		audioCodecFlag, "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", formatFlag, "mp4",
@@ -82,17 +82,35 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 			}, maps, encode, []string{testOutput}),
 		},
 		{
-			name: "an HDR picture is tone mapped before scaling",
+			// The 4K HDR frame is scaled as it is (no matrix conversion before the tone mapping), then tone mapped at
+			// 1080×1920.
+			name: "an HDR picture is scaled first, then tone mapped",
 			input: func(d BurnSubtitlesData) BurnSubtitlesData {
 				d.ToneMap = true
 
 				return d
 			},
 			expected: concat(head, []string{
-				"[0:v]zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0," +
+				"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2," +
+					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black," +
+					"zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0," +
 					"zscale=t=bt709:m=bt709:r=tv,format=yuv420p," +
-					"scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:out_color_matrix=bt709:out_range=tv," +
-					"pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
+					"setsar=1,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
+			}, maps, encode, []string{testOutput}),
+		},
+		{
+			name: "a cropped HDR picture with the shade: the shade and the subtitles are on the tone mapped frame",
+			input: func(d BurnSubtitlesData) BurnSubtitlesData {
+				d.ToneMap, d.Fit = true, CropFitMode
+				d.Shade = &Shade{Height: 900, Plateau: 600, Alpha: 153}
+
+				return d
+			},
+			expected: concat(head, []string{
+				"[0:v]scale=1080:1920:force_original_aspect_ratio=increase:force_divisible_by=2,crop=1080:1920," +
+					toneMapFilter + ",setsar=1[base];" +
+					"color=c=black:s=1080x900:r=1:d=1,format=rgba,geq=r=0:g=0:b=0:a='153*if(lt(Y,600),1,(1+cos(PI*(Y-600)/300))/2)'[shade];" +
+					"[base][shade]overlay=x=0:y=0,ass=filename=subtitles.ass:fontsdir=fonts," + colorTagsFilter + "[v]",
 			}, maps, encode, []string{testOutput}),
 		},
 		{
@@ -252,4 +270,41 @@ func TestParseFontSelections(t *testing.T) {
 			assert.Equal(t, tt.expected, parseFontSelections(tt.input))
 		})
 	}
+}
+
+// TestBurnGraphOrder: in one pass the source is brought to the draft's frame rate first (fps, before split), cut by
+// frames of that rate, joined, scaled to 1080×1920 and only then tone mapped, shaded and drawn on.
+func TestBurnGraphOrder(t *testing.T) {
+	t.Parallel()
+
+	data := BurnSubtitlesData{
+		SubtitlesName: "subtitles.ass", FontsName: "fonts", Width: 1080, Height: 1920, Fit: CropFitMode, Dir: "/tmp/job",
+		ToneMap: true, Shade: &Shade{Height: 900, Plateau: 600, Alpha: 153},
+		Cut: &Cut{
+			Segments: []Segment{{Start: 1, End: 2}, {Start: 3, End: 4.5}},
+			Options:  RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}},
+		},
+	}
+
+	args, graph, err := burnSubtitlesArgs(testVideo, testOutput, &data, 8)
+	require.NoError(t, err)
+
+	order := []string{
+		"fps=fps=30/1:start_time=0:round=down,settb=1/30", "split=2", "trim=start_pts=30:end_pts=60",
+		"trim=start_pts=90:end_pts=135", "concat=n=2", "[cut]scale=1080:1920", "crop=1080:1920",
+		"zscale=t=linear", "format=yuv420p", "setsar=1[base]", "overlay=", "ass=filename=", "setparams=",
+	}
+
+	last := -1
+
+	for _, filter := range order {
+		at := strings.Index(graph, filter)
+		require.GreaterOrEqual(t, at, 0, "%s is in the graph", filter)
+		assert.Greater(t, at, last, "%s comes after the filters before it", filter)
+		last = at
+	}
+
+	assert.Equal(t, 1, strings.Count(graph, "zscale=t=linear"), "the picture is tone mapped once, after the cut")
+	assert.Contains(t, strings.Join(args, " "), "-preset veryfast -crf 20")
+	assert.NotContains(t, args, "-threads", "ffmpeg picks the threads for the decoder, the filters and x264")
 }

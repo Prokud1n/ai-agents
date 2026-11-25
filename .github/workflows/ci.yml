@@ -547,7 +547,7 @@ jobs:
             -v "$PWD/subtitles.test:/app/subtitles.test:ro" --entrypoint /app/subtitles.test ai-agents-media:ci \
             -test.v -test.count=1 -test.timeout=40m -test.run 'TestRenderSpeed' | tee bench.txt
           grep -q -- '--- PASS: TestRenderSpeed ' bench.txt || { echo "::error::TestRenderSpeed did not pass"; exit 1; }
-          grep 'render speed:' bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
+          grep -E 'render speed|workout estimate' bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
 
       # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with
       # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export,

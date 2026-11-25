@@ -13,12 +13,14 @@ import (
 )
 
 // Output video for Instagram Reels: H.264 High (codec, CRF and pixel format as the rough cut render),
-// AAC 48 kHz, moov atom at the start. The final render is published, so it takes the slower preset. CRF keeps
+// AAC 48 kHz, moov atom at the start. CRF keeps
 // the quality even; the bitrate is capped (VBV) so a busy frame cannot blow the file up: 10 Mbit/s is well
 // above what a talking head needs at CRF 20 (4-8 Mbit/s at 1080×1920) and what Instagram keeps after its own
 // encode.
 const (
-	publishPreset = "medium"
+	// publishPreset: the draft is published to Instagram, which encodes it again for its own bitrate (a few Mbit/s
+	// at 1080×1920); veryfast at CRF 20 keeps more than that survives, and encodes about twice as fast as medium.
+	publishPreset = "veryfast"
 	videoProfile  = "high"
 	outAudioRate  = "48000"
 	outAudioBits  = "128k"
@@ -87,7 +89,7 @@ type BurnSubtitlesData struct {
 	Fit           FitMode
 	// Shade darkens the frame under the subtitles; nil means none.
 	Shade *Shade
-	// ToneMap converts an HDR (HLG/PQ) picture to SDR bt709 before scaling (MediaInfo.HDR).
+	// ToneMap converts an HDR (HLG/PQ) picture to SDR bt709 after scaling it to the output size (MediaInfo.HDR).
 	ToneMap bool
 	// Cut, if set, keeps only its fragments of the input, one after another, in the same pass: the video is
 	// decoded and encoded once, the rough cut, the subtitles and the export are one ffmpeg run. The subtitles must
@@ -212,8 +214,8 @@ func burnSubtitlesArgs(input, output string, data *BurnSubtitlesData, ffmpegMajo
 	return append(args, output), graph, nil
 }
 
-// burnGraph scales the frame to the output size (pad or crop), lays the shade over it, then draws the subtitles
-// with libass. The shade is one generated frame: overlay repeats it over the whole video. With a cut the fragments
+// burnGraph scales the frame to the output size (pad or crop) first, tone maps an HDR picture on that small frame,
+// lays the shade over it, then draws the subtitles with libass: every filter after the scale works on 1080×1920. The shade is one generated frame: overlay repeats it over the whole video. With a cut the fragments
 // are cut and joined first (segmentsGraph), and the joined picture is what is scaled.
 func burnGraph(data *BurnSubtitlesData) (string, error) {
 	input, cut := "[0:v]", ""
@@ -245,26 +247,9 @@ func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 		return "", fmt.Errorf("%dx%d: %w", data.Width, data.Height, ErrInvalidSize)
 	}
 
-	w, h := strconv.Itoa(data.Width), strconv.Itoa(data.Height)
-
-	var fit string
-
-	const matrix = "out_color_matrix=" + bt709 + ":out_range=tv"
-
-	// The matrix of the output is bt709 (an SD source is bt601): scale converts it with the size.
-	switch data.Fit {
-	case PadFitMode:
-		fit = "scale=" + w + ":" + h + ":force_original_aspect_ratio=decrease:force_divisible_by=2:" + matrix + "," +
-			"pad=" + w + ":" + h + ":(ow-iw)/2:(oh-ih)/2:color=black"
-	case CropFitMode:
-		fit = "scale=" + w + ":" + h + ":force_original_aspect_ratio=increase:force_divisible_by=2:" + matrix + "," +
-			"crop=" + w + ":" + h
-	default:
-		return "", fmt.Errorf("%q: %w", data.Fit, ErrInvalidFitMode)
-	}
-
-	if data.ToneMap {
-		fit = toneMapFilter + "," + fit
+	fit, err := fitFilter(data)
+	if err != nil {
+		return "", err
 	}
 
 	subtitles := "ass=filename=" + data.SubtitlesName + ":fontsdir=" + data.FontsName + "," + colorTagsFilter +
@@ -281,6 +266,38 @@ func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 
 	return input + fit + ",setsar=1[base];" + shade + "[shade];" +
 		"[base][shade]overlay=x=0:y=" + y + "," + subtitles, nil
+}
+
+// fitFilter brings the frame to the output size (pad or crop). An SDR picture is converted to the bt709 matrix by scale
+// (an SD source is bt601). An HDR one is scaled as it is (10-bit HLG/PQ, its matrix and range) and tone mapped after
+// the scaling: zimg in float32 is the most expensive filter of the graph, and on a 1080×1920 frame it has a quarter of
+// the pixels of a 4K source to convert. The black of pad is the same black in either range.
+func fitFilter(data *BurnSubtitlesData) (string, error) {
+	w, h := strconv.Itoa(data.Width), strconv.Itoa(data.Height)
+
+	matrix := ":out_color_matrix=" + bt709 + ":out_range=tv"
+	if data.ToneMap {
+		matrix = ""
+	}
+
+	var fit string
+
+	switch data.Fit {
+	case PadFitMode:
+		fit = "scale=" + w + ":" + h + ":force_original_aspect_ratio=decrease:force_divisible_by=2" + matrix + "," +
+			"pad=" + w + ":" + h + ":(ow-iw)/2:(oh-ih)/2:color=black"
+	case CropFitMode:
+		fit = "scale=" + w + ":" + h + ":force_original_aspect_ratio=increase:force_divisible_by=2" + matrix + "," +
+			"crop=" + w + ":" + h
+	default:
+		return "", fmt.Errorf("%q: %w", data.Fit, ErrInvalidFitMode)
+	}
+
+	if data.ToneMap {
+		fit += "," + toneMapFilter
+	}
+
+	return fit, nil
 }
 
 // shadeSource generates the gradient frame and returns it with its y position. The expression is built from

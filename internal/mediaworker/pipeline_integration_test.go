@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,8 +40,8 @@ var clipWords = []transcription.Word{
 
 // TestIntegrationPipeline runs the whole pipeline with the real ffmpeg, libass and brand fonts on synthetic clips
 // (the speech recognition is faked): the reel is 1080×1920 H.264 High yuv420p with AAC 48 kHz, the moov atom first,
-// the frame rate of the source, as long as the plan (pauses and the filler cut) and rendered with the brand fonts.
-// A horizontal source is padded into the frame, not stretched.
+// the frame rate of the source capped at 30 fps (60 → 30), as long as the plan to a frame (pauses and the filler cut)
+// and rendered with the brand fonts. A horizontal source is padded into the frame, not stretched.
 func TestIntegrationPipeline(t *testing.T) {
 	t.Parallel()
 	requireIntegrationFFmpeg(t)
@@ -49,6 +50,7 @@ func TestIntegrationPipeline(t *testing.T) {
 		name   string
 		size   string
 		rate   int
+		reel   int // frame rate of the reel; 0 — the rate of the source
 		padded bool
 		hdr    bool
 	}{
@@ -56,6 +58,8 @@ func TestIntegrationPipeline(t *testing.T) {
 		{name: "horizontal at 25 fps is padded", size: "640x360", rate: 25, padded: true},
 		// An iPhone-like HDR source: 10-bit HLG (bt2020, arib-std-b67) is tone mapped to an 8-bit SDR bt709 reel.
 		{name: "10-bit HLG is tone mapped to SDR bt709", size: "720x1280", rate: 30, hdr: true},
+		// iPhone records 60 fps: the draft is 30 fps, cut on the frames of 30 fps.
+		{name: "60 fps HLG becomes 30 fps", size: "720x1280", rate: 60, reel: 30, hdr: true},
 	}
 
 	for _, tt := range tests {
@@ -83,7 +87,12 @@ func TestIntegrationPipeline(t *testing.T) {
 			reel := filepath.Join(t.TempDir(), "reel.mp4")
 			require.NoError(t, os.WriteFile(reel, store.results[files.Reel].data, 0o600))
 
-			checkReel(t, reel, tt.rate, result.Duration)
+			rate := tt.rate
+			if tt.reel != 0 {
+				rate = tt.reel
+			}
+
+			checkReel(t, reel, rate, result.Duration)
 
 			// The bottom of the frame: the picture of a vertical source, black bars under a horizontal one.
 			bottom := rowMean(t, reel, bottomRow)
@@ -210,6 +219,7 @@ type probedReel struct {
 		SampleRate string `json:"sample_rate"`
 		Channels   int    `json:"channels"`
 		RFrameRate string `json:"r_frame_rate"`
+		NbFrames   string `json:"nb_frames"`
 		// ColorTransfer and ColorPrimaries: the export is always SDR bt709.
 		ColorTransfer  string `json:"color_transfer"`
 		ColorPrimaries string `json:"color_primaries"`
@@ -226,7 +236,7 @@ func checkReel(t *testing.T, path string, rate int, planned float64) {
 	var probe probedReel
 
 	require.NoError(t, json.Unmarshal(run(t, "ffprobe", "-v", "error", "-show_entries",
-		"stream=codec_type,codec_name,profile,width,height,pix_fmt,sample_rate,r_frame_rate,channels,"+
+		"stream=codec_type,codec_name,profile,width,height,pix_fmt,sample_rate,r_frame_rate,nb_frames,channels,"+
 			"color_transfer,color_primaries:format=duration",
 		"-of", "json", path), &probe))
 	require.Len(t, probe.Streams, 2)
@@ -241,7 +251,11 @@ func checkReel(t *testing.T, path string, rate int, planned float64) {
 			assert.Equal(t, 1080, s.Width)
 			assert.Equal(t, 1920, s.Height)
 			assert.Equal(t, "yuv420p", s.PixFmt)
-			assert.Equal(t, strconv.Itoa(rate)+"/1", s.RFrameRate, "the frame rate of the source")
+			assert.Equal(t, strconv.Itoa(rate)+"/1", s.RFrameRate, "the frame rate of the source, at most 30 fps")
+			// The plan is on the frame grid of the reel: the picture holds exactly its frames.
+			frames, err := strconv.Atoi(s.NbFrames)
+			require.NoError(t, err)
+			assert.InDelta(t, math.Round(planned*float64(rate)), frames, 1, "as long as the plan to a frame")
 			assert.Equal(t, testSDR, s.ColorTransfer, "SDR bt709, an HDR source is tone mapped")
 			assert.Equal(t, testSDR, s.ColorPrimaries)
 		case "audio":

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -27,9 +28,15 @@ const (
 	// MaxSegments limits the fragments of one render: each is a branch of the ffmpeg filter graph. The editor's
 	// edits are checked against it before they reach the media worker.
 	MaxSegments = 500
-	// maxFrameRate caps the constant frame rate of the result: a 120 fps slow-motion clip becomes 60 fps.
-	maxFrameRate = 60
-	frameEpsilon = 1e-6
+	// maxSourceFrameRate caps the rate read from the file: a 120 fps slow-motion clip counts as 60 fps.
+	maxSourceFrameRate = 60
+	// MaxFrameRate caps the constant frame rate of the draft: a faster source drops every second (third…) frame,
+	// 60 → 30, 59.94 → 29.97, 50 → 25. Half the frames are tone mapped, drawn and encoded: the render is about twice as
+	// fast, and a talking head or a workout does not need more for a phone screen.
+	MaxFrameRate = 30
+	// minDividedFrameRate: a rate that only divides below it (40 → 20) is converted to MaxFrameRate instead.
+	minDividedFrameRate = 24
+	frameEpsilon        = 1e-6
 
 	// junctionFade is the audio fade in and out of every kept fragment, against clicks at the joints.
 	junctionFade = 0.01
@@ -211,21 +218,59 @@ func (s *Service) probe(ctx context.Context, src string) (ffmpeg.MediaInfo, ffmp
 	return info, rate, nil
 }
 
-// targetFrameRate is the constant frame rate of the result, kept as a rational (30000/1001): the nominal
-// rate of the source (r_frame_rate; a variable frame rate phone clip is converted to it), the average one
-// if the nominal is unknown or above maxFrameRate, and maxFrameRate for slow-motion clips.
+// targetFrameRate is the constant frame rate of the result, kept as a rational (30000/1001): the rate of the source
+// (sourceFrameRate) capped at MaxFrameRate (capFrameRate).
 func targetFrameRate(info *ffmpeg.MediaInfo) ffmpeg.Rational {
+	return capFrameRate(sourceFrameRate(info))
+}
+
+// sourceFrameRate is the nominal rate of the source (r_frame_rate; a variable frame rate phone clip is converted to
+// it), the average one if the nominal is unknown or above maxSourceFrameRate, and maxSourceFrameRate for slow-motion
+// clips.
+func sourceFrameRate(info *ffmpeg.MediaInfo) ffmpeg.Rational {
 	for _, rate := range []ffmpeg.Rational{info.RealFrameRate, info.AvgFrameRate} {
-		if f := rate.Float(); f > 0 && f <= maxFrameRate {
+		if f := rate.Float(); f > 0 && f <= maxSourceFrameRate {
 			return rate
 		}
 	}
 
 	if info.RealFrameRate.Float() > 0 || info.AvgFrameRate.Float() > 0 {
-		return ffmpeg.Rational{Num: maxFrameRate, Den: 1}
+		return ffmpeg.Rational{Num: maxSourceFrameRate, Den: 1}
 	}
 
 	return ffmpeg.Rational{}
+}
+
+// capFrameRate divides a rate above MaxFrameRate by the smallest whole number that brings it under the cap, so every
+// kept frame is a frame of the source and the motion stays even: 60 → 30, 60000/1001 → 30000/1001, 50 → 25, 120 → 30.
+// A rate that would fall below minDividedFrameRate (40 → 20) becomes MaxFrameRate. Lower rates are kept as they are.
+func capFrameRate(rate ffmpeg.Rational) ffmpeg.Rational {
+	f := rate.Float()
+	if f <= MaxFrameRate {
+		return rate
+	}
+
+	divisor := int64(math.Ceil(f/MaxFrameRate - frameEpsilon))
+
+	capped := reduceRational(ffmpeg.Rational{Num: rate.Num, Den: rate.Den * divisor})
+	if capped.Float() < minDividedFrameRate {
+		return ffmpeg.Rational{Num: MaxFrameRate, Den: 1}
+	}
+
+	return capped
+}
+
+func reduceRational(r ffmpeg.Rational) ffmpeg.Rational {
+	a, b := r.Num, r.Den
+	for b != 0 {
+		a, b = b, a%b
+	}
+
+	if a <= 1 {
+		return r
+	}
+
+	return ffmpeg.Rational{Num: r.Num / a, Den: r.Den / a}
 }
 
 // audioOffset is where the first audio sample is in the filter graph: ffmpeg has already subtracted the

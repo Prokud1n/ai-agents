@@ -370,6 +370,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Faster render of the editor's drafts (T3.11): about 3 times faster on the same machine. The draft is at most 30 fps
+  (`roughcut.MaxFrameRate`: 60 → 30, 59.94 → 29.97, 50 → 25; 25 and 30 fps are kept), and the plan, the frame cuts and
+  the subtitles use that rate; the frame is scaled to 1080×1920 right after the cut and an HDR (HLG/PQ) picture is tone
+  mapped after the scaling, not on the 4K frame; the export uses x264 `veryfast` instead of `medium` (CRF 20, VBV
+  10 Mbit/s as before). On 2 CPUs a 4K 60 fps 10-bit HEVC HLG source with a rough cut: 6.5 → 2.15 s of render per
+  second of the reel; a whole 4K60 source (a workout) about 1.7 s per second of the source, so 10 minutes take about
+  17 minutes against `MEDIA_WORKER_FFMPEG_TIMEOUT` 30m. CI (job media-image) measures it on 2 CPUs (`TestRenderSpeed`)
+  and compares the colours of the new order with the old one for HLG and PQ (`TestBurnSubtitlesWithFFmpegToneMap`).
 - Dead ends point to `/help`: an unknown command answers «Такой команды нет. Команды — /help.» instead of listing
   every command; the editor's answer to a text, the designer's stub and the answers to voice messages, video notes,
   photos and audio files end with a pointer to `/help`. `/help`, `/start`, `/feedback` and `/onboard` are team commands

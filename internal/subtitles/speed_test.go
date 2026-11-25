@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
@@ -41,8 +43,12 @@ const (
 	benchTimeout  = 30 * time.Minute
 	bitsPerByte   = 8
 	bitsPerKbit   = 1000
-	benchFontsEnv = "SUBTITLES_FONTS_DIR"
-	benchFontsDir = "../../assets/fonts"
+	// maxRenderRatio is a coarse guard against a regression: before T3.11 the draft took about 6.5 s of render per
+	// second on 2 CPUs, after it about 2.2 s.
+	maxRenderRatio  = 5.0
+	estimateMinutes = 10
+	benchFontsEnv   = "SUBTITLES_FONTS_DIR"
+	benchFontsDir   = "../../assets/fonts"
 )
 
 var benchWords = []string{"Делаем", "три", "подхода", "эээ", "держим", "спину"}
@@ -95,18 +101,47 @@ func TestRenderSpeed(t *testing.T) {
 	burner, err := subtitles.NewService(runner, &config.Subtitles{FontsDir: fonts}, log)
 	require.NoError(t, err)
 
+	draft := &ffmpeg.Cut{Segments: cut.Segments(), Options: cut.Render}
 	reel := filepath.Join(dir, "reel.mp4")
-	started = time.Now()
-
-	_, err = burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
+	elapsed := burnBench(ctx, t, burner, reel, &subtitles.BurnSubtitlesData{
 		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: &cut.Transcript},
-		VideoPath:           source, OutputPath: reel, Fit: ffmpeg.CropFitMode,
-		Cut: &ffmpeg.Cut{Segments: cut.Segments(), Options: cut.Render}, ToneMap: info.HDR(),
+		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: draft, ToneMap: info.HDR(),
 	})
+	ratio := logReel(ctx, t, "talk", reel, elapsed, len(cut.Plan.Keep))
+	assert.Less(t, ratio, maxRenderRatio, "the render is as slow as before T3.11 (6.5 s per second on 2 CPUs)")
+
+	// A workout keeps the whole source: the time per second of the source shows how long a 10-minute one takes.
+	rate := cut.Render.FrameRate.Float()
+	whole := &ffmpeg.Cut{
+		Segments: []ffmpeg.Segment{{Start: 0, End: math.Floor(cut.Plan.SourceDuration*rate) / rate}}, Options: cut.Render,
+	}
+	workout := filepath.Join(dir, "workout.mp4")
+	elapsed = burnBench(ctx, t, burner, workout, &subtitles.BurnSubtitlesData{
+		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: transcript},
+		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: whole, ToneMap: info.HDR(),
+	})
+	ratio = logReel(ctx, t, "workout", workout, elapsed, 1)
+	t.Logf("workout estimate: a %d-minute source renders in about %.1f min here (MEDIA_WORKER_FFMPEG_TIMEOUT 30m)",
+		estimateMinutes, ratio*estimateMinutes)
+}
+
+// burnBench renders data into out and returns the seconds it took.
+func burnBench(
+	ctx context.Context,
+	t *testing.T,
+	burner *subtitles.Service,
+	out string,
+	data *subtitles.BurnSubtitlesData,
+) float64 {
+	t.Helper()
+
+	data.OutputPath = out
+	started := time.Now()
+
+	_, err := burner.BurnSubtitles(ctx, data)
 	require.NoError(t, err)
 
-	elapsed := time.Since(started).Seconds()
-	logReel(ctx, t, reel, elapsed, len(cut.Plan.Keep))
+	return time.Since(started).Seconds()
 }
 
 // benchSourceCodec is libx265 (what an iPhone records) when the ffmpeg has it, else 10-bit H.264.
@@ -182,8 +217,8 @@ type benchProbe struct {
 	} `json:"format"`
 }
 
-// logReel logs the speed of the render and what came out.
-func logReel(ctx context.Context, t *testing.T, reel string, elapsed float64, fragments int) {
+// logReel logs the speed of the render and what came out, and returns the seconds of render per second of the reel.
+func logReel(ctx context.Context, t *testing.T, kind, reel string, elapsed float64, fragments int) float64 {
 	t.Helper()
 
 	var probe benchProbe
@@ -211,10 +246,12 @@ func logReel(ctx context.Context, t *testing.T, reel string, elapsed float64, fr
 
 	bitrate := float64(size) * bitsPerByte / duration / bitsPerKbit
 
-	t.Logf("render speed: %.2f s of render per 1 s of reel (render %.1f s, reel %.2f s, %d fragments); "+
+	t.Logf("render speed (%s): %.2f s of render per 1 s of reel (render %.1f s, reel %.2f s, %d fragments); "+
 		"reel %s, %d bytes, %.0f kbit/s (format bit_rate %s); GOMAXPROCS %d, NumCPU %d",
-		elapsed/duration, elapsed, duration, fragments, video, size, bitrate, probe.Format.BitRate,
+		kind, elapsed/duration, elapsed, duration, fragments, video, size, bitrate, probe.Format.BitRate,
 		runtime.GOMAXPROCS(0), runtime.NumCPU())
+
+	return elapsed / duration
 }
 
 func runBench(ctx context.Context, t *testing.T, name string, args ...string) []byte {
