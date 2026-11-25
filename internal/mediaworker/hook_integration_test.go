@@ -133,13 +133,6 @@ func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
 	return env, speech, model
 }
 
-// grayFrame decodes the frame of the stored reel at the second as 8-bit gray pixels, row by row.
-func (env *editEnv) grayFrame(t *testing.T, key string, at float64) []byte {
-	t.Helper()
-
-	return reelFrame(t, env.read(t, key), at)
-}
-
 // reelFrame decodes the frame of the reel at the second as 8-bit gray pixels, row by row.
 func reelFrame(t *testing.T, reel []byte, at float64) []byte {
 	t.Helper()
@@ -181,7 +174,7 @@ func TestIntegrationHookTitle(t *testing.T) {
 
 	prompts := model.Prompts()
 	require.Len(t, prompts, 1, "the short talking head is given to the model for the hook")
-	assert.Contains(t, prompts[0], "предложи заголовок-хук")
+	assert.Contains(t, prompts[0], "предложи только заголовок-хук; вырезать ничего не нужно")
 	assert.Contains(t, v1.Text, "Заголовок: «"+hookText+"».")
 
 	files1, err := editjob.Files(env.files, env.source, 1)
@@ -269,6 +262,9 @@ func TestIntegrationHookRender(t *testing.T) {
 	plain, _ := render(2, "")
 
 	assert.Zero(t, speech.calls, "a render reads the stored transcript")
-	assert.Contains(t, string(plan), `"hook":"`+hookText+`"`)
+	var decoded roughcut.Plan
+	require.NoError(t, json.Unmarshal(plan, &decoded))
+	require.NotNil(t, decoded.Edit)
+	assert.Equal(t, hookText, decoded.Edit.Hook, "the plan keeps the hook")
 	checkHookDrawn(t, hooked, plain)
 }
