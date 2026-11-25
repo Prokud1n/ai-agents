@@ -84,6 +84,8 @@ type Style struct {
 	Layout   Layout   `yaml:"layout"`
 	// Title is the look of the exercise titles of a workout («Выпады — 12 раз»), apart from the speech subtitles.
 	Title TitleStyle `yaml:"title"`
+	// Hook is the look of the hook title over the first seconds of the reel.
+	Hook HookStyle `yaml:"hook"`
 }
 
 // TitleStyle is the look and the place of the exercise titles. They stand at the edge opposite the subtitles, clear
@@ -158,6 +160,12 @@ type Layout struct {
 	TrimEndPunctuation bool `yaml:"trim_end_punctuation"`
 }
 
+// The accent font and color of the default style: the key words, the exercise titles and the hook's key word.
+const (
+	defaultAccentFont  = "Fira Sans Extra Condensed ExtraBold"
+	defaultAccentColor = "#F2B94B"
+)
+
 // DefaultStyle is the look chosen by the customer: small ivory Manrope Medium at the top of the frame below the
 // Instagram bar, key words in warm yellow Fira Sans Extra Condensed ExtraBold capitals, no outline or box —
 // a dark vignette at the top (even under the subtitles, then fading) and a light shadow keep the text readable.
@@ -168,7 +176,7 @@ func DefaultStyle() Style {
 	return Style{
 		Text: TextStyle{Font: "Manrope Medium", Size: 56, Color: "#F5F0E1"},
 		Accent: AccentStyle{
-			TextStyle:   TextStyle{Font: "Fira Sans Extra Condensed ExtraBold", Size: 64, Uppercase: true, Color: "#F2B94B"},
+			TextStyle:   TextStyle{Font: defaultAccentFont, Size: 64, Uppercase: true, Color: defaultAccentColor},
 			Words:       []string{},
 			MaxPerCue:   1,
 			LongestWord: true,
@@ -188,10 +196,19 @@ func DefaultStyle() Style {
 			TrimEndPunctuation: true,
 		},
 		Title: TitleStyle{
-			TextStyle:  TextStyle{Font: "Fira Sans Extra Condensed ExtraBold", Size: 72, Uppercase: true, Color: "#F2B94B"},
+			TextStyle:  TextStyle{Font: defaultAccentFont, Size: 72, Uppercase: true, Color: defaultAccentColor},
 			Margin:     460,
 			Box:        "#000000B3",
 			BoxPadding: 14,
+		},
+		Hook: HookStyle{
+			TextStyle:   TextStyle{Font: "Manrope", Size: 60, Color: "#FFFFFF"},
+			MinDuration: 2.5,
+			MaxDuration: 8,
+			Fade:        150,
+			Gap:         20,
+			CharWidth:   0.5,
+			BoxPadding:  12,
 		},
 	}
 }
@@ -238,6 +255,7 @@ func (s *Style) Validate() error {
 	errs = append(errs, validateLayout(&s.Layout)...)
 	errs = append(errs, validateFit(s)...)
 	errs = append(errs, validateTitle(s)...)
+	errs = append(errs, validateHook(s)...)
 	errs = append(errs,
 		validateBorder("outline", s.Outline), validateBorder("shadow", s.Shadow),
 		validateColor("karaoke_color", s.KaraokeColor), validateVignette(s))

@@ -51,6 +51,11 @@ func Prompt(req *Request) string {
 	case req.Selecting():
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет, а ролик после чистки длиннее рилс — сделай " +
 			"редакторский отбор (раздел «Редакторский отбор») и реши спорные повторы.\n")
+	case req.HookOnly():
+		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи только заголовок-хук; вырезать ничего " +
+			"не нужно.\n")
+	case req.Hook:
+		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи заголовок-хук и реши спорные повторы.\n")
 	default:
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — реши только спорные повторы.\n")
 	}
@@ -65,6 +70,7 @@ func Prompt(req *Request) string {
 	writeTakes(&b, plan)
 	writePrevious(&b, req)
 	writeWorkoutState(&b, req)
+	writeHook(&b, req)
 	writeTrainerText(&b, req)
 
 	return b.String()
@@ -323,14 +329,24 @@ func writeTrainerText(b *strings.Builder, req *Request) {
 }
 
 // writeLength gives the length of a talking-head reel: the selection of a first version longer than the target, the
-// recommended range otherwise (the trainer may ask for a length). Nothing without a target or in a workout.
+// recommended range otherwise (the trainer may ask for a length); without a target (EDITOR_REELS_TARGET_DURATION 0)
+// the reel is not shortened unless the trainer asks. Nothing in a workout.
 func writeLength(b *strings.Builder, req *Request) {
-	if req.TargetSeconds <= 0 || previousEdit(req.Plan).Mode == roughcut.WorkoutMode {
+	if previousEdit(req.Plan).Mode == roughcut.WorkoutMode {
+		return
+	}
+
+	now := roughcut.FormatTimecode(req.Plan.Duration)
+
+	if req.TargetSeconds <= 0 {
+		fmt.Fprintf(b, "Длина: ролик %s. Не сокращай его сам: длину меняй, только если тренер просит в подписи или "+
+			"правке («сделай 40 секунд», «до 30 секунд») — тогда сделай редакторский отбор под неё и укажи "+
+			"target_seconds.\n", now)
+
 		return
 	}
 
 	low, high := req.TargetRange()
-	now := roughcut.FormatTimecode(req.Plan.Duration)
 
 	switch {
 	case req.Selecting():
@@ -430,4 +446,23 @@ func titlePlace(span roughcut.Interval) string {
 	}
 
 	return fmt.Sprintf(" (в ролике %s–%s)", roughcut.FormatTimecode(span.Start), roughcut.FormatTimecode(span.End))
+}
+
+// writeHook says the hook title of the current version and what to do with it: change or remove it by the revision,
+// propose one for the first version (Request.Hook), or set one only when the trainer's caption asks.
+func writeHook(b *strings.Builder, req *Request) {
+	hook := previousEdit(req.Plan).Hook
+
+	switch {
+	case hook != "":
+		fmt.Fprintf(b, "\nЗаголовок-хук сейчас: «%s». Поменять — hook_title с новым текстом, убрать — hook_title "+
+			"пустой строкой; не просят — не указывай.\n", hook)
+	case req.IsRevision():
+		b.WriteString("\nЗаголовка-хука нет. Добавь его через hook_title, только если тренер просит.\n")
+	case req.Hook:
+		b.WriteString("\nЗаголовок-хук: предложи его в hook_title по разделу «Заголовок-хук»; если цепляющей мысли в " +
+			"ролике нет, не указывай. Тренер просит без заголовка — не указывай; даёт свой текст — поставь его.\n")
+	default:
+		b.WriteString("\nЗаголовок-хук ставь через hook_title, только если тренер просит в подписи.\n")
+	}
 }

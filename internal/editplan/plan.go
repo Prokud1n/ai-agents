@@ -16,6 +16,7 @@ package editplan
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 	"github.com/Prokud1n/ai-agents/internal/transcription"
@@ -43,6 +44,9 @@ type Request struct {
 	// longer than it after the cleaning is shortened by the editor to TargetSeconds·minTargetShare–TargetSeconds; 0
 	// turns the selection off. The trainer's caption or revision may ask for another length (Input.TargetSeconds).
 	TargetSeconds float64
+	// Hook: the editor proposes the hook title of the first version (EDITOR_HOOK_TITLE). Without it a first version
+	// gets one only when the trainer's caption asks; a revision changes it either way.
+	Hook bool
 }
 
 // minTargetShare: the recommended reel is from this share of TargetSeconds up to it (30–60 s for 60 s).
@@ -54,6 +58,14 @@ const minTargetShare = 0.5
 func (r *Request) Selecting() bool {
 	return !r.IsRevision() && r.Plan != nil && roughcut.LongerThanTarget(r.Plan.Duration, r.TargetSeconds) &&
 		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
+}
+
+// HookOnly reports whether the first version stopped only for the hook title: the hook is on, no caption, no disputed
+// repeats, a talking head within the recommended length. Then nothing is to be cut: the short reel is not cut on the
+// model's own initiative (Apply refuses it), and without the model its automatic cut is the draft.
+func (r *Request) HookOnly() bool {
+	return !r.IsRevision() && r.Hook && strings.TrimSpace(r.Caption) == "" && r.Plan != nil &&
+		len(r.Plan.Candidates) == 0 && !r.Selecting() && previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 
 // TargetRange is the recommended length of a reel, in seconds: 30–60 s for TargetSeconds 60.

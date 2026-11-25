@@ -81,3 +81,32 @@ title:
   margin: 460
   box: "#000000B3" # 70 % black
   box_padding: 14
+
+# Hook title over the first seconds of the reel («видео для тех, кто боится начать»): the editor's model proposes it,
+# the trainer changes or removes it by a revision. It stands at the subtitles' edge (at the top here; at the top when
+# they are in the middle) at their margin, centered, in plain white Manrope with the soft shadow of the subtitles; at
+# most 4 lines wrapped by words (a hook is at most 90 characters, the app checks it; a longer line is squeezed). While
+# it is shown the subtitles stand right under it (here 260..560 px a hook of four lines, the subtitles 20 px under its
+# last line), clear of it, of the exercise titles and of the Instagram zones, and the vignette is extended under them
+# (an ASS drawing of the same opacity).
+hook:
+  font: Manrope # the Regular weight (Manrope-Regular.ttf)
+  size: 60
+  bold: false
+  uppercase: false
+  color: "#FFFFFF"
+  # One key word (a number with its word, otherwise the longest word) in this color; "" — none.
+  highlight: ""
+  # Shown until half a second after the first phrase, but at least min_duration and at most max_duration seconds
+  # (min_duration without speech), and never past the reel.
+  min_duration: 2.5
+  max_duration: 8
+  # Fade in and out, ms.
+  fade: 150
+  # Between the hook and the subtitles under it, px.
+  gap: 20
+  # Average character width in font sizes, for the line estimate: 26 characters a line here.
+  char_width: 0.5
+  # A plate under the lines, "#RRGGBBAA" (for example "#F28C38E6", orange); "" — none. box_padding: px around the text.
+  box: ""
+  box_padding: 12

@@ -291,7 +291,7 @@ func TestRevisionTexts(t *testing.T) {
 		cannotRevisionText, unclearRevisionText, modelFailedText, artifactsMissingText, captionCannotNote,
 		captionUnclearNote, captionFailedNote, modelFailedRevisionText, editFailedRevisionText, technicalRevisionText,
 		workoutFallbackNote, titlesHint, longReelNote(180), untimedNote([]string{"Мост"}), longFailedNote,
-		longUnchosenNote,
+		longUnchosenNote, noHookHint,
 	} {
 		assert.NotContains(t, text, "S3")
 		assert.NotContains(t, text, "Claude")
@@ -300,7 +300,8 @@ func TestRevisionTexts(t *testing.T) {
 	}
 
 	assert.Equal(t, "Такое я пока не умею: могу обрезать, сократить до нужной длины, убрать или вернуть фрагмент, "+
-		"выбрать дубль, поправить слово в субтитрах, подписать упражнения и убрать звук.", cannotRevisionText)
+		"выбрать дубль, поправить слово в субтитрах, подписать упражнения, добавить, поменять или убрать заголовок, "+
+		"убрать звук.", cannotRevisionText)
 	assert.Equal(t, "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или "+
 		"„оставь второй дубль“.", unclearRevisionText)
 

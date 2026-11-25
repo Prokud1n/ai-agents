@@ -31,9 +31,15 @@ type Editor struct {
 	ReelsMaxDuration time.Duration `env:"EDITOR_REELS_MAX_DURATION" envDefault:"3m"`
 	// ReelsTargetDuration is the longest talking-head reel the editor aims at: a first version whose cleaned cut is
 	// longer stops after the plan even without a caption or disputed repeats, and the editor's model picks the best
-	// phrases for a reel of half this length up to it (30–60 s by default). The trainer's caption or revision may ask
-	// for another length. 0 turns the selection off. Read by the app; the worker gets it in the job.
-	ReelsTargetDuration time.Duration `env:"EDITOR_REELS_TARGET_DURATION" envDefault:"60s"`
+	// phrases for a reel of half this length up to it (30–60 s for 60s). 0 (the default: the trainer's reels are 2–3
+	// minutes) turns the selection off; the trainer's caption or revision may still ask for a length. Read by the app;
+	// the worker gets it in the job.
+	ReelsTargetDuration time.Duration `env:"EDITOR_REELS_TARGET_DURATION" envDefault:"0s"`
+	// HookTitle: the editor's model proposes a hook title for the first seconds of every first version, so every
+	// first version stops after the plan for the model's decision (one more call of the model for a short reel that
+	// had nothing else to decide). false: no hook unless the trainer asks for one, and a short reel without a caption
+	// or disputed repeats is rendered at once, as before. Read by the app; the worker gets it in the job.
+	HookTitle bool `env:"EDITOR_HOOK_TITLE" envDefault:"true"`
 }
 
 // MediaWorker configures the media worker (cmd/media-worker): it edits videos with ffmpeg in a container of its

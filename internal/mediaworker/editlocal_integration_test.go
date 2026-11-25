@@ -17,17 +17,24 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/editjob"
 	"github.com/Prokud1n/ai-agents/internal/editlocal"
 	"github.com/Prokud1n/ai-agents/internal/editor"
+	"github.com/Prokud1n/ai-agents/internal/editplan"
+	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/media"
 	"github.com/Prokud1n/ai-agents/internal/redistest"
+	"github.com/Prokud1n/ai-agents/internal/roughcut"
 	"github.com/Prokud1n/ai-agents/internal/s3test"
 )
 
 const (
-	localRevision  = "убери «привет» в начале"
-	localCaption   = "сделай без «привет» в начале"
-	localKeyPrefix = "incoming"
-	localStream    = "editor:jobs"
+	localRevision = "убери «привет» в начале"
+	localCaption  = "сделай без «привет» в начале"
+	localStream   = "editor:jobs"
 )
+
+// localDecider is the editor's model as the executor takes it.
+type localDecider interface {
+	Decide(ctx context.Context, req *editplan.Request) (*editplan.Outcome, error)
+}
 
 // localEdit is make edit wired to the media worker with the real pipeline through a real Redis and S3.
 type localEdit struct {
@@ -36,7 +43,18 @@ type localEdit struct {
 	decider     *scriptedDecider
 }
 
+// startLocalEdit runs make edit with the speech of the 6-second clip and the scripted model.
 func startLocalEdit(t *testing.T) *localEdit {
+	t.Helper()
+
+	env := &localEdit{transcriber: &countingTranscriber{}, decider: &scriptedDecider{}}
+	env.runner = newLocalRunner(t, env.transcriber, env.decider, false)
+
+	return env
+}
+
+// newLocalRunner is the runner of make edit with the app's executor (hook titles on or off) and the media worker.
+func newLocalRunner(t *testing.T, speech transcriber, decider localDecider, hook bool) *editlocal.Runner {
 	t.Helper()
 
 	requireIntegrationFFmpeg(t)
@@ -46,32 +64,28 @@ func startLocalEdit(t *testing.T) *localEdit {
 	prefix := redistest.Prefix(t, client)
 
 	files, err := media.NewStore(s3test.Connect(t),
-		&config.Media{KeyPrefix: localKeyPrefix, ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)
+		&config.Media{KeyPrefix: testKeyPrefix, ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)
 	require.NoError(t, err)
 
 	cfg := &config.Editor{
 		Stream: prefix + localStream, JobTimeout: editWait, PollInterval: time.Second, QueueTimeout: time.Hour,
-		WorkerWait: time.Minute,
+		WorkerWait: time.Minute, HookTitle: hook,
 	}
 
 	board, err := editjob.NewBoard(client, cfg, log)
 	require.NoError(t, err)
 
-	env := &localEdit{transcriber: &countingTranscriber{}, decider: &scriptedDecider{}}
-
-	worker := NewWorker(board, realPipelineWith(t, files, env.transcriber), &config.MediaWorker{WorkDir: t.TempDir()}, log)
+	worker := NewWorker(board, realPipelineWith(t, files, speech), &config.MediaWorker{WorkDir: t.TempDir()}, log)
 	require.NoError(t, worker.Start(t.Context()))
 	t.Cleanup(func() { require.NoError(t, worker.Stop(context.Background())) })
 
-	env.runner = editlocal.NewRunner(&editlocal.Params{
-		Executor: editor.NewExecutor(board, files, env.decider, noTech{}, cfg, log), Board: board, Store: files,
+	return editlocal.NewRunner(&editlocal.Params{
+		Executor: editor.NewExecutor(board, files, decider, noTech{}, cfg, log), Board: board, Store: files,
 		Sequence: editlocal.NewRedisSequence(client, prefix+editlocal.SequenceKey),
 		Settings: editlocal.Settings{MaxFileSize: 1 << 30, MaxAttempts: 3, RetryBaseDelay: time.Second,
 			RetryMaxDelay: time.Second, PollInterval: editPoll},
 		Log: log,
 	})
-
-	return env
 }
 
 // TestIntegrationEditLocalRevision is make edit end to end against a real Redis, S3 and the media worker with the real
@@ -181,4 +195,51 @@ func TestIntegrationEditLocalCaption(t *testing.T) {
 	description, err := os.ReadFile(filepath.Join(out, editlocal.VersionDir(1), editlocal.DescriptionFile))
 	require.NoError(t, err)
 	assert.Contains(t, string(description), "Вырезал фрагмент «"+cutHello+"».")
+}
+
+// freePrices is LLM_PRICES where every model is free.
+type freePrices struct{}
+
+func (freePrices) Cost(string, llmusage.Tokens) (int64, bool) { return 0, true }
+
+// TestIntegrationEditLocalHook: with EDITOR_HOOK_TITLE (on by default) the first version of a short talking head goes
+// through the model for the hook title — the real decider behind editlocal.UsageMeter, as cmd/edit-local builds it —
+// and the revision «убери заголовок» removes it from the stored transcript.
+func TestIntegrationEditLocalHook(t *testing.T) {
+	t.Parallel()
+
+	speech, model := &talkTranscriber{}, &hookModel{}
+	meter := editlocal.NewUsageMeter(model, freePrices{})
+	runner := newLocalRunner(t, speech, editplan.NewDecider(meter, slog.New(slog.DiscardHandler)), true)
+
+	words := talkTranscript().Words
+	spans := make([]roughcut.Interval, 0, len(words))
+
+	for _, w := range words {
+		spans = append(spans, roughcut.Interval{Start: w.Start, End: w.End})
+	}
+
+	clip := filepath.Join(t.TempDir(), "talk.mkv")
+	makeToneClip(t, clip, talkDuration, spans)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*editWait)
+	defer cancel()
+
+	out := t.TempDir()
+
+	first, err := runner.First(ctx, &editlocal.FirstData{Path: clip, OutDir: out})
+	require.NoError(t, err)
+	require.Len(t, model.Prompts(), 1, "the first version goes through the model for the hook")
+	assert.Contains(t, first.Output.Text, "Заголовок: «"+hookText+"».")
+	assert.Positive(t, meter.Snapshot().ModelTime)
+
+	second, err := runner.Revise(ctx, &editlocal.ReviseData{OutDir: out, Revision: hookRevision})
+	require.NoError(t, err)
+	require.Len(t, model.Prompts(), 2)
+	assert.Contains(t, second.Output.Text, "Убрал заголовок.")
+	assert.Equal(t, int32(1), speech.calls.Load(), "the revision is not transcribed again")
+
+	for _, name := range editlocal.VersionFiles {
+		assert.FileExists(t, filepath.Join(out, editlocal.VersionDir(2), name))
+	}
 }

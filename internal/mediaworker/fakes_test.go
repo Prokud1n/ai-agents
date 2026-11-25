@@ -17,6 +17,7 @@ import (
 const (
 	testSourceKey    = "incoming/-1001234567890/42/uniq.mov"
 	testResultPrefix = "edits"
+	testKeyPrefix    = "incoming"
 	testLanguage     = "ru"
 )
 
