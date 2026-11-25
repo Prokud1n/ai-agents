@@ -375,7 +375,6 @@ func (w *Worker) start(ctx context.Context, job *editjob.Job) (*editjob.Result, 
 // run runs the pipeline until the deadline with the lock refreshed; nil when the worker is stopping or lost the lock
 // (another worker runs the job now, its result counts); editjob.ErrStale when the app forgot or replaced the job
 // while it ran (the run is cancelled, nobody would read its result).
-// (another worker runs the job now, its result counts).
 func (w *Worker) run(ctx context.Context, job *editjob.Job, deadline time.Time) (*editjob.Result, error) {
 	// The deadline is on the worker's clock (w.now), a context counts on the real one: it gets the time left.
 	jobCtx, cancel := context.WithTimeout(ctx, deadline.Sub(w.now()))
