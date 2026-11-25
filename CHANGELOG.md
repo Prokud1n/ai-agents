@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   framing; the 1080×1920 frame is zoomed after the fit and the tone mapping, under the shade and the subtitles, and in
   `pad` mode the black bars stay black. `decisions.log` ends with «Звук и кадр»: the loudness before → after, the noise
   reduction and the number of zooms. New `MEDIA_WORKER_LOUDNESS` (`-14`, `off`), `MEDIA_WORKER_DENOISE` (`true`),
-  `MEDIA_WORKER_ZOOM` (`9` %, `0` off). Render speed (`TestRenderSpeed`, 4K60 HEVC HLG, 2 CPUs): talk BENCH_TALK, workout
-  BENCH_WORKOUT s of render per second of the reel.
+  `MEDIA_WORKER_ZOOM` (`9` %, `0` off). Render speed (`TestRenderSpeed`, 4K60 HEVC HLG, 2 CPUs, the talk now rendered with
+  and without them on the same runner): 4.16 → 4.24 s of render per second of the reel, +1.9 % (the CI runners differ
+  by up to ±20 % between runs: main had 3.41 s for the talk and 2.85 s for the workout, this branch 2.96/2.42 s on one
+  run and 4.24/3.47 s on another).
 - Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more
   than `roughcut.TargetMargin` (10 %: over 66 s) after the cleaning is planned by the worker and given to the editor's
   model even without a caption or disputed repeats (shorter ones are rendered at once, no model call; the worker and
