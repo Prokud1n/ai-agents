@@ -125,6 +125,30 @@ type Edit struct {
 	// Hook is the hook title drawn large over the first seconds of the reel; empty: none. Its text is checked by the
 	// app like the exercise titles (no line breaks, invisible characters or markup).
 	Hook string `json:"hook,omitempty"`
+	// ScreenNotes are the points and numbers drawn at the top of a talking head after the hook (a list title, its
+	// items that pile up line by line, short callouts), on the source timeline; checked by the app like the hook.
+	ScreenNotes []ScreenNote `json:"screen_notes,omitempty"`
+}
+
+// NoteKind is what a screen note is.
+type NoteKind string
+
+const (
+	// ListTitleNote starts a list («3 вещи»): the items after it are shown under it.
+	ListTitleNote NoteKind = "list_title"
+	// ListItemNote is an item of the list («1/ на русском»): the items pile up line by line.
+	ListItemNote NoteKind = "list_item"
+	// CalloutNote is a short number or remark («6 лет») shown alone for a moment.
+	CalloutNote NoteKind = "callout"
+)
+
+// ScreenNote is a point or a number on the screen from Start, in seconds of the source; End 0 lets the subtitles
+// choose (a list stays until the next note, a callout a moment).
+type ScreenNote struct {
+	Kind  NoteKind `json:"kind"`
+	Text  string   `json:"text"`
+	Start float64  `json:"start"`
+	End   float64  `json:"end,omitempty"`
 }
 
 // Title is an exercise title («Выпады — 12 раз») shown from Start to End, in seconds of the source. End 0 means until

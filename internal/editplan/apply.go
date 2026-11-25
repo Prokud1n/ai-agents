@@ -65,6 +65,9 @@ type Input struct {
 	TargetSeconds float64 `json:"target_seconds"`
 	// HookTitle is the hook title over the first seconds: a text sets it, "" removes it, nil keeps it.
 	HookTitle *string `json:"hook_title"`
+	// ScreenNotes are the points and numbers on the screen of a talking head: a list replaces the previous version's
+	// (empty removes them), nil keeps them.
+	ScreenNotes *[]NoteInput `json:"screen_notes"`
 }
 
 // FixInput corrects the subtitle word Index to Text; Word is the word the model means as it reads it in the
@@ -154,6 +157,10 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		return nil, err
 	}
 
+	if err := checkNotesShown(in, &edit, &plan); err != nil {
+		return nil, err
+	}
+
 	if req.IsRevision() {
 		if err := checkChanged(req, &edit, &plan); err != nil {
 			return nil, err
@@ -204,6 +211,10 @@ func checkInput(req *Request, in *Input) error {
 	}
 
 	if err := checkHook(in.HookTitle); err != nil {
+		return err
+	}
+
+	if err := checkNotesInput(req, in); err != nil {
 		return err
 	}
 
@@ -582,7 +593,7 @@ func checkChanged(req *Request, edit *roughcut.Edit, plan *roughcut.Plan) error 
 
 	if slices.Equal(before.Keep, plan.Keep) && slices.Equal(previous.Words, edit.Words) &&
 		slices.Equal(previous.Titles, edit.Titles) && previous.Mute == edit.Mute && slices.Equal(previous.Hide, edit.Hide) &&
-		previous.Hook == edit.Hook {
+		previous.Hook == edit.Hook && slices.Equal(previous.ScreenNotes, edit.ScreenNotes) {
 		return checkFailedf("правка ничего не меняет в ролике: проверь индексы слов, или ответь decision unclear")
 	}
 

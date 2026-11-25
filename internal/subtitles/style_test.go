@@ -7,7 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const styleFile = "../../assets/subtitles/style.yaml"
+const (
+	styleFile       = "../../assets/subtitles/style.yaml"
+	phraseStyleFile = "../../assets/subtitles/style-phrase.yaml"
+)
 
 // The commented style file in assets is the reference for brand book edits: it must stay equal to the defaults.
 func TestStyleFileIsDefault(t *testing.T) {
@@ -17,6 +20,18 @@ func TestStyleFileIsDefault(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, DefaultStyle(), style)
+}
+
+// The phrase layout of before T3.17 is kept as a file: it must stay equal to PhraseStyle and be valid.
+func TestPhraseStyleFile(t *testing.T) {
+	t.Parallel()
+
+	style, err := LoadStyle(phraseStyleFile)
+
+	require.NoError(t, err)
+	assert.Equal(t, PhraseStyle(), style)
+	assert.Equal(t, PhraseMode, style.Layout.Mode)
+	assert.True(t, style.Vignette.Enabled)
 }
 
 func TestParseStyle(t *testing.T) {
@@ -41,13 +56,18 @@ func TestParseStyle(t *testing.T) {
 		{name: "unknown field", input: "text:\n  colour: \"#FFFFFF\"\n", expectedErr: "field colour not found"},
 		{
 			name:  "titles at the top above bottom subtitles",
-			input: "layout:\n  position: bottom\ntitle:\n  position: top\n  margin: 300\n",
+			input: "layout:\n  mode: phrase\n  position: bottom\ntitle:\n  position: top\n  margin: 300\n",
 			modify: func(s *Style) {
-				s.Layout.Position = BottomPosition
+				s.Layout.Mode, s.Layout.Position = PhraseMode, BottomPosition
 				s.Title.Position, s.Title.Margin = TopPosition, 300
 			},
 		},
-		{name: "titles over the subtitles", input: "title:\n  position: top\n  margin: 300\n", expectedErr: "overlap the subtitles"},
+		{
+			name:        "titles over the subtitles",
+			input:       "layout:\n  mode: phrase\ntitle:\n  position: top\n  margin: 300\n",
+			expectedErr: "overlap the subtitles",
+		},
+		{name: "titles over the hook", input: "title:\n  position: top\n  margin: 300\n", expectedErr: "overlaps the titles"},
 		{name: "titles in the Instagram caption", input: "title:\n  margin: 300\n", expectedErr: "between the Instagram zones"},
 		{name: "unknown title position", input: "title:\n  position: left\n", expectedErr: "title.position"},
 		{name: "bad title box", input: "title:\n  box: black\n", expectedErr: "title.box"},
@@ -57,6 +77,9 @@ func TestParseStyle(t *testing.T) {
 		{name: "text under the buttons", input: "layout:\n  margin_side: 40\n", expectedErr: "layout.margin_side"},
 		{name: "text under the caption", input: "layout:\n  margin_bottom: 200\n", expectedErr: "layout.margin_bottom"},
 		{name: "unknown position", input: "layout:\n  position: left\n", expectedErr: "layout.position"},
+		{name: "unknown mode", input: "layout:\n  mode: karaoke\n", expectedErr: "layout.mode must be word or phrase"},
+		{name: "the word plate over the hook", input: "word_box:\n  y: 400\n", expectedErr: "overlaps the hook"},
+		{name: "the handle under the buttons", input: "handle:\n  y: 1200\n", expectedErr: "above the buttons"},
 		{name: "comma in a font name", input: "accent:\n  font: \"Fira, Sans\"\n", expectedErr: "accent.font"},
 		{name: "font size typo", input: "text:\n  size: 800\n", expectedErr: "text.size"},
 		{name: "too many lines", input: "layout:\n  max_lines: 5\n", expectedErr: "layout.max_lines"},
@@ -65,10 +88,10 @@ func TestParseStyle(t *testing.T) {
 		{name: "control character in a color", input: "text:\n  color: \"#FFFFFF\\n\"\n", expectedErr: "text.color"},
 		{name: "translucent text", input: "text:\n  color: \"#FFFFFF40\"\n", expectedErr: "at least half opaque"},
 		{name: "translucent accent", input: "accent:\n  color: \"#F2B94B7F\"\n", expectedErr: "accent.color must be at least"},
-		{name: "line longer than fits", input: "layout:\n  max_line_chars: 40\n", expectedErr: "at most 28"},
+		{name: "line longer than fits", input: "layout:\n  mode: phrase\n  max_line_chars: 40\n", expectedErr: "at most 28"},
 		{
 			name:        "subtitles do not fit above the caption",
-			input:       "text:\n  size: 120\naccent:\n  size: 150\nlayout:\n  margin_top: 960\n  max_line_chars: 10\n",
+			input:       "text:\n  size: 120\naccent:\n  size: 150\nlayout:\n  mode: phrase\n  margin_top: 960\n  max_line_chars: 10\n",
 			expectedErr: "do not fit",
 		},
 		{name: "vignette opacity", input: "vignette:\n  opacity: 2\n", expectedErr: "vignette.fade must be"},
@@ -140,7 +163,7 @@ func TestLineChars(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			style := DefaultStyle()
+			style := PhraseStyle()
 			tt.modify(&style)
 
 			assert.Equal(t, tt.expected, style.lineChars())
@@ -166,7 +189,7 @@ func TestValidateFitMiddle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			style := DefaultStyle()
+			style := PhraseStyle()
 			style.Layout.Position = MiddlePosition
 			style.Layout.MaxLines = 2
 			style.Layout.MaxLineChars = 1

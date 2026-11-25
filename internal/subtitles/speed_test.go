@@ -131,6 +131,11 @@ func TestRenderSpeed(t *testing.T) {
 	assert.Less(t, ratio, maxRenderRatio, "the render is as slow as before T3.11 (7.5 s per second on 2 CPUs)")
 	t.Logf("render speed: the sound and the zoom of T3.15 cost %+.1f %% of the talk render", (ratio/plainRatio-1)*benchPercent)
 
+	referenceStyle(ctx, t, burner, &subtitles.BurnSubtitlesData{
+		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: &cut.Transcript, Hook: benchHook},
+		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: draft, ToneMap: info.HDR(),
+	}, dir, len(cut.Plan.Keep))
+
 	// A workout keeps the whole source: the time per second of the source shows how long a 10-minute one takes.
 	rate := cut.Render.FrameRate.Float()
 	// A workout: the loudness only, no noise reduction or zoom.
@@ -147,6 +152,42 @@ func TestRenderSpeed(t *testing.T) {
 	ratio = logReel(ctx, t, "workout", workout, elapsed, 1)
 	t.Logf("workout estimate: a %d-minute source renders in about %.1f min here (MEDIA_WORKER_FFMPEG_TIMEOUT 45m)",
 		estimateMinutes, ratio*estimateMinutes)
+}
+
+// benchHook is the hook title of the style comparison.
+const benchHook = "три вещи, которые я делаю каждое утро"
+
+// referenceStyle measures the talk draft in the phrase style of before T3.17 and in the reference style (the words on
+// their plate, the screen notes, the handle and the end card) and logs what the reference style costs.
+func referenceStyle(
+	ctx context.Context,
+	t *testing.T,
+	burner *subtitles.Service,
+	draft *subtitles.BurnSubtitlesData,
+	dir string,
+	fragments int,
+) {
+	t.Helper()
+
+	phrase := subtitles.PhraseStyle()
+	before := *draft
+	before.Style = &phrase
+	elapsed := burnBench(ctx, t, burner, filepath.Join(dir, "phrase.mp4"), &before)
+	phraseRatio := logReel(ctx, t, "talk in the phrase style", filepath.Join(dir, "phrase.mp4"), elapsed, fragments)
+
+	after := *draft
+	after.Notes = []subtitles.Note{
+		{Kind: subtitles.ListTitleNote, Text: "3 вещи", Start: 1},
+		{Kind: subtitles.ListItemNote, Text: "1/ стакан воды", Start: 3},
+		{Kind: subtitles.ListItemNote, Text: "2/ 10 приседаний", Start: 5},
+		{Kind: subtitles.CalloutNote, Text: "6 лет", Start: 7},
+	}
+	after.Branding = &subtitles.Branding{Handle: "@prokudina.ana", Icon: true, EndCard: true}
+	elapsed = burnBench(ctx, t, burner, filepath.Join(dir, "reference.mp4"), &after)
+	ratio := logReel(ctx, t, "talk in the reference style", filepath.Join(dir, "reference.mp4"), elapsed, fragments)
+
+	t.Logf("render speed: the reference style of T3.17 (words on a plate, notes, handle, end card) costs %+.1f %% of "+
+		"the phrase style", (ratio/phraseRatio-1)*benchPercent)
 }
 
 // benchDraft is the cut with the sound and the framing the worker renders a talking head with (T3.15, the defaults of

@@ -59,8 +59,8 @@ func TestFormatTime(t *testing.T) {
 func TestCueText(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
-	upper := DefaultStyle()
+	style := PhraseStyle()
+	upper := PhraseStyle()
 	upper.Text.Uppercase = true
 	upper.Accent.Uppercase = false
 
@@ -109,7 +109,7 @@ func TestCueText(t *testing.T) {
 func TestKaraokeEvents(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	style.Accent.Uppercase = false
 
 	c := cue{Start: 0.95, End: 2.6, Lines: [][]token{{tok(wordOne, 1, 1.3), tok(wordTwo, 1.5, 1.8), tok(wTri, 1.8, 2.5)}}}
@@ -134,10 +134,10 @@ func TestKaraokeEvents(t *testing.T) {
 func TestRenderASS(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
-	bottom := DefaultStyle()
+	style := PhraseStyle()
+	bottom := PhraseStyle()
 	bottom.Layout.Position = BottomPosition
-	middle := DefaultStyle()
+	middle := PhraseStyle()
 	middle.Layout.Position = MiddlePosition
 
 	cues := []cue{{Start: 0.95, End: 2.1, Lines: [][]token{{tok("Привет", 1, 2)}}}}
@@ -186,7 +186,7 @@ func TestRenderASS(t *testing.T) {
 func TestBuildASS(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	result := speech(wPrivetCapExcl, "Делаем 3 подхода по 10 повторений, держим спину.")
 
 	tests := []struct {
@@ -246,8 +246,8 @@ func TestBuildASS(t *testing.T) {
 func TestTitleEvents(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
-	lower := DefaultStyle()
+	style := PhraseStyle()
+	lower := PhraseStyle()
 	lower.Title.Uppercase = false
 
 	tests := []struct {
@@ -289,7 +289,7 @@ func TestTitleEvents(t *testing.T) {
 func TestBuildASSWithTitles(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	ass, cues := buildASS(speech(wPrivetCapExcl), &style, nil, false, []Title{{Text: "Выпады", Start: 0.5, End: 3}}, "")
 
 	assert.Equal(t, 1, cues, "titles are not speech cues")

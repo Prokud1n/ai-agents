@@ -53,7 +53,7 @@ func Prompt(req *Request) string {
 			"редакторский отбор (раздел «Редакторский отбор») и реши спорные повторы.\n")
 	case req.HookOnly():
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи только заголовок-хук; вырезать ничего " +
-			"не нужно.\n")
+			"не нужно. Пункты и цифры на экране — можно.\n")
 	case req.Hook:
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи заголовок-хук и реши спорные повторы.\n")
 	default:
@@ -71,6 +71,7 @@ func Prompt(req *Request) string {
 	writePrevious(&b, req)
 	writeWorkoutState(&b, req)
 	writeHook(&b, req)
+	writeScreenNotes(&b, req)
 	writeTrainerText(&b, req)
 
 	return b.String()

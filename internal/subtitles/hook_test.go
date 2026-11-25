@@ -25,7 +25,7 @@ const (
 func TestHookEnd(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	long := speech("Сегодня разберём три ошибки, которые все делают в планке каждый день.")
 	short := speech("Привет!", "Сегодня разберём три ошибки, которые все делают в планке.")
 	endless := speech(strings.Repeat("держим планку ровно и дышим спокойно ", 5))
@@ -64,7 +64,7 @@ func TestHookEnd(t *testing.T) {
 func TestHookEvent(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	accented := style
 	accented.Hook.Highlight = defaultAccentColor
 	capitals := style
@@ -154,11 +154,12 @@ func TestHookKey(t *testing.T) {
 func TestHookLayout(t *testing.T) {
 	t.Parallel()
 
-	top := DefaultStyle()
-	bottom := DefaultStyle()
+	top := PhraseStyle()
+	bottom := PhraseStyle()
 	bottom.Layout.Position = BottomPosition
-	middle := DefaultStyle()
+	middle := PhraseStyle()
 	middle.Layout.Position = MiddlePosition
+	middle.Handle.Y = 700 // between the hook and the subtitles in the middle
 
 	tests := []struct {
 		name   string
@@ -233,7 +234,7 @@ func TestValidateHook(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			style := DefaultStyle()
+			style := PhraseStyle()
 			tt.change(&style)
 			require.ErrorIs(t, style.Validate(), ErrInvalidStyle)
 		})
@@ -245,7 +246,7 @@ func TestValidateHook(t *testing.T) {
 func TestBuildASSWithHook(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	result := speech("Сегодня разберём три ошибки.",
 		"Все делают их в планке каждый день, держим спину ровно и дышим, а теперь самое главное.")
 
@@ -318,14 +319,19 @@ func TestBurnHookWithFFmpeg(t *testing.T) {
 	// Speech until 2.1 s (the reel is 2.6 s): the hook stays until 2.6 s, nothing is on screen at 2.8 s.
 	const hook = "Три ошибки в планке за 10 минут"
 
+	// The phrase layout moves its subtitles under the hook and extends the vignette under them.
+	phrase := PhraseStyle()
+
 	result, err := svc.BurnSubtitles(ctx, &BurnSubtitlesData{
-		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: hook},
-		VideoPath:           input, OutputPath: output,
+		CreateSubtitlesData: CreateSubtitlesData{
+			Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: hook, Style: &phrase,
+		},
+		VideoPath: input, OutputPath: output,
 	})
 	require.NoError(t, err)
 	assert.Empty(t, result.FontFallbacks)
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	margin := style.hookSubtitlesMargin(style.hookLineCount(hook))
 	shown := grayFrame(ctx, t, output, 1)
 
@@ -361,8 +367,10 @@ func TestBurnHookWithFFmpeg(t *testing.T) {
 		"-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", white)
 
 	_, err = svc.BurnSubtitles(ctx, &BurnSubtitlesData{
-		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: hook},
-		VideoPath:           white, OutputPath: shaded,
+		CreateSubtitlesData: CreateSubtitlesData{
+			Transcript: speech("Сегодня разберём три ошибки в планке"), Hook: hook, Style: &phrase,
+		},
+		VideoPath: white, OutputPath: shaded,
 	})
 	require.NoError(t, err)
 
@@ -391,12 +399,12 @@ const (
 func TestHookShade(t *testing.T) {
 	t.Parallel()
 
-	top := DefaultStyle()
-	bottom := DefaultStyle()
+	top := PhraseStyle()
+	bottom := PhraseStyle()
 	bottom.Layout.Position = BottomPosition
-	middle := DefaultStyle()
+	middle := PhraseStyle()
 	middle.Layout.Position = MiddlePosition
-	noVignette := DefaultStyle()
+	noVignette := PhraseStyle()
 	noVignette.Vignette.Enabled = false
 
 	result := speech("Сегодня разберём три ошибки, которые все делают в планке. Держим спину ровно и дышим.",

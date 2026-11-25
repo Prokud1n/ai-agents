@@ -40,6 +40,15 @@ type Editor struct {
 	// had nothing else to decide). false: no hook unless the trainer asks for one, and a short reel without a caption
 	// or disputed repeats is rendered at once, as before. Read by the app; the worker gets it in the job.
 	HookTitle bool `env:"EDITOR_HOOK_TITLE" envDefault:"true"`
+	// ReelsHandle is the trainer's Instagram handle («@prokudina.ana»: «@» and 1–30 of a-z, 0-9, «.», «_»; anything
+	// else fails the start) drawn small at the right edge over every draft and large on its end card. Empty (the
+	// default): no handle and no card. Read by the app; the worker gets it in the job and checks it again.
+	ReelsHandle string `env:"REELS_HANDLE"`
+	// ReelsHandleIcon draws a simple Instagram icon (a rounded square, a circle and a dot) before the handle.
+	ReelsHandleIcon bool `env:"REELS_HANDLE_ICON" envDefault:"true"`
+	// ReelsEndCard darkens the last 2 seconds of the draft and shows the icon and the handle large in the middle (the
+	// reel is not made longer, the sound stays).
+	ReelsEndCard bool `env:"REELS_END_CARD" envDefault:"true"`
 }
 
 // MediaWorker configures the media worker (cmd/media-worker): it edits videos with ffmpeg in a container of its

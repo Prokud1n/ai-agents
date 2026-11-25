@@ -506,6 +506,7 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
 		CreateSubtitlesData: subtitles.CreateSubtitlesData{
 			Transcript: speech, Titles: subtitleTitles(w.cut.Titles), Hook: editHook(w.cut.Plan.Edit),
+			Notes: subtitleNotes(w.cut.ScreenNotes), Branding: p.branding(ctx, w.job),
 		},
 		VideoPath:  w.source,
 		OutputPath: w.reel,
@@ -541,6 +542,33 @@ func editHook(edit *roughcut.Edit) string {
 	}
 
 	return edit.Hook
+}
+
+// subtitleNotes are the screen notes of the cut (on its timeline) for the subtitles: their text was checked by the app.
+func subtitleNotes(notes []roughcut.ScreenNote) []subtitles.Note {
+	out := make([]subtitles.Note, 0, len(notes))
+	for _, n := range notes {
+		out = append(out, subtitles.Note{Kind: subtitles.NoteKind(n.Kind), Text: n.Text, Start: n.Start, End: n.End})
+	}
+
+	return out
+}
+
+// branding is the handle and the card of the job for the subtitles; nil without one or with a handle that fails the
+// check (the app checked it: a bad one here is logged and not drawn, the draft is made without it).
+func (p *Pipeline) branding(ctx context.Context, job *editjob.Job) *subtitles.Branding {
+	if job.Branding == nil {
+		return nil
+	}
+
+	if err := job.Branding.Validate(); err != nil {
+		p.log.ErrorContext(ctx, "mediaworker: the handle of the job is invalid, the draft is made without it",
+			"job_id", job.ID, "error", err)
+
+		return nil
+	}
+
+	return &subtitles.Branding{Handle: job.Branding.Handle, Icon: job.Branding.Icon, EndCard: job.Branding.EndCard}
 }
 
 // subtitleTitles are the exercise titles of the cut for the subtitles.

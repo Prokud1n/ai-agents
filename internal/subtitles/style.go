@@ -37,6 +37,17 @@ const (
 	BottomPosition Position = "bottom"
 )
 
+// LayoutMode is how the speech is shown.
+type LayoutMode string
+
+const (
+	// WordMode shows one word at a time (a number with its unit together) on a small plate at a fixed place, as the
+	// reels the trainer chose as references do.
+	WordMode LayoutMode = "word"
+	// PhraseMode shows phrases of a few words in lines, with key words accented and a vignette behind them.
+	PhraseMode LayoutMode = "phrase"
+)
+
 // Limits of style values: they catch typos in a brand book file (size 800, outline 50), not taste.
 const (
 	minFontSize     = 20
@@ -84,8 +95,14 @@ type Style struct {
 	Layout   Layout   `yaml:"layout"`
 	// Title is the look of the exercise titles of a workout («Выпады — 12 раз»), apart from the speech subtitles.
 	Title TitleStyle `yaml:"title"`
-	// Hook is the look of the hook title over the first seconds of the reel.
+	// Hook is the look of the hook title over the first seconds of the reel; the screen notes of a talking head (a
+	// list, its items, short callouts) are drawn in it too, at its place after it.
 	Hook HookStyle `yaml:"hook"`
+	// WordBox is the look and the place of a word in the word layout (layout.mode word).
+	WordBox WordBoxStyle `yaml:"word_box"`
+	// Handle is the trainer's Instagram handle over the whole reel; EndCard the card with it over the last seconds.
+	Handle  HandleStyle  `yaml:"handle"`
+	EndCard EndCardStyle `yaml:"end_card"`
 }
 
 // TitleStyle is the look and the place of the exercise titles. They stand at the edge opposite the subtitles, clear
@@ -142,9 +159,11 @@ type Border struct {
 	Size  float64 `yaml:"size"`
 }
 
-// Layout places the subtitles and limits their length.
+// Layout places the subtitles and limits their length. The word layout (Mode word) has a place of its own (WordBox):
+// the rest of Layout, the accents and the vignette are for the phrase layout.
 type Layout struct {
-	Position Position `yaml:"position"`
+	Mode     LayoutMode `yaml:"mode"`
+	Position Position   `yaml:"position"`
 	// Distance from the frame edge to the text for top and bottom positions; at least the safe zone.
 	MarginTop    int `yaml:"margin_top"`
 	MarginBottom int `yaml:"margin_bottom"`
@@ -166,13 +185,26 @@ const (
 	defaultAccentColor = "#F2B94B"
 )
 
-// DefaultStyle is the look chosen by the customer: small ivory Manrope Medium at the top of the frame below the
-// Instagram bar, key words in warm yellow Fira Sans Extra Condensed ExtraBold capitals, no outline or box —
-// a dark vignette at the top (even under the subtitles, then fading) and a light shadow keep the text readable.
+// DefaultStyle is the look of the reference reels the owner chose (T3.17): the speech one word at a time, small black
+// Manrope Medium on a white plate at the left edge right under the hook (about a third of the height), no accents
+// and no vignette; the hook and the screen notes in white Manrope at the top; the handle at the right edge. The
+// phrase layout of PhraseStyle is kept as assets/subtitles/style-phrase.yaml.
+func DefaultStyle() Style {
+	style := PhraseStyle()
+	style.Layout.Mode = WordMode
+	style.Vignette.Enabled = false
+	style.Handle.Y = defaultWordHandleY
+
+	return style
+}
+
+// PhraseStyle is the look chosen by the customer before the references: small ivory Manrope Medium at the top of the
+// frame below the Instagram bar, key words in warm yellow Fira Sans Extra Condensed ExtraBold capitals, no outline or
+// box — a dark vignette at the top (even under the subtitles, then fading) and a light shadow keep the text readable.
 //
 // Sizes: the 1080 px frame is about 390 pt wide on a phone, so 56 px is about 20 pt — larger than iOS body text
 // (17 pt), a third smaller than typical Reels captions; condensed capitals need 64 px to look as large.
-func DefaultStyle() Style {
+func PhraseStyle() Style {
 	return Style{
 		Text: TextStyle{Font: "Manrope Medium", Size: 56, Color: "#F5F0E1"},
 		Accent: AccentStyle{
@@ -186,6 +218,7 @@ func DefaultStyle() Style {
 		KaraokeColor: "#FF8C5A",
 		Vignette:     Vignette{Enabled: true, Opacity: 0.6, Fade: 320},
 		Layout: Layout{
+			Mode:               PhraseMode,
 			Position:           TopPosition,
 			MarginTop:          260,
 			MarginBottom:       440,
@@ -210,6 +243,9 @@ func DefaultStyle() Style {
 			CharWidth:   0.5,
 			BoxPadding:  12,
 		},
+		WordBox: defaultWordBox(),
+		Handle:  defaultHandle(),
+		EndCard: defaultEndCard(),
 	}
 }
 
@@ -256,6 +292,8 @@ func (s *Style) Validate() error {
 	errs = append(errs, validateFit(s)...)
 	errs = append(errs, validateTitle(s)...)
 	errs = append(errs, validateHook(s)...)
+	errs = append(errs, validateWordBox(s)...)
+	errs = append(errs, validateBrand(s)...)
 	errs = append(errs,
 		validateBorder("outline", s.Outline), validateBorder("shadow", s.Shadow),
 		validateColor("karaoke_color", s.KaraokeColor), validateVignette(s))
@@ -304,6 +342,10 @@ func validateText(name string, t *TextStyle) []error {
 // validateFit checks that a line fits between the margins and the whole subtitle (MaxLines and an accent line)
 // fits between the Instagram zones at its position.
 func validateFit(s *Style) []error {
+	if s.wordMode() {
+		return nil
+	}
+
 	var errs []error
 
 	l := &s.Layout
@@ -391,6 +433,10 @@ func validateLayout(l *Layout) []error {
 	case TopPosition, MiddlePosition, BottomPosition:
 	default:
 		errs = append(errs, fmt.Errorf("layout.position must be top, middle or bottom, got %q", l.Position))
+	}
+
+	if l.Mode != WordMode && l.Mode != PhraseMode {
+		errs = append(errs, fmt.Errorf("layout.mode must be word or phrase, got %q", l.Mode))
 	}
 
 	if l.MarginTop < SafeZoneTop || l.MarginTop > maxVertMargin {
@@ -491,7 +537,7 @@ func validateTitle(s *Style) []error {
 			top, bottom, SafeZoneTop, FrameHeight-SafeZoneBottom))
 	}
 
-	if subTop, subBottom := s.subtitlesSpan(); top < subBottom && subTop < bottom {
+	if subTop, subBottom := s.subtitlesSpan(); !s.wordMode() && top < subBottom && subTop < bottom {
 		errs = append(errs, fmt.Errorf("titles (%d..%d px) overlap the subtitles (%d..%d px): move title.position "+
 			"or title.margin", top, bottom, subTop, subBottom))
 	}
@@ -507,12 +553,13 @@ func (s *Style) titleSpan() (top, bottom int) {
 	return blockSpan(s.titlePosition(), t.Margin, height)
 }
 
-// titlePosition is where the titles stand: as set, or at the edge opposite the subtitles.
+// titlePosition is where the titles stand: as set, or at the edge opposite the subtitles (at the bottom in the word
+// layout: the words stand at the top).
 func (s *Style) titlePosition() Position {
 	switch {
 	case s.Title.Position != "":
 		return s.Title.Position
-	case s.Layout.Position == BottomPosition:
+	case s.Layout.Position == BottomPosition && !s.wordMode():
 		return TopPosition
 	default:
 		return BottomPosition
@@ -539,4 +586,9 @@ func blockSpan(position Position, margin, height int) (top, bottom int) {
 	default:
 		return FrameHeight/2 - height/2, FrameHeight/2 + height/2
 	}
+}
+
+// wordMode: the speech is shown one word at a time (layout.mode word).
+func (s *Style) wordMode() bool {
+	return s.Layout.Mode == WordMode
 }

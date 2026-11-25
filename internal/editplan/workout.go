@@ -207,8 +207,8 @@ type newTitles struct {
 	changed map[int]roughcut.Title
 }
 
-// mergeExtras puts the mode, the cuts by time, the titles, the sound and the hook title of this decision onto the edit
-// of the new version.
+// mergeExtras puts the mode, the cuts by time, the titles, the sound, the hook title and the screen notes of this
+// decision onto the edit of the new version.
 func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edit *roughcut.Edit) (*newTitles, error) {
 	previous := previousEdit(req.Plan)
 
@@ -236,12 +236,18 @@ func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edi
 		return nil, err
 	}
 
+	notes, err := screenNotesFor(req, in, mode, &previous)
+	if err != nil {
+		return nil, err
+	}
+
 	edit.Mode = storedMode(mode)
 	edit.Hide = hide
 	edit.CutTime = roughcut.NormalizeIntervals(cuts, req.Plan.SourceDuration)
 	edit.Titles = titles
 	edit.Mute = previous.Mute
 	edit.Hook = nextHook(&previous, in)
+	edit.ScreenNotes = notes
 
 	if in.Mute != nil {
 		edit.Mute = *in.Mute

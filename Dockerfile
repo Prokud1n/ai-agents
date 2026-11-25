@@ -41,9 +41,11 @@ RUN apk add --no-cache "ffmpeg=~8.1" && \
     install -d -o 65532 -g 65532 /work
 
 COPY --from=build-media /out-media/ /app/
-# Subtitle fonts with their OFL licenses, and the default style for reference (assets/subtitles/style.yaml).
+# Subtitle fonts with their OFL licenses, the default style for reference (assets/subtitles/style.yaml) and the phrase
+# style of before T3.17 (SUBTITLES_STYLE_FILE=/app/subtitles-style-phrase.yaml).
 COPY assets/fonts/ /app/fonts/
 COPY assets/subtitles/style.yaml /app/subtitles-style.yaml
+COPY assets/subtitles/style-phrase.yaml /app/subtitles-style-phrase.yaml
 ENV SUBTITLES_FONTS_DIR=/app/fonts
 
 USER 65532:65532

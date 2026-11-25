@@ -191,8 +191,11 @@ func TestBurnSubtitlesWithFFmpeg(t *testing.T) {
 				speechInput = tt.transcript
 			}
 
+			// The phrase layout: its lines are centered (the word layout has a test of its own).
+			phrase := PhraseStyle()
+
 			result, err := svc.BurnSubtitles(ctx, &BurnSubtitlesData{
-				CreateSubtitlesData: CreateSubtitlesData{Transcript: speechInput, Karaoke: tt.karaoke},
+				CreateSubtitlesData: CreateSubtitlesData{Transcript: speechInput, Karaoke: tt.karaoke, Style: &phrase},
 				VideoPath:           input, OutputPath: output, Fit: tt.fit,
 			})
 			require.NoError(t, err)

@@ -87,7 +87,7 @@ func trimHookPeriod(text string) string {
 
 // checkHookOnly refuses cuts, trims, the workout mode, exercise titles and muting in a first version stopped only for
 // the hook title: there is no caption, the trainer asked for nothing, so the model does not change the reel on its own
-// initiative.
+// initiative; the hook and the screen notes (they cut nothing) pass.
 func checkHookOnly(req *Request, in *Input) error {
 	if !req.HookOnly() {
 		return nil
@@ -98,7 +98,7 @@ func checkHookOnly(req *Request, in *Input) error {
 
 	if cuts || extras {
 		return checkFailedf("в этом ролике ничего не вырезай, не обрезай и не меняй режим, подписи упражнений и звук: " +
-			"подписи нет, тренер ни о чём не просила — укажи только hook_title (или не указывай его)")
+			"подписи нет, тренер ни о чём не просила — укажи только hook_title и screen_notes (или не указывай их)")
 	}
 
 	return nil

@@ -292,7 +292,7 @@ func TestTrimEnd(t *testing.T) {
 func TestCountingFitsLines(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 
 	fast := make([]token, 0, 12)
 	for i := range 12 {

@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Screen notes of a talking head (T3.17). The editor's model puts what the trainer lists or names on the screen
+  (`screen_notes` of `submit_edit`: a list title «3 вещи», list items «1/ на русском», callouts «6 лет»; at most 12, 40
+  characters, from the speech only, no markup, emoji or hashtags; a start by a word or seconds of the source, an
+  optional end; the whole list per version, an empty one removes it; talk mode only, allowed in a reel stopped only for
+  the hook). They add up over the versions (`roughcut.Edit.ScreenNotes`), go onto the reel's timeline with the cut
+  (`roughcut.RemapScreenNotes`: a note that starts in a cut piece is dropped) and are drawn in the hook style at its
+  place once the hook is gone: the items pile up under the title line by line until the list ends (its end, the next
+  note that is not its item, or 5 s after its last item), at most 4 lines (the earliest items scroll away), a callout
+  alone for 1.5–3 s; in the phrase layout the subtitles shown with a block stand under it over the extended shade. The
+  revisions «убери пункты», «поменяй пункт 2 на …», «добавь выноску … на …» make a new version without the speech
+  recognition. The draft says «На экране: 3 пункта и 2 выноски.» or «Убрал пункты и цифры с экрана.», `decisions.log`
+  lists them; the refusal texts name the new skill.
+- The trainer's handle and the end card (T3.17): `REELS_HANDLE` (app; empty by default, `.env.dist` has
+  `@prokudina.ana`; strictly `@` and 1–30 of `a-z0-9._`, checked at the start of the app and again by the worker, which
+  gets it in the job, `editjob.Job.Branding`), `REELS_HANDLE_ICON` (true), `REELS_END_CARD` (true). The handle is drawn
+  small and translucent at the right edge on the row of the words over the whole reel, with a simple Instagram icon
+  drawn as ASS vectors (rings of a rounded square and a circle, and a dot); over the last 2 seconds the frame darkens
+  (70 % black, 500 ms fade) and the icon and the handle stand large in the middle — the reel is not longer, the sound
+  is untouched. In talking heads and workouts. Sections `handle` and `end_card` of `style.yaml`.
+- `TestBurnReferenceStyleWithFFmpeg` (in the media image too): the word on its white plate, a callout, the handle and
+  the end card checked by pixels; `TestIntegrationScreenNotes`: the hook, two items and a callout, then «убери пункты»
+  without the speech recognition; `TestRenderSpeed` logs what the reference style costs against the phrase style.
+
 - Hook title of a reel (T3.15b). The editor's model proposes a hook (`hook_title` of `submit_edit`: an address to the
   audience or a personal fact or thesis from the speech, 1–14 words, at most 90 characters, quotes around it and a
   period at the end dropped, in the language of the reel, no promises the reel does not keep, no emoji, hashtags or
@@ -425,6 +448,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
 
 ### Changed
+
+- The default subtitle style follows the reference reels (T3.17): one word at a time (a number with its unit together,
+  a word shorter than 0.15 s with the next one, no blinking between words), in small letters without the punctuation
+  of its sentence, small black Manrope Medium 44 px on an opaque white plate (ASS BorderStyle 3, so the plate always
+  fits the word) at the left Instagram margin right under the hook (x 140, y 600), no accents and no vignette
+  (`layout.mode: word`, section `word_box`). The phrase style of before is kept as
+  `assets/subtitles/style-phrase.yaml` (`/app/subtitles-style-phrase.yaml` in the media image, `SUBTITLES_STYLE_FILE`
+  switches to it). A custom style file without `layout.mode` now gets the word layout: add `mode: phrase` (and
+  `vignette.enabled: true`) to keep the phrases. Hidden and corrected subtitle words work in both layouts. The style
+  validation keeps the plate, the hook with the notes, the exercise titles and the handle clear of each other and of
+  the Instagram zones.
 
 - `EDITOR_REELS_TARGET_DURATION` defaults to `0`: the trainer's talking reels are 2–3 minutes, so a reel is not
   shortened unless the trainer asks for a length in the caption or a revision («сделай 40 секунд», `target_seconds`);

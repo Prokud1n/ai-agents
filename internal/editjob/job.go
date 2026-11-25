@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
+	"github.com/Prokud1n/ai-agents/internal/subtitles"
 )
 
 // Status of a finished job.
@@ -119,6 +120,26 @@ type Job struct {
 	// RevisionHash is the app's fingerprint of the trainer's text the job was decided on (the revision; the caption
 	// of the first version): a job of a failed revision left on the board is not given to the next revision.
 	RevisionHash string `json:"revision_hash,omitempty"`
+	// Branding is the trainer's handle over the reel and the end card with it (REELS_HANDLE, REELS_HANDLE_ICON,
+	// REELS_END_CARD of the app); nil: none. The worker checks the handle again and draws nothing with an invalid one.
+	Branding *Branding `json:"branding,omitempty"`
+}
+
+// Branding is the trainer's Instagram handle drawn over the reel: small at the right edge with the icon (Icon) and
+// large on the card over the last seconds (EndCard).
+type Branding struct {
+	Handle  string `json:"handle"`
+	Icon    bool   `json:"icon,omitempty"`
+	EndCard bool   `json:"end_card,omitempty"`
+}
+
+// Validate checks the handle: «@» and 1–30 small Latin letters, digits, dots and underscores.
+func (b *Branding) Validate() error {
+	if err := subtitles.CheckHandle(b.Handle); err != nil {
+		return fmt.Errorf("failed to check the reels handle: %w", err)
+	}
+
+	return nil
 }
 
 // TextHash is the fingerprint of a text for Job.RevisionHash: sha256 in hex, empty for an empty text.

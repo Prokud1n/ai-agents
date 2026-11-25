@@ -1,0 +1,159 @@
+# Subtitle style of the phrase layout (subtitles.PhraseStyle): the look before T3.17 — phrases of a few words in lines
+# with key words accented and a vignette. Pass it as `-style style-phrase.yaml` or SUBTITLES_STYLE_FILE (in the media
+# image: /app/subtitles-style-phrase.yaml) to go back to it. Fields left out keep the values of the built-in default
+# (assets/subtitles/style.yaml, the word layout), so a file of the phrase layout sets layout.mode and vignette.enabled;
+# unknown fields are errors.
+# Colors: "#RRGGBB" or "#RRGGBBAA" (AA is opacity, FF is opaque). Sizes are pixels of the 1080×1920 frame:
+# it is about 390 pt wide on a phone, so 56 px is about 20 pt.
+
+# Main text. font is the family name libass matches: for a static weight other than Regular/Bold it is the legacy
+# family with the weight ("Manrope Medium"), see `fc-scan --format '%{family}\n' file.ttf` (the last name).
+# The font file goes to SUBTITLES_FONTS_DIR (assets/fonts, /app/fonts in the media image).
+text:
+  font: Manrope Medium
+  size: 56
+  bold: false
+  uppercase: false
+  color: "#F5F0E1" # ivory; text and accent colors must be at least half opaque
+
+# Key words, always: a number with its unit ("10 повторений", not counting "раз два три") and the trainer's
+# dictionary. Otherwise the longest meaningful word of at least 7 letters (not a routine command like "держим"),
+# but never in a subtitle right after an accented one: about a third of subtitles get an accent.
+# In a phrase longer than a line the accent stands on a line of its own.
+# An explicit list (-accents, or from the Montage agent) replaces the automatic choice.
+accent:
+  font: Fira Sans Extra Condensed ExtraBold
+  size: 64
+  bold: false
+  uppercase: true
+  color: "#F2B94B" # warm yellow
+  # Words or phrases always accented. An entry of 4+ letters also matches forms with up to 3 more letters
+  # ("ягодиц" -> "ягодицами"); a shorter one matches only exactly ("вес" is not "весь").
+  words: []
+  # Automatic accents per subtitle (0 turns them off).
+  max_per_cue: 1
+  longest_word: true
+
+# No outline: the vignette and a light shadow (40 % black, 2 px) keep the text readable on a light background.
+outline:
+  color: "#000000"
+  size: 0
+shadow:
+  color: "#00000066"
+  size: 2
+
+# The word being spoken, with -karaoke; differs from the accent color.
+karaoke_color: "#FF8C5A"
+
+# Dark vignette from the top edge (bottom edge for the bottom position; none in the middle), burned in under the
+# subtitles: even opacity from the edge to the bottom of the tallest subtitle (margin + (max_lines + 1) lines),
+# then a smooth fade over fade px. 0.6 gives the text about 5:1 and the accent about 3:1 contrast on white.
+vignette:
+  enabled: true
+  opacity: 0.6
+  fade: 320
+
+layout:
+  # phrase: phrases of a few words in lines (this file); word: one word at a time on a plate (style.yaml).
+  mode: phrase
+  # top | middle | bottom. Instagram covers the top 250 px, the bottom 420 px (caption, buttons)
+  # and 140 px on the right (buttons): the margins cannot be smaller, and max_lines lines plus an accent line
+  # must fit between the margin and the opposite zone.
+  position: top
+  margin_top: 260
+  margin_bottom: 440
+  margin_side: 140
+  max_lines: 2
+  # Short, laconic lines; at most what fits between the margins (width / size / char_width, 28 here).
+  max_line_chars: 22
+  # Average character width in font sizes, for the estimate above.
+  char_width: 0.5
+  # Drop . , : ; at the end of a subtitle.
+  trim_end_punctuation: true
+
+# Exercise titles of a workout reel («Выпады — 12 раз»), drawn apart from the speech subtitles, in the accent font in
+# capitals. position empty: the edge opposite the subtitles (bottom here); margin is from that edge. A title is at
+# most 2 lines; with the box (padding included) it must stay clear of the subtitles and the Instagram zones: here it
+# takes 1252..1460 px, the caption and buttons start at 1500. The translucent dark box keeps it readable over a gym
+# floor or a mat, where there is no vignette.
+title:
+  font: Fira Sans Extra Condensed ExtraBold
+  size: 72
+  bold: false
+  uppercase: true
+  color: "#F2B94B" # the accent yellow
+  position: ""
+  margin: 460
+  box: "#000000B3" # 70 % black
+  box_padding: 14
+
+# Hook title over the first seconds of the reel («видео для тех, кто боится начать»): the editor's model proposes it,
+# the trainer changes or removes it by a revision. It stands at the subtitles' edge (at the top here; at the top when
+# they are in the middle) at their margin, centered, in plain white Manrope with the soft shadow of the subtitles; at
+# most 4 lines wrapped by words (a hook is at most 90 characters, the app checks it; a longer line is squeezed). While
+# it is shown the subtitles stand right under it (here 260..560 px a hook of four lines, the subtitles 20 px under its
+# last line), clear of it, of the exercise titles and of the Instagram zones, and the vignette is extended under them
+# (an ASS drawing of the same opacity).
+hook:
+  font: Manrope # the Regular weight (Manrope-Regular.ttf)
+  size: 60
+  bold: false
+  uppercase: false
+  color: "#FFFFFF"
+  # One key word (a number with its word, otherwise the longest word) in this color; "" — none.
+  highlight: ""
+  # Shown until half a second after the first phrase, but at least min_duration and at most max_duration seconds
+  # (min_duration without speech), and never past the reel.
+  min_duration: 2.5
+  max_duration: 8
+  # Fade in and out, ms.
+  fade: 150
+  # Between the hook and the subtitles under it, px.
+  gap: 20
+  # Average character width in font sizes, for the line estimate: 26 characters a line here.
+  char_width: 0.5
+  # A plate under the lines, "#RRGGBBAA" (for example "#F28C38E6", orange); "" — none. box_padding: px around the text.
+  box: ""
+  box_padding: 12
+
+# The word layout (layout.mode word, see style.yaml): unused here, but validated.
+word_box:
+  font: Manrope Medium
+  size: 44
+  bold: false
+  uppercase: false
+  color: "#111111"
+  lowercase: true
+  box: "#FFFFFF"
+  padding: 10
+  x: 140
+  y: 600
+  max_width: 560
+  min_duration: 0.15
+  char_width: 0.55
+
+# The trainer's handle (REELS_HANDLE) at the right edge over the whole reel. In the phrase layout it stands below the
+# subtitles shifted under a hook (580..820 px here) and above the buttons on the right (1000 px); with the subtitles in
+# the middle or at the bottom move it (handle.y) to where they are not.
+handle:
+  font: Manrope Medium
+  size: 30
+  bold: false
+  uppercase: false
+  color: "#FFFFFFB3"
+  right: 40
+  y: 840
+  max_width: 300
+  icon_size: 34
+  char_width: 0.55
+
+end_card:
+  font: Manrope Medium
+  size: 64
+  bold: false
+  uppercase: false
+  color: "#FFFFFF"
+  duration: 2
+  shade: 0.7
+  fade: 500
+  icon_size: 120
