@@ -184,7 +184,9 @@ func (w *Worker) loop(ctx context.Context) {
 	}
 }
 
-// handle runs the delivered job unless it is malformed, finished, expired or taken by another worker; see Worker.
+// handle runs the delivered job unless it is malformed, forgotten or replaced by the app (not on the board),
+// finished, expired or taken by another worker; a job that leaves the board while it runs is cancelled and acked
+// without a result. See Worker.
 func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 	if d.Job == nil {
 		w.log.ErrorContext(ctx, "mediaworker: skipping malformed job entry", "message_id", d.MessageID)
@@ -220,8 +222,10 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 	defer w.unlock(ctx, job)
 
 	result, err := w.start(ctx, job)
-	if errors.Is(err, editjob.ErrStale) { // the app forgot or replaced the job between the check above and the start
-		w.log.InfoContext(ctx, "mediaworker: job left the board before it started, skipping", "job_id", job.ID,
+	// The app forgot or replaced the job after the check above: before the start, or while it ran (then it was
+	// cancelled at once).
+	if errors.Is(err, editjob.ErrStale) {
+		w.log.InfoContext(ctx, "mediaworker: job is not on the board any more, acked without a result", "job_id", job.ID,
 			"stage", job.EffectiveStage())
 		w.ack(ctx, d)
 
@@ -365,25 +369,27 @@ func (w *Worker) start(ctx context.Context, job *editjob.Job) (*editjob.Result, 
 		return editjob.Failed(job.ID, editjob.TimeoutCode, w.now()), nil
 	}
 
-	return w.run(ctx, job, deadline), nil
+	return w.run(ctx, job, deadline)
 }
 
 // run runs the pipeline until the deadline with the lock refreshed; nil when the worker is stopping or lost the lock
+// (another worker runs the job now, its result counts); editjob.ErrStale when the app forgot or replaced the job
+// while it ran (the run is cancelled, nobody would read its result).
 // (another worker runs the job now, its result counts).
-func (w *Worker) run(ctx context.Context, job *editjob.Job, deadline time.Time) *editjob.Result {
+func (w *Worker) run(ctx context.Context, job *editjob.Job, deadline time.Time) (*editjob.Result, error) {
 	// The deadline is on the worker's clock (w.now), a context counts on the real one: it gets the time left.
 	jobCtx, cancel := context.WithTimeout(ctx, deadline.Sub(w.now()))
 	defer cancel()
 
-	var lost atomic.Bool
+	var stopped atomic.Int32 // the lockOutcome that stopped the run
 
 	refreshDone := make(chan struct{})
 
 	go func() {
 		defer close(refreshDone)
 
-		if !w.keepLock(jobCtx, job) {
-			lost.Store(true)
+		if outcome := w.keepLock(jobCtx, job); outcome != lockKept {
+			stopped.Store(int32(outcome))
 			cancel()
 		}
 	}()
@@ -396,8 +402,13 @@ func (w *Worker) run(ctx context.Context, job *editjob.Job, deadline time.Time) 
 	cancel()
 	<-refreshDone
 
-	if ctx.Err() != nil || lost.Load() {
-		return nil
+	outcome := lockOutcome(stopped.Load())
+	if outcome == jobLeft {
+		return nil, fmt.Errorf("job %s left the board while it ran: %w", job.ID, editjob.ErrStale)
+	}
+
+	if outcome == lockLost || ctx.Err() != nil {
+		return nil, nil
 	}
 
 	if err != nil {
@@ -411,13 +422,13 @@ func (w *Worker) run(ctx context.Context, job *editjob.Job, deadline time.Time) 
 
 		result.Status, result.Code, result.FinishedAt = editjob.FailedStatus, code, w.now()
 
-		return result
+		return result, nil
 	}
 
 	w.log.InfoContext(ctx, "mediaworker: job done", "job_id", job.ID, "seconds", roundTime(w.now().Sub(started).Seconds()),
 		"source_duration", result.SourceDuration, "duration", result.Duration, "audio_seconds", result.AudioSeconds)
 
-	return result
+	return result, nil
 }
 
 // runPipeline turns a panic of the pipeline into a temporary failure with its stack in the log.
@@ -439,29 +450,57 @@ func (w *Worker) runPipeline(ctx context.Context, job *editjob.Job) (result *edi
 	return result, err
 }
 
-// keepLock refreshes the job's lock until ctx is done and reports false when the lock is lost (it expired and
-// another worker took the job): this run then stops, so the job is not edited twice at once.
-func (w *Worker) keepLock(ctx context.Context, job *editjob.Job) bool {
+// lockOutcome is why keepLock stopped.
+type lockOutcome int32
+
+const (
+	lockKept lockOutcome = iota // the run ended by itself
+	lockLost                    // the lock expired and another worker took the job: its result counts
+	jobLeft                     // the app forgot or replaced the job: nobody would read the result
+)
+
+// keepLock refreshes the job's lock until ctx is done and checks that the job is still on the board. It stops when the
+// lock is lost (so the job is not edited twice at once) or the app forgot or replaced the job (a timeout, the last
+// attempt, a new revision): the run is then cancelled at once instead of running to its timeout for a result that
+// would be dropped.
+func (w *Worker) keepLock(ctx context.Context, job *editjob.Job) lockOutcome {
 	ticker := time.NewTicker(w.board.LockTTL() / lockRefreshes)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return true
+			return lockKept
 		case <-ticker.C:
-			held, err := w.board.Refresh(ctx, job.ID, w.consumer)
-
-			switch {
-			case err != nil && ctx.Err() == nil:
-				w.log.WarnContext(ctx, "mediaworker: failed to refresh job lock", "error", err, "job_id", job.ID)
-			case err == nil && !held:
-				w.log.ErrorContext(ctx, "mediaworker: job lock lost, stopping the job", "job_id", job.ID)
-
-				return false
+			if outcome := w.refresh(ctx, job); outcome != lockKept {
+				return outcome
 			}
 		}
 	}
+}
+
+// refresh extends the lock and checks the board once; a Redis error is only logged (the run goes on).
+func (w *Worker) refresh(ctx context.Context, job *editjob.Job) lockOutcome {
+	held, err := w.board.Refresh(ctx, job.ID, w.consumer)
+
+	switch {
+	case err != nil && ctx.Err() == nil:
+		w.log.WarnContext(ctx, "mediaworker: failed to refresh job lock", "error", err, "job_id", job.ID)
+	case err == nil && !held:
+		w.log.ErrorContext(ctx, "mediaworker: job lock lost, stopping the job", "job_id", job.ID)
+
+		return lockLost
+	}
+
+	state, err := w.state(ctx, job)
+	if err != nil || state == currentJob {
+		return lockKept
+	}
+
+	w.log.WarnContext(ctx, "mediaworker: job was forgotten while running, cancelled", "job_id", job.ID,
+		"stage", job.EffectiveStage(), "replaced", state == replacedJob)
+
+	return jobLeft
 }
 
 func (w *Worker) unlock(ctx context.Context, job *editjob.Job) {

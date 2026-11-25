@@ -21,7 +21,7 @@ type Delivery struct {
 // Init creates the consumer group of the workers if it does not exist; it starts from the beginning of the stream,
 // so jobs submitted before the first worker started are taken too.
 func (b *Board) Init(ctx context.Context) error {
-	err := b.rdb.XGroupCreateMkStream(ctx, b.stream, consumerGroup, "0").Err()
+	err := b.rdb.XGroupCreateMkStream(ctx, b.stream, ConsumerGroup, "0").Err()
 	if err != nil && !strings.HasPrefix(err.Error(), busyGroupError) {
 		return fmt.Errorf("failed to create consumer group: %w", err)
 	}
@@ -33,7 +33,7 @@ func (b *Board) Init(ctx context.Context) error {
 // nil when there is none.
 func (b *Board) Fetch(ctx context.Context, consumer string) (*Delivery, error) {
 	msgs, _, err := b.rdb.XAutoClaim(ctx, &goredis.XAutoClaimArgs{
-		Stream: b.stream, Group: consumerGroup, Consumer: consumer, MinIdle: b.claimIdle, Start: "0-0", Count: 1,
+		Stream: b.stream, Group: ConsumerGroup, Consumer: consumer, MinIdle: b.claimIdle, Start: "0-0", Count: 1,
 	}).Result()
 	if err != nil {
 		return nil, b.fetchError(ctx, "failed to claim stale jobs", err)
@@ -41,7 +41,7 @@ func (b *Board) Fetch(ctx context.Context, consumer string) (*Delivery, error) {
 
 	if len(msgs) == 0 {
 		streams, err := b.rdb.XReadGroup(ctx, &goredis.XReadGroupArgs{
-			Group: consumerGroup, Consumer: consumer, Streams: []string{b.stream, ">"}, Count: 1, Block: b.block,
+			Group: ConsumerGroup, Consumer: consumer, Streams: []string{b.stream, ">"}, Count: 1, Block: b.block,
 		}).Result()
 		if errors.Is(err, goredis.Nil) {
 			return nil, nil
@@ -90,7 +90,7 @@ func parseDelivery(msg *goredis.XMessage) *Delivery {
 // Ack confirms the entry and deletes it from the stream, so the stream does not grow.
 func (b *Board) Ack(ctx context.Context, messageID string) error {
 	_, err := b.rdb.TxPipelined(ctx, func(p goredis.Pipeliner) error {
-		p.XAck(ctx, b.stream, consumerGroup, messageID)
+		p.XAck(ctx, b.stream, ConsumerGroup, messageID)
 		p.XDel(ctx, b.stream, messageID)
 
 		return nil

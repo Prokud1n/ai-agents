@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	consumerGroup = "media-workers"
+	// ConsumerGroup is the consumer group of the workers on the stream.
+	ConsumerGroup = "media-workers"
 	jobField      = "job"
 	fetchBlock    = 2 * time.Second // the longest a worker waits for a job before it checks for stop
 	// defaultLockTTL is how long a job lock lives without a heartbeat: a worker that died mid-job frees its job

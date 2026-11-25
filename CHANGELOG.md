@@ -448,7 +448,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   job are stored only while that very job (stage and creation time) is on the board, checked atomically with the write
   (`Board.Finish`, `Board.MarkStarted`, `editjob.ErrStale`): a job forgotten while it ran does not leave a result or a
   start for the retry submitted under the same ID, and the old entry of a resubmitted job is skipped while the new one
-  runs once. `EDITOR_QUEUE_TIMEOUT` + `EDITOR_JOB_TIMEOUT` must stay under 3.5 days, so a current job never outlives
+  runs once. A job forgotten or replaced while it runs (a timeout or the last attempt in the app, a new revision) is
+  cancelled at the next lock heartbeat (ffmpeg and Whisper are killed with the context) instead of running to its
+  timeout, and acked without a result. `EDITOR_QUEUE_TIMEOUT` + `EDITOR_JOB_TIMEOUT` must stay under 3.5 days, so a current job never outlives
   its record on the board.
 - Transcription: a high Whisper `compression_ratio` alone no longer drops a segment, so counting reps and rhythmic cues
   are kept; such a segment is dropped only when it is also poorly decoded or over silence.

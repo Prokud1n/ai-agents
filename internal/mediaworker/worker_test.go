@@ -34,6 +34,8 @@ type fakeBoard struct {
 	// forgotten: no job on the board, as after Forget; forgetOnLock forgets it when the worker locks it.
 	forgotten    bool
 	forgetOnLock bool
+	// jobErr fails reading the job from the board (Redis is down).
+	jobErr error
 
 	acked    []string
 	finished []editjob.Result
@@ -94,9 +96,21 @@ func (b *fakeBoard) Job(_ context.Context, id string) (editjob.Job, bool, error)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.jobErr != nil {
+		return editjob.Job{}, false, b.jobErr
+	}
+
 	job, found := b.job(id)
 
 	return job, found, nil
+}
+
+// failJobReads makes reading the job fail from now on.
+func (b *fakeBoard) failJobReads() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.jobErr = errRedisDown
 }
 
 // job is the job on the board; the caller holds the mutex.
@@ -364,6 +378,65 @@ func TestWorkerDropsResultOfForgottenJob(t *testing.T) {
 	assert.Equal(t, 1, board.unlocked)
 }
 
+var errRedisDown = errors.New("redis is down")
+
+// TestWorkerCancelsJobLeftTheBoard: the app forgot or replaced the job while it ran (a timeout, the last attempt, a new
+// revision): the next heartbeat cancels the run at once instead of letting it run to its timeout; the entry is acked
+// without a result. A failed check of the board (Redis is down) does not cancel the run.
+func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
+	t.Parallel()
+
+	replaced := editjob.Job{ID: testJobID, Stage: editjob.RenderStage}
+
+	tests := []struct {
+		name         string
+		change       func(b *fakeBoard)
+		expectedCode editjob.FailureCode // empty: no result
+	}{
+		{name: "forgotten", change: (*fakeBoard).forget},
+		{
+			name: "replaced",
+			change: func(b *fakeBoard) {
+				b.mu.Lock()
+				defer b.mu.Unlock()
+
+				b.stored = &replaced
+			},
+		},
+		{name: "the board cannot be read", change: (*fakeBoard).failJobReads, expectedCode: editjob.TimeoutCode},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			board := &fakeBoard{}
+			runner := &fakeRunner{block: true, onRun: func() { tt.change(board) }}
+			w := newTestWorker(board, runner)
+			w.now = time.Now
+
+			// The job may run for 2 s: a run cancelled by the board ends long before.
+			began := time.Now()
+			w.handle(t.Context(), deliveryWithTimeout(time.Now().Add(time.Hour), 2*time.Second))
+
+			assert.Equal(t, 1, runner.calls)
+			assert.Equal(t, 1, board.unlocked)
+
+			if tt.expectedCode == "" {
+				assert.Less(t, time.Since(began), time.Second, "cancelled at the next heartbeat")
+				assert.Empty(t, board.finished)
+				assert.Len(t, board.acked, 1, "acked without a result")
+
+				return
+			}
+
+			require.Len(t, board.finished, 1, "the run goes on to its timeout")
+			assert.Equal(t, tt.expectedCode, board.finished[0].Code)
+			assert.Len(t, board.acked, 1)
+		})
+	}
+}
+
 // TestWorkerRunsResubmittedJobOnce: after Forget the app submits the job again under the same ID with a new creation
 // time; the old entry left in the stream is skipped, the new one runs once, and its redelivery is not run again.
 func TestWorkerRunsResubmittedJobOnce(t *testing.T) {
@@ -376,7 +449,8 @@ func TestWorkerRunsResubmittedJobOnce(t *testing.T) {
 	resubmitted.MessageID = "2-0"
 	resubmitted.Job.CreatedAt = testNow
 
-	board := &fakeBoard{stored: new(*resubmitted.Job)}
+	stored := *resubmitted.Job
+	board := &fakeBoard{stored: &stored}
 	runner := &fakeRunner{result: &editjob.Result{JobID: testJobID, Status: editjob.DoneStatus}}
 	w := newTestWorker(board, runner)
 

@@ -14,14 +14,13 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editjob"
 	"github.com/Prokud1n/ai-agents/internal/editor"
+	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
 	"github.com/Prokud1n/ai-agents/internal/providers/redis"
 	"github.com/Prokud1n/ai-agents/internal/redistest"
 	"github.com/Prokud1n/ai-agents/internal/tasks"
 )
 
 const (
-	// workersGroup is the consumer group of the workers on the board (editjob keeps its name to itself).
-	workersGroup  = "media-workers"
 	forgottenTask = 31
 	// queueWait: the worker reads the stream every 2 s.
 	queueWait = 30 * time.Second
@@ -72,7 +71,20 @@ func TestIntegrationForgottenJobIsSkipped(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), entries, "its entry is still in the stream")
 
-	worker := NewWorker(board, fakes.pipeline(t, t.TempDir()), &config.MediaWorker{WorkDir: t.TempDir()}, log)
+	// Whisper is counted atomically: the worker transcribes in its own goroutine.
+	speech := &countingTranscriber{}
+
+	pipeline, err := NewPipeline(&PipelineParams{
+		Store: fakes.store, Prober: fakes.prober, Keys: fakes.keys, Transcriber: speech, Cutter: fakes.cutter,
+		Burner: fakes.burner, Log: log,
+		Config: &config.MediaWorker{
+			WorkDir: t.TempDir(), MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 20,
+			Fit: string(ffmpeg.PadFitMode),
+		},
+	})
+	require.NoError(t, err)
+
+	worker := NewWorker(board, pipeline, &config.MediaWorker{WorkDir: t.TempDir()}, log)
 	require.NoError(t, worker.Start(t.Context()))
 
 	stopped := false
@@ -85,6 +97,7 @@ func TestIntegrationForgottenJobIsSkipped(t *testing.T) {
 
 	require.Eventually(t, func() bool { return queueEmpty(t.Context(), client, cfg.Stream) }, queueWait, queuePoll,
 		"the entry of the forgotten job is acked")
+	assert.Zero(t, speech.calls.Load(), "the forgotten job is not transcribed")
 
 	_, found, err = board.Result(t.Context(), id)
 	require.NoError(t, err)
@@ -99,7 +112,7 @@ func TestIntegrationForgottenJobIsSkipped(t *testing.T) {
 
 	stopped = true
 
-	assert.Equal(t, 1, fakes.transcriber.calls, "only the job submitted again is transcribed")
+	assert.Equal(t, int32(1), speech.calls.Load(), "only the job submitted again is transcribed")
 }
 
 func requireDeferred(t *testing.T, err error) {
@@ -142,7 +155,7 @@ func streamLen(ctx context.Context, client *redis.Client, stream string) (int64,
 // queueEmpty: no entry is left in the stream and none is pending (taken and not acked). It runs in the goroutine of
 // Eventually, so it reports errors as false instead of failing the test.
 func queueEmpty(ctx context.Context, client *redis.Client, stream string) bool {
-	pending, err := client.Conn().XPending(ctx, stream, workersGroup).Result()
+	pending, err := client.Conn().XPending(ctx, stream, editjob.ConsumerGroup).Result()
 	if err != nil {
 		return false
 	}

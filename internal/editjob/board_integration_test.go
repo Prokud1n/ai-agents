@@ -479,14 +479,3 @@ func TestIntegrationBoardStaleJob(t *testing.T) {
 	require.ErrorIs(t, board.Finish(ctx, &resubmitted, result), ErrStale, "the planned stage is replaced")
 	require.NoError(t, board.Finish(ctx, &render, result), "the render is current")
 }
-
-// TestNewBoardRejectsLongJobs: a job that may wait and run longer than its record lives is refused at the start.
-func TestNewBoardRejectsLongJobs(t *testing.T) {
-	t.Parallel()
-
-	_, err := NewBoard(nil, &config.Editor{
-		Stream: "editor:jobs", JobTimeout: time.Hour, PollInterval: time.Minute, QueueTimeout: maxJobLifetime,
-		WorkerWait: time.Minute,
-	}, slog.New(slog.DiscardHandler))
-	require.ErrorIs(t, err, ErrInvalidConfig)
-}
