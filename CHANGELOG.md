@@ -394,7 +394,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   render per second of the reel, a whole source (a workout) 2.95 s per second, so 10 minutes of 4K60 take about
   30 minutes. Before T3.11 the same benchmark in CI took 9.8 s per second of the reel, on an easier 13 Mbit/s source
   (2.8 times slower; locally on ffmpeg 6.1 7.5 → 2.7 s at 50 Mbit/s). The defaults are raised:
-  `MEDIA_WORKER_FFMPEG_TIMEOUT` 30m → 40m, `EDITOR_JOB_TIMEOUT` 45m → 60m. `TestRenderSpeed` measures it in CI and
+  `MEDIA_WORKER_FFMPEG_TIMEOUT` 30m → 45m, `EDITOR_JOB_TIMEOUT` 45m → 70m. `TestRenderSpeed` measures it in CI and
   `TestBurnSubtitlesWithFFmpegToneMap` compares the colours of the new order with the old one for HLG and PQ.
 - The editor's prompt lists the transcript by phrases of at most 8 words (word index ranges, the start in the source,
   the length, the start in the reel or why they are cut) instead of a line per word: over 3 times shorter, the model

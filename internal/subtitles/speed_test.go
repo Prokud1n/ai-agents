@@ -124,7 +124,7 @@ func TestRenderSpeed(t *testing.T) {
 		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: whole, ToneMap: info.HDR(),
 	})
 	ratio = logReel(ctx, t, "workout", workout, elapsed, 1)
-	t.Logf("workout estimate: a %d-minute source renders in about %.1f min here (MEDIA_WORKER_FFMPEG_TIMEOUT 40m)",
+	t.Logf("workout estimate: a %d-minute source renders in about %.1f min here (MEDIA_WORKER_FFMPEG_TIMEOUT 45m)",
 		estimateMinutes, ratio*estimateMinutes)
 }
 

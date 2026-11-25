@@ -24,7 +24,7 @@ func TestNewBoardJobLifetime(t *testing.T) {
 		job         time.Duration
 		expectedErr error
 	}{
-		{name: "defaults", queue: 3 * time.Hour, job: 60 * time.Minute},
+		{name: "defaults", queue: 3 * time.Hour, job: 70 * time.Minute},
 		{name: "just under the limit", queue: 83 * time.Hour, job: time.Hour - time.Second},
 		{name: "at the limit", queue: 83 * time.Hour, job: time.Hour, expectedErr: ErrInvalidConfig},
 		{name: "over the limit", queue: 7 * 24 * time.Hour, job: time.Hour, expectedErr: ErrInvalidConfig},
