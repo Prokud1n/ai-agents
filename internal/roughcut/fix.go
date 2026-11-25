@@ -22,6 +22,7 @@ func cloneEdit(e *Edit) *Edit {
 		Titles:  slices.Clone(e.Titles),
 		Mute:    e.Mute,
 		Hide:    slices.Clone(e.Hide),
+		Hook:    e.Hook,
 	}
 }
 

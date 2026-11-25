@@ -51,6 +51,8 @@ func Prompt(req *Request) string {
 	case req.Selecting():
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет, а ролик после чистки длиннее рилс — сделай " +
 			"редакторский отбор (раздел «Редакторский отбор») и реши спорные повторы.\n")
+	case req.Hook:
+		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи заголовок-хук и реши спорные повторы.\n")
 	default:
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — реши только спорные повторы.\n")
 	}
@@ -65,6 +67,7 @@ func Prompt(req *Request) string {
 	writeTakes(&b, plan)
 	writePrevious(&b, req)
 	writeWorkoutState(&b, req)
+	writeHook(&b, req)
 	writeTrainerText(&b, req)
 
 	return b.String()
@@ -430,4 +433,23 @@ func titlePlace(span roughcut.Interval) string {
 	}
 
 	return fmt.Sprintf(" (в ролике %s–%s)", roughcut.FormatTimecode(span.Start), roughcut.FormatTimecode(span.End))
+}
+
+// writeHook says the hook title of the current version and what to do with it: change or remove it by the revision,
+// propose one for the first version (Request.Hook), or set one only when the trainer's caption asks.
+func writeHook(b *strings.Builder, req *Request) {
+	hook := previousEdit(req.Plan).Hook
+
+	switch {
+	case hook != "":
+		fmt.Fprintf(b, "\nЗаголовок-хук сейчас: «%s». Поменять — hook_title с новым текстом, убрать — hook_title "+
+			"пустой строкой; не просят — не указывай.\n", hook)
+	case req.IsRevision():
+		b.WriteString("\nЗаголовка-хука нет. Добавь его через hook_title, только если тренер просит.\n")
+	case req.Hook:
+		b.WriteString("\nЗаголовок-хук: предложи его в hook_title по разделу «Заголовок-хук»; если цепляющей мысли в " +
+			"ролике нет, не указывай. Тренер просит без заголовка — не указывай; даёт свой текст — поставь его.\n")
+	default:
+		b.WriteString("\nЗаголовок-хук ставь через hook_title, только если тренер просит в подписи.\n")
+	}
 }

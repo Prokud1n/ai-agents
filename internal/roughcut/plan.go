@@ -122,6 +122,9 @@ type Edit struct {
 	// Hide are words left out of the subtitles only, the video and the sound stay (a phrase the speech recognition
 	// made up on music, which cutting would take seconds of an exercise with it). Indices of the source transcript.
 	Hide []WordRange `json:"hide,omitempty"`
+	// Hook is the hook title drawn large over the first seconds of the reel; empty: none. Its text is checked by the
+	// app like the exercise titles (no line breaks, invisible characters or markup).
+	Hook string `json:"hook,omitempty"`
 }
 
 // Title is an exercise title («Выпады — 12 раз») shown from Start to End, in seconds of the source. End 0 means until

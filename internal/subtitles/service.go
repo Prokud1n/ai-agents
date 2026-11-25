@@ -74,13 +74,13 @@ func (s *Service) Style() Style {
 }
 
 // CreateSubtitles renders the ASS document without touching the video.
-func (s *Service) CreateSubtitles(data CreateSubtitlesData) (*Subtitles, error) {
+func (s *Service) CreateSubtitles(data *CreateSubtitlesData) (*Subtitles, error) {
 	style, err := s.resolveStyle(data)
 	if err != nil {
 		return nil, err
 	}
 
-	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles)
+	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles, data.Hook)
 
 	return &Subtitles{ASS: []byte(ass), Cues: cues}, nil
 }
@@ -91,12 +91,12 @@ func (s *Service) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*
 		return nil, fmt.Errorf("failed to burn subtitles: %w", ErrEmptyPath)
 	}
 
-	style, err := s.resolveStyle(data.CreateSubtitlesData)
+	style, err := s.resolveStyle(&data.CreateSubtitlesData)
 	if err != nil {
 		return nil, err
 	}
 
-	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles)
+	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles, data.Hook)
 
 	dir, err := os.MkdirTemp("", tempDirPattern)
 	if err != nil {
@@ -200,7 +200,7 @@ func shade(style *Style) *ffmpeg.Shade {
 	}
 }
 
-func (s *Service) resolveStyle(data CreateSubtitlesData) (Style, error) {
+func (s *Service) resolveStyle(data *CreateSubtitlesData) (Style, error) {
 	if data.Transcript == nil {
 		return Style{}, fmt.Errorf("failed to create subtitles: %w", ErrNoTranscript)
 	}
@@ -308,7 +308,8 @@ func fontFallbacks(style *Style, fonts []ffmpeg.FontSelection, shown bool) []str
 
 	for _, f := range fonts {
 		family := squash(f.Family)
-		if family != squash(style.Text.Font) && family != squash(style.Accent.Font) && family != squash(style.Title.Font) {
+		if family != squash(style.Text.Font) && family != squash(style.Accent.Font) && family != squash(style.Title.Font) &&
+			family != squash(style.Hook.Font) {
 			continue
 		}
 

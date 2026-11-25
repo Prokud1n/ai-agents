@@ -63,6 +63,8 @@ type Input struct {
 	// TargetSeconds is the length of the reel the trainer asked for («сделай 40 секунд»), 0 without one: the reel
 	// built with the decision must be within lengthTolerance of it.
 	TargetSeconds float64 `json:"target_seconds"`
+	// HookTitle is the hook title over the first seconds: a text sets it, "" removes it, nil keeps it.
+	HookTitle *string `json:"hook_title"`
 }
 
 // FixInput corrects the subtitle word Index to Text; Word is the word the model means as it reads it in the
@@ -198,6 +200,10 @@ func checkInput(req *Request, in *Input) error {
 	}
 
 	if err := checkFixes(req, in.FixWords); err != nil {
+		return err
+	}
+
+	if err := checkHook(in.HookTitle); err != nil {
 		return err
 	}
 
@@ -571,7 +577,8 @@ func checkChanged(req *Request, edit *roughcut.Edit, plan *roughcut.Plan) error 
 	}
 
 	if slices.Equal(before.Keep, plan.Keep) && slices.Equal(previous.Words, edit.Words) &&
-		slices.Equal(previous.Titles, edit.Titles) && previous.Mute == edit.Mute && slices.Equal(previous.Hide, edit.Hide) {
+		slices.Equal(previous.Titles, edit.Titles) && previous.Mute == edit.Mute && slices.Equal(previous.Hide, edit.Hide) &&
+		previous.Hook == edit.Hook {
 		return checkFailedf("правка ничего не меняет в ролике: проверь индексы слов, или ответь decision unclear")
 	}
 

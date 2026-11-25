@@ -155,10 +155,12 @@ func TestPipelineStopsForDecision(t *testing.T) {
 	tests := []struct {
 		name   string
 		decide bool
+		hook   bool
 		target float64
 		change func(f *pipelineFakes)
 	}{
 		{name: "a caption to apply", decide: true},
+		{name: "the hook title to propose", hook: true},
 		{name: "longer than the target: 2:21 for 1:00", target: 60},
 		{
 			name:   "a disputed repeat",
@@ -176,7 +178,7 @@ func TestPipelineStopsForDecision(t *testing.T) {
 			}
 
 			job := testJob()
-			job.Decide, job.TargetDuration = tt.decide, tt.target
+			job.Decide, job.Hook, job.TargetDuration = tt.decide, tt.hook, tt.target
 
 			result, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), job)
 			require.NoError(t, err)
@@ -490,6 +492,36 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 
 			_, err := NewPipeline(&PipelineParams{Config: &tt.input, Log: slog.New(slog.DiscardHandler)})
 			require.ErrorIs(t, err, ErrInvalidConfig)
+		})
+	}
+}
+
+// TestPipelineDrawsHook: the hook title of the decided edit goes to the subtitles; a plan without one draws none.
+func TestPipelineDrawsHook(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		edit     *roughcut.Edit
+		expected string
+	}{
+		{name: "the hook of the edit", edit: &roughcut.Edit{Hook: "Планка без ошибок"}, expected: "Планка без ошибок"},
+		{name: "an edit without one", edit: &roughcut.Edit{}, expected: ""},
+		{name: "an automatic plan", edit: nil, expected: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakes := newPipelineFakes(t)
+			fakes.cutter.result.Plan.Edit = tt.edit
+
+			result, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), testJob())
+			require.NoError(t, err)
+			assert.Equal(t, editjob.DoneStatus, result.Status)
+			require.NotNil(t, fakes.burner.got)
+			assert.Equal(t, tt.expected, fakes.burner.got.Hook)
 		})
 	}
 }

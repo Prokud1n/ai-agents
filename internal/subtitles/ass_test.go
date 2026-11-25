@@ -175,7 +175,7 @@ func TestRenderASS(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := renderASS(cues, tt.style, false)
+			got := renderASS(cues, tt.style, false, 0)
 			for _, part := range tt.expected {
 				assert.Contains(t, got, part)
 			}
@@ -225,7 +225,7 @@ func TestBuildASS(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, cues := buildASS(result, &style, tt.accents, tt.karaoke, nil)
+			got, cues := buildASS(result, &style, tt.accents, tt.karaoke, nil, "")
 
 			assert.Equal(t, tt.cues, cues)
 
@@ -290,7 +290,7 @@ func TestBuildASSWithTitles(t *testing.T) {
 	t.Parallel()
 
 	style := DefaultStyle()
-	ass, cues := buildASS(speech(wPrivetCapExcl), &style, nil, false, []Title{{Text: "Выпады", Start: 0.5, End: 3}})
+	ass, cues := buildASS(speech(wPrivetCapExcl), &style, nil, false, []Title{{Text: "Выпады", Start: 0.5, End: 3}}, "")
 
 	assert.Equal(t, 1, cues, "titles are not speech cues")
 	assert.Contains(t, ass, "Style: Title,Fira Sans Extra Condensed ExtraBold,72,&H004BB9F2,&H004BB9F2,&H4C000000,"+

@@ -44,20 +44,22 @@ const styleFormat = "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryC
 
 const eventFormat = "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
 
-// buildASS makes the whole subtitle file for a transcript and the exercise titles.
+// buildASS makes the whole subtitle file for a transcript, the exercise titles and the hook title.
 func buildASS(
 	result *transcription.Result,
 	style *Style,
 	accents []string,
 	karaoke bool,
 	titles []Title,
+	hook string,
 ) (ass string, cues int) {
 	tokens := markAccents(tokensFromTranscript(result), accents, style.Accent.Words)
 	limits := layoutLimits{maxLines: style.Layout.MaxLines, maxLineChars: style.lineChars()}
 	units := buildUnits(tokens, limits.maxLineChars)
 	timed := timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(accents)) > 0))
+	end := hookEnd(hook, result, style)
 
-	return renderASS(timed, style, karaoke) + titleEvents(titles, style), len(timed)
+	return renderASS(timed, style, karaoke, end) + titleEvents(titles, style) + hookEvent(hook, end, style), len(timed)
 }
 
 // titleEvents are the dialogue lines of the exercise titles: the Title style, above the subtitles, the text escaped
@@ -115,8 +117,10 @@ func titleStyleLine(style *Style) string {
 }
 
 // renderASS writes an ASS document for a 1080×1920 frame. Line breaks are explicit (\N); WrapStyle 0 lets libass
-// wrap a line only if the character estimate was too optimistic, so the text never leaves the frame.
-func renderASS(cues []cue, style *Style, karaoke bool) string {
+// wrap a line only if the character estimate was too optimistic, so the text never leaves the frame. A subtitle that
+// starts before hookEnd (the hook title is shown until then; 0 without one) stands clear of the hook for all its time:
+// it does not jump while it is read.
+func renderASS(cues []cue, style *Style, karaoke bool, hookEnd float64) string {
 	var b strings.Builder
 
 	b.WriteString("[Script Info]\n")
@@ -128,19 +132,25 @@ func renderASS(cues []cue, style *Style, karaoke bool) string {
 	b.WriteString("[V4+ Styles]\n" + styleFormat + "\n")
 	b.WriteString(styleLine(mainStyleName, &style.Text, style) + "\n")
 	b.WriteString(styleLine(accentStyleName, &style.Accent.TextStyle, style) + "\n")
-	b.WriteString(titleStyleLine(style) + "\n\n")
+	b.WriteString(titleStyleLine(style) + "\n")
+	b.WriteString(hookStyleLine(style) + "\n\n")
 
 	b.WriteString("[Events]\n" + eventFormat + "\n")
 
 	for _, c := range cues {
+		marginV := 0
+		if c.Start < hookEnd {
+			marginV = style.hookSubtitlesMargin()
+		}
+
 		if !karaoke {
-			writeDialogue(&b, c.Start, c.End, cueText(c, style, -1))
+			writeDialogue(&b, c.Start, c.End, marginV, cueText(c, style, -1))
 
 			continue
 		}
 
 		for _, e := range karaokeEvents(c, style) {
-			writeDialogue(&b, e.start, e.end, e.text)
+			writeDialogue(&b, e.start, e.end, marginV, e.text)
 		}
 	}
 
@@ -178,8 +188,10 @@ func placement(l *Layout) (alignment, marginV int) {
 	}
 }
 
-func writeDialogue(b *strings.Builder, start, end float64, text string) {
-	fmt.Fprintf(b, "Dialogue: 0,%s,%s,%s,,0,0,0,,%s\n", formatTime(start), formatTime(end), mainStyleName, text)
+// writeDialogue writes a subtitle event; marginV 0 keeps the margin of the style.
+func writeDialogue(b *strings.Builder, start, end float64, marginV int, text string) {
+	fmt.Fprintf(b, "Dialogue: 0,%s,%s,%s,,0,0,%d,,%s\n", formatTime(start), formatTime(end), mainStyleName, marginV,
+		text)
 }
 
 // cueText renders the lines of a subtitle; the token with index current (over all lines) gets the karaoke color.

@@ -43,6 +43,9 @@ type Request struct {
 	// longer than it after the cleaning is shortened by the editor to TargetSeconds·minTargetShare–TargetSeconds; 0
 	// turns the selection off. The trainer's caption or revision may ask for another length (Input.TargetSeconds).
 	TargetSeconds float64
+	// Hook: the editor proposes the hook title of the first version (EDITOR_HOOK_TITLE). Without it a first version
+	// gets one only when the trainer's caption asks; a revision changes it either way.
+	Hook bool
 }
 
 // minTargetShare: the recommended reel is from this share of TargetSeconds up to it (30–60 s for 60 s).

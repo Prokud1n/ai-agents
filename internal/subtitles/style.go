@@ -84,6 +84,8 @@ type Style struct {
 	Layout   Layout   `yaml:"layout"`
 	// Title is the look of the exercise titles of a workout («Выпады — 12 раз»), apart from the speech subtitles.
 	Title TitleStyle `yaml:"title"`
+	// Hook is the look of the hook title over the first seconds of the reel.
+	Hook HookStyle `yaml:"hook"`
 }
 
 // TitleStyle is the look and the place of the exercise titles. They stand at the edge opposite the subtitles, clear
@@ -193,6 +195,14 @@ func DefaultStyle() Style {
 			Box:        "#000000B3",
 			BoxPadding: 14,
 		},
+		Hook: HookStyle{
+			TextStyle: TextStyle{Font: "Fira Sans Extra Condensed ExtraBold", Size: 88, Uppercase: true, Color: "#F5F0E1"},
+			Highlight: "#F2B94B",
+			Duration:  2.5,
+			Fade:      150,
+			Gap:       20,
+			CharWidth: 0.5,
+		},
 	}
 }
 
@@ -238,6 +248,7 @@ func (s *Style) Validate() error {
 	errs = append(errs, validateLayout(&s.Layout)...)
 	errs = append(errs, validateFit(s)...)
 	errs = append(errs, validateTitle(s)...)
+	errs = append(errs, validateHook(s)...)
 	errs = append(errs,
 		validateBorder("outline", s.Outline), validateBorder("shadow", s.Shadow),
 		validateColor("karaoke_color", s.KaraokeColor), validateVignette(s))

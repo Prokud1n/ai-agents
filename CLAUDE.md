@@ -269,6 +269,17 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`editplan.phrases`: интервал или причина выреза, сегмент, пауза > 0,7 с, ≤ 8 слов; начало, длительность, начало в
   ролике) с диапазонами индексов слов.
   Проверка — `mediaworker.TestIntegrationSelectionForLongTalk`.
+- Заголовок-хук (T3.15b): `roughcut.Edit.Hook` (накапливается по версиям, `omitempty`), `hook_title` в `submit_edit`
+  (текст — поставить/поменять, `""` — убрать, нет поля — оставить; `editplan.checkHook`: 2–6 слов, ≤ 40 символов, без
+  управляющих/Cf-символов, `{}\<>`, эмодзи и `#`). `EDITOR_HOOK_TITLE` (по умолчанию `true`) → `editjob.Job.Hook`:
+  стадия `auto` всегда завершается `planned`, `editplan.Request.Hook` просит модель предложить хук; без модели
+  (`editor.hookOnly`: нет подписи и спорных повторов) — `fallBack`, черновик без заголовка. Воркер передаёт
+  `Plan.Edit.Hook` в `subtitles.CreateSubtitlesData.Hook`: событие стиля `hook` (слой 2, `\fad`, ≤ 2 строк с `\fscx`,
+  ключевое слово — `highlight`) с 0 до min(`hook.duration`, конец первого сегмента + 0,5 с, длина ролика); субтитры,
+  начавшиеся до конца хука, получают `MarginV` под ним на всё своё время (`Style.hookSubtitlesMargin`), валидация стиля —
+  хук и сдвинутые субтитры не пересекают друг друга, подписи упражнений и зоны Instagram. Строка описания —
+  первой в `Outcome.Changes` (`editplan.hookLines`). Проверка — `mediaworker.TestIntegrationHookTitle`,
+  `subtitles.TestBurnHookWithFFmpeg`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

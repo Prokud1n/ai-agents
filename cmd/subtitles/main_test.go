@@ -42,11 +42,12 @@ func TestParseFlags(t *testing.T) {
 			name: "all flags",
 			input: []string{
 				flagIn, testVideo, flagTranscript, testTranscript, flagOut, testOut, "-style", "brand.yaml",
-				"-accents", " присед, 3 подхода ,,", "-karaoke", "-fit", "crop",
+				"-accents", " присед, 3 подхода ,,", "-karaoke", "-fit", "crop", "-hook", "Три ошибки в планке",
 			},
 			expected: options{
 				in: testVideo, transcript: testTranscript, out: testOut, style: "brand.yaml",
 				accents: []string{"присед", "3 подхода"}, karaoke: true, fit: ffmpeg.CropFitMode,
+				hook: "Три ошибки в планке",
 			},
 		},
 		{

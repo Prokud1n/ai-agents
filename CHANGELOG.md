@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Hook title of a reel (T3.15b). The editor's model proposes a short hook (`hook_title` of `submit_edit`: 2–6 words,
+  at most 40 characters, in the language of the reel, from what the reel says — no emoji, hashtags or markup; checked
+  by `editplan` like the exercise titles) for every first version, talking head or workout, so with
+  `EDITOR_HOOK_TITLE=true` (the default) every auto job stops after the plan (`editjob.Job.Hook`) — one more model call
+  for a short reel that had nothing else to decide; `false` keeps the old flow. Without the model the reel is rendered
+  without a hook. The media worker draws it with libass in the new `hook` style of `style.yaml` (Fira Sans Extra
+  Condensed ExtraBold 88 px capitals, ivory with one key word in the accent yellow, at most two lines squeezed to fit,
+  150 ms fade) at the subtitles' margin for 2.5 s at most (half a second after the first phrase at most, never past
+  the reel); the subtitles of that time stand right under it (`MarginV` of their events), and the style validation
+  keeps the hook and the shifted subtitles clear of each other, the exercise titles and the Instagram zones. The
+  trainer changes, adds or removes it by a revision («поменяй заголовок на …», «убери заголовок»): a new version is
+  rendered from the stored transcript, and the hook adds up over the versions (`roughcut.Edit.Hook`). The draft says
+  «Заголовок: «…».» or «Убрал заголовок.», `decisions.log` names it, `cmd/subtitles` has `-hook`.
 - Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more
   than `roughcut.TargetMargin` (10 %: over 66 s) after the cleaning is planned by the worker and given to the editor's
   model even without a caption or disputed repeats (shorter ones are rendered at once, no model call; the worker and
