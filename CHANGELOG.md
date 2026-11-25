@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `decisions.log` ends with «Звук и кадр»: the loudness before → after and how (the gain in dB or `loudnorm` without a
   measurement), the floor of the noise reduction and the number of zooms. New `MEDIA_WORKER_LOUDNESS` (`-14`, `off`),
   `MEDIA_WORKER_DENOISE` (`true`), `MEDIA_WORKER_ZOOM` (`9` %, `0` off). Render speed (`TestRenderSpeed`, 4K60 HEVC
-  HLG, 2 CPUs, the talk rendered with and without them on the same runner): BENCH. The synthetic bench does not cover
+  HLG, 2 CPUs, the talk rendered with and without them on the same runner, 2a1e23a): 3.05 → 3.10 s of render per
+  second of the reel, +1.4 % (an earlier run +3.1 %: 3.39 → 3.50); the workout 2.46 s (main: 2.85 on another runner). The synthetic bench does not cover
   the expensive path: its sound is measured (the cheap gain and limiter, not the one-pass `loudnorm` at 192 kHz of an
   old transcript; the zoom costs the same whatever the number of zoomed pieces).
 - Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more

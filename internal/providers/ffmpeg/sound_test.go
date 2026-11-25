@@ -301,7 +301,7 @@ func TestRunnerSoundSync(t *testing.T) {
 			}
 
 			pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-				[]string{noVideoFlag, channelsFlag, "1", "-ar", "48000", formatFlag, "s16le", "-"}), 1<<21)
+				[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, "s16le", "-"}), 1<<21)
 			require.NoError(t, err)
 
 			samples := make([]int, 0, len(pcm)/2)
