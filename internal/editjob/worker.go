@@ -132,15 +132,25 @@ func (b *Board) Unlock(ctx context.Context, jobID, owner string) error {
 }
 
 // Finish stores the result and tells the app the task can be run. The result is stored once: a result already
-// there (a duplicate run) is kept. The message is best effort: the app also polls.
+// there (a duplicate run) is kept. It is stored only while the job on the board is this one (checked at once with the
+// write): ErrStale when the app forgot or replaced the job, nothing is stored or announced, otherwise a retry
+// submitted under the same ID would find the result of the old run. The message is best effort: the app also polls.
 func (b *Board) Finish(ctx context.Context, job *Job, result *Result) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("failed to encode result: %w", err)
 	}
 
-	if err := b.rdb.SetNX(ctx, b.resultKey(job.ID), data, recordTTL).Err(); err != nil {
+	keys := []string{b.jobKey(job.ID), b.resultKey(job.ID)}
+
+	n, err := finishScript.Run(ctx, b.rdb, keys, string(job.EffectiveStage()), createdAt(job), data,
+		recordTTL.Milliseconds()).Int()
+	if err != nil {
 		return fmt.Errorf("failed to store result of job %s: %w", job.ID, err)
+	}
+
+	if n != 1 {
+		return fmt.Errorf("failed to store result of job %s: %w", job.ID, ErrStale)
 	}
 
 	b.NotifyDone(ctx, job)

@@ -442,6 +442,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Editor (T3.14): the media worker no longer edits the video of a task the app has given up. A job the app forgot
+  (no worker running, a queue or running timeout, a failure) stays in the Redis stream; the worker now skips and acks an
+  entry whose job is not on the board — no download, no Whisper call, no render, no result. A result and the start of a
+  job are stored only while that very job (stage and creation time) is on the board, checked atomically with the write
+  (`Board.Finish`, `Board.MarkStarted`, `editjob.ErrStale`): a job forgotten while it ran does not leave a result or a
+  start for the retry submitted under the same ID, and the old entry of a resubmitted job is skipped while the new one
+  runs once. `EDITOR_QUEUE_TIMEOUT` + `EDITOR_JOB_TIMEOUT` must stay under 3.5 days, so a current job never outlives
+  its record on the board.
 - Transcription: a high Whisper `compression_ratio` alone no longer drops a segment, so counting reps and rhythmic cues
   are kept; such a segment is dropped only when it is also poorly decoded or over silence.
 - ffmpeg errors tell the runner's own timeout (`FFMPEG_TIMEOUT`) from the caller's deadline or cancellation.

@@ -29,8 +29,11 @@ type fakeBoard struct {
 	lockHeld  bool // another worker holds the lock
 	lost      bool // Refresh reports the lock lost
 	finishErr error
-	// stored is the job on the board (nil: none, as after Forget).
+	// stored is the job on the board (nil: the delivered one, a job with only the ID and zero time).
 	stored *editjob.Job
+	// forgotten: no job on the board, as after Forget; forgetOnLock forgets it when the worker locks it.
+	forgotten    bool
+	forgetOnLock bool
 
 	acked    []string
 	finished []editjob.Result
@@ -47,9 +50,13 @@ func (b *fakeBoard) Started(context.Context, string) (time.Time, bool, error) {
 	return b.started, !b.started.IsZero(), nil
 }
 
-func (b *fakeBoard) MarkStarted(_ context.Context, _ string, now time.Time) (time.Time, error) {
+func (b *fakeBoard) MarkStarted(_ context.Context, job *editjob.Job, now time.Time) (time.Time, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if !b.current(job) {
+		return time.Time{}, editjob.ErrStale
+	}
 
 	if b.started.IsZero() {
 		b.started = now
@@ -76,17 +83,56 @@ func (b *fakeBoard) Ack(_ context.Context, id string) error {
 	return nil
 }
 
-func (b *fakeBoard) HasResult(context.Context, string) (bool, error) { return b.hasResult, nil }
+func (b *fakeBoard) HasResult(context.Context, string) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-func (b *fakeBoard) Job(context.Context, string) (editjob.Job, bool, error) {
-	if b.stored == nil {
-		return editjob.Job{}, false, nil
-	}
-
-	return *b.stored, true, nil
+	return b.hasResult, nil
 }
 
-func (b *fakeBoard) Lock(context.Context, string, string) (bool, error) { return !b.lockHeld, nil }
+func (b *fakeBoard) Job(_ context.Context, id string) (editjob.Job, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	job, found := b.job(id)
+
+	return job, found, nil
+}
+
+// job is the job on the board; the caller holds the mutex.
+func (b *fakeBoard) job(id string) (editjob.Job, bool) {
+	switch {
+	case b.forgotten:
+		return editjob.Job{}, false
+	case b.stored == nil:
+		return editjob.Job{ID: id}, true
+	default:
+		return *b.stored, true
+	}
+}
+
+// current: the job on the board is the given one, as Board.Finish and MarkStarted check; the caller holds the mutex.
+func (b *fakeBoard) current(job *editjob.Job) bool {
+	stored, found := b.job(job.ID)
+
+	return found && stored.Same(job)
+}
+
+// forget deletes the job, as the app's Board.Forget.
+func (b *fakeBoard) forget() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.forgotten, b.hasResult = true, false
+}
+
+func (b *fakeBoard) Lock(context.Context, string, string) (bool, error) {
+	if b.forgetOnLock {
+		b.forget()
+	}
+
+	return !b.lockHeld, nil
+}
 
 func (b *fakeBoard) Refresh(context.Context, string, string) (bool, error) { return !b.lost, nil }
 
@@ -99,7 +145,7 @@ func (b *fakeBoard) Unlock(context.Context, string, string) error {
 	return nil
 }
 
-func (b *fakeBoard) Finish(_ context.Context, _ *editjob.Job, r *editjob.Result) error {
+func (b *fakeBoard) Finish(_ context.Context, job *editjob.Job, r *editjob.Result) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -107,7 +153,12 @@ func (b *fakeBoard) Finish(_ context.Context, _ *editjob.Job, r *editjob.Result)
 		return b.finishErr
 	}
 
+	if !b.current(job) {
+		return editjob.ErrStale
+	}
+
 	b.finished = append(b.finished, *r)
+	b.hasResult = true
 
 	return nil
 }
@@ -130,10 +181,16 @@ type fakeRunner struct {
 	block  bool
 	panics bool
 	calls  int
+	// onRun is called when the job runs (the app forgets it meanwhile).
+	onRun func()
 }
 
 func (r *fakeRunner) Run(ctx context.Context, job *editjob.Job) (*editjob.Result, error) {
 	r.calls++
+
+	if r.onRun != nil {
+		r.onRun()
+	}
 
 	if r.panics {
 		panic("nil map")
@@ -243,6 +300,20 @@ func TestWorkerHandle(t *testing.T) {
 			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
 		},
 		{
+			name:  "a forgotten job is skipped without a run, a result or an announcement",
+			board: &fakeBoard{forgotten: true}, runner: &fakeRunner{result: done}, delivery: delivery(later),
+			expectedAcks: 1,
+		},
+		{
+			name:  "a forgotten job past its queue deadline gets no queue timeout result",
+			board: &fakeBoard{forgotten: true}, runner: &fakeRunner{}, delivery: delivery(testNow), expectedAcks: 1,
+		},
+		{
+			name:  "a job forgotten after the check is not started",
+			board: &fakeBoard{forgetOnLock: true}, runner: &fakeRunner{result: done}, delivery: delivery(later),
+			expectedAcks: 1,
+		},
+		{
 			name: "a malformed entry is acked", board: &fakeBoard{}, runner: &fakeRunner{},
 			delivery: &editjob.Delivery{MessageID: "1-0"}, expectedAcks: 1,
 		},
@@ -272,6 +343,72 @@ func TestWorkerHandle(t *testing.T) {
 			require.Len(t, tt.board.finished, 1)
 			assert.Equal(t, tt.expectedStatus, tt.board.finished[0].Status)
 			assert.Equal(t, tt.expectedCode, tt.board.finished[0].Code)
+		})
+	}
+}
+
+// TestWorkerDropsResultOfForgottenJob: the app forgot the job while it ran (a timeout): the result is not stored, so
+// a retry submitted under the same ID does not find it, and nothing is announced; the entry is acked.
+func TestWorkerDropsResultOfForgottenJob(t *testing.T) {
+	t.Parallel()
+
+	board := &fakeBoard{}
+	runner := &fakeRunner{result: &editjob.Result{JobID: testJobID, Status: editjob.DoneStatus}, onRun: board.forget}
+
+	newTestWorker(board, runner).handle(t.Context(), delivery(testNow.Add(time.Hour)))
+
+	assert.Equal(t, 1, runner.calls)
+	assert.Empty(t, board.finished)
+	assert.Zero(t, board.notified)
+	assert.Len(t, board.acked, 1)
+	assert.Equal(t, 1, board.unlocked)
+}
+
+// TestWorkerRunsResubmittedJobOnce: after Forget the app submits the job again under the same ID with a new creation
+// time; the old entry left in the stream is skipped, the new one runs once, and its redelivery is not run again.
+func TestWorkerRunsResubmittedJobOnce(t *testing.T) {
+	t.Parallel()
+
+	old := delivery(testNow.Add(time.Hour))
+	old.Job.CreatedAt = testNow.Add(-time.Hour)
+
+	resubmitted := delivery(testNow.Add(time.Hour))
+	resubmitted.MessageID = "2-0"
+	resubmitted.Job.CreatedAt = testNow
+
+	board := &fakeBoard{stored: new(*resubmitted.Job)}
+	runner := &fakeRunner{result: &editjob.Result{JobID: testJobID, Status: editjob.DoneStatus}}
+	w := newTestWorker(board, runner)
+
+	tests := []struct {
+		name          string
+		delivery      *editjob.Delivery
+		expectedRuns  int
+		expectedAcks  []string
+		expectedStore int
+	}{
+		{name: "the entry of the forgotten job", delivery: old, expectedAcks: []string{"1-0"}},
+		{
+			name: "the entry of the new submit", delivery: resubmitted, expectedRuns: 1,
+			expectedAcks: []string{"1-0", "2-0"}, expectedStore: 1,
+		},
+		{
+			name: "a redelivery of the new submit", delivery: resubmitted, expectedRuns: 1,
+			expectedAcks: []string{"1-0", "2-0", "2-0"}, expectedStore: 1,
+		},
+		{
+			name: "the old entry claimed again", delivery: old, expectedRuns: 1,
+			expectedAcks: []string{"1-0", "2-0", "2-0", "1-0"}, expectedStore: 1,
+		},
+	}
+
+	for _, tt := range tests { // in order, not in parallel: each step continues the previous one
+		t.Run(tt.name, func(t *testing.T) {
+			w.handle(t.Context(), tt.delivery)
+
+			assert.Equal(t, tt.expectedRuns, runner.calls)
+			assert.Equal(t, tt.expectedAcks, board.acked)
+			assert.Len(t, board.finished, tt.expectedStore)
 		})
 	}
 }

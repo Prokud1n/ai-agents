@@ -50,7 +50,7 @@ type workerBoard interface {
 	Unlock(ctx context.Context, jobID, owner string) error
 	Finish(ctx context.Context, job *editjob.Job, result *editjob.Result) error
 	Started(ctx context.Context, jobID string) (time.Time, bool, error)
-	MarkStarted(ctx context.Context, jobID string, now time.Time) (time.Time, error)
+	MarkStarted(ctx context.Context, job *editjob.Job, now time.Time) (time.Time, error)
 	NotifyDone(ctx context.Context, job *editjob.Job)
 	Heartbeat(ctx context.Context, owner string) error
 	LockTTL() time.Duration
@@ -67,6 +67,10 @@ type jobRunner interface {
 // or by another one). An entry whose job has a result is acked and skipped; one whose job is locked is left pending
 // for a later claim. So a job is never edited twice at the same time, a finished job is not edited again, and a job of
 // a dead worker is not lost.
+//
+// Only the job on the board is run: an entry whose job the app forgot (it gave the task up: no worker, a timeout, a
+// failure) or replaced (another stage, a new submit under the same ID) is acked and skipped, and a result is stored
+// only while its job is still on the board (Board.Finish checks it at once with the write).
 //
 // Stop cancels the running job at once (ffmpeg is killed with its context): the job is not acked and is taken again
 // after the restart.
@@ -215,7 +219,15 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 
 	defer w.unlock(ctx, job)
 
-	result := w.start(ctx, job)
+	result, err := w.start(ctx, job)
+	if errors.Is(err, editjob.ErrStale) { // the app forgot or replaced the job between the check above and the start
+		w.log.InfoContext(ctx, "mediaworker: job left the board before it started, skipping", "job_id", job.ID,
+			"stage", job.EffectiveStage())
+		w.ack(ctx, d)
+
+		return
+	}
+
 	if result == nil { // stopped or lost: the entry stays pending and is taken again (after the restart)
 		w.log.InfoContext(ctx, "mediaworker: job interrupted", "job_id", job.ID)
 
@@ -225,15 +237,18 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalTimeout)
 	defer cancel()
 
-	// The app replaced or forgot the job while it ran: its result would answer a job that is not there any more.
-	if superseded, err := w.superseded(finalCtx, job); err == nil && superseded {
-		w.log.WarnContext(ctx, "mediaworker: job was replaced while it ran, its result is dropped", "job_id", job.ID)
+	// The app forgot or replaced the job while it ran (a timeout, a new submit): its result would answer a job that
+	// is not there any more, and a retry under the same ID would take it for its own.
+	err = w.board.Finish(finalCtx, job, result)
+	if errors.Is(err, editjob.ErrStale) {
+		w.log.WarnContext(ctx, "mediaworker: job was forgotten or replaced while it ran, its result is dropped",
+			"job_id", job.ID, "stage", job.EffectiveStage())
 		w.ack(finalCtx, d)
 
 		return
 	}
 
-	if err := w.board.Finish(finalCtx, job, result); err != nil {
+	if err != nil {
 		w.log.ErrorContext(ctx, "mediaworker: failed to store the result, the job will be run again", "error", err,
 			"job_id", job.ID)
 
@@ -243,21 +258,55 @@ func (w *Worker) handle(ctx context.Context, d *editjob.Delivery) {
 	w.ack(finalCtx, d)
 }
 
-// superseded: the job on the board is another one than the delivered (a planned job replaced by its render, a render
-// queued again after a failure, a revision submitted anew): a different stage or a different creation time. A job
-// that is not on the board is not superseded (it is run as before).
-func (w *Worker) superseded(ctx context.Context, job *editjob.Job) (bool, error) {
+// jobState is how the delivered job relates to the job on the board.
+type jobState int
+
+const (
+	currentJob   jobState = iota // the job on the board: it is run
+	forgottenJob                 // no job on the board: the app gave the task up (Board.Forget) or the record expired
+	// replacedJob: the job on the board is another one than the delivered (a planned job replaced by its render, a
+	// render queued again after a failure, a job submitted anew after Forget): another stage or creation time.
+	replacedJob
+)
+
+// state compares the delivered job with the job on the board.
+func (w *Worker) state(ctx context.Context, job *editjob.Job) (jobState, error) {
 	stored, found, err := w.board.Job(ctx, job.ID)
+	if err != nil {
+		return currentJob, err
+	}
+
+	switch {
+	case !found:
+		return forgottenJob, nil
+	case !stored.Same(job):
+		return replacedJob, nil
+	default:
+		return currentJob, nil
+	}
+}
+
+// skip: a job that is not on the board (forgotten or replaced) is skipped without a result and an announcement; a job
+// with a result is announced again (the app may have missed it) and skipped; a job that waited in the queue past its
+// deadline gets a queue timeout result without being run.
+func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
+	state, err := w.state(ctx, job)
 	if err != nil {
 		return false, err
 	}
 
-	return found && (stored.EffectiveStage() != job.EffectiveStage() || !stored.CreatedAt.Equal(job.CreatedAt)), nil
-}
+	switch state {
+	case forgottenJob:
+		w.log.InfoContext(ctx, "mediaworker: job was forgotten, skipping", "job_id", job.ID, "stage", job.EffectiveStage())
 
-// skip: a job with a result is announced again (the app may have missed it) and skipped; a job that waited in the
-// queue past its deadline gets a queue timeout result without being run.
-func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
+		return true, nil
+	case replacedJob:
+		w.log.InfoContext(ctx, "mediaworker: job was replaced, skipping the old delivery", "job_id", job.ID,
+			"stage", job.EffectiveStage())
+
+		return true, nil
+	}
+
 	finished, err := w.board.HasResult(ctx, job.ID)
 	if err != nil {
 		return false, err
@@ -266,18 +315,6 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 	if finished {
 		w.log.InfoContext(ctx, "mediaworker: job already has a result", "job_id", job.ID)
 		w.board.NotifyDone(ctx, job)
-
-		return true, nil
-	}
-
-	superseded, err := w.superseded(ctx, job)
-	if err != nil {
-		return false, err
-	}
-
-	if superseded {
-		w.log.InfoContext(ctx, "mediaworker: job was replaced, skipping the old delivery", "job_id", job.ID,
-			"stage", job.EffectiveStage())
 
 		return true, nil
 	}
@@ -293,7 +330,8 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 		w.log.WarnContext(ctx, "mediaworker: job waited in the queue past its deadline", "job_id", job.ID,
 			"queue_deadline", job.QueueDeadline)
 
-		if err := w.board.Finish(ctx, job, editjob.Failed(job.ID, editjob.QueueTimeoutCode, w.now())); err != nil {
+		err = w.board.Finish(ctx, job, editjob.Failed(job.ID, editjob.QueueTimeoutCode, w.now()))
+		if err != nil && !errors.Is(err, editjob.ErrStale) { // stale: the app has given the job up by itself
 			return false, err
 		}
 
@@ -304,9 +342,14 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 }
 
 // start marks the job started (the first take counts) and runs it until start + timeout; a job whose time is already
-// over (it was taken before and the worker died) gets a timeout result.
-func (w *Worker) start(ctx context.Context, job *editjob.Job) *editjob.Result {
-	started, err := w.board.MarkStarted(ctx, job.ID, w.now())
+// over (it was taken before and the worker died) gets a timeout result. editjob.ErrStale when the job is not on the
+// board any more: it is not run.
+func (w *Worker) start(ctx context.Context, job *editjob.Job) (*editjob.Result, error) {
+	started, err := w.board.MarkStarted(ctx, job, w.now())
+	if errors.Is(err, editjob.ErrStale) {
+		return nil, err
+	}
+
 	if err != nil {
 		w.log.WarnContext(ctx, "mediaworker: failed to mark the job started, its timeout counts from now", "error", err,
 			"job_id", job.ID)
@@ -319,10 +362,10 @@ func (w *Worker) start(ctx context.Context, job *editjob.Job) *editjob.Result {
 		w.log.WarnContext(ctx, "mediaworker: job ran out of time before it was taken again", "job_id", job.ID,
 			"started", started)
 
-		return editjob.Failed(job.ID, editjob.TimeoutCode, w.now())
+		return editjob.Failed(job.ID, editjob.TimeoutCode, w.now()), nil
 	}
 
-	return w.run(ctx, job, deadline)
+	return w.run(ctx, job, deadline), nil
 }
 
 // run runs the pipeline until the deadline with the lock refreshed; nil when the worker is stopping or lost the lock

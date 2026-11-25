@@ -149,6 +149,12 @@ func (j *Job) EffectiveStage() Stage {
 	return j.Stage
 }
 
+// Same reports whether other is this job in the same state: the same stage and creation time. A planned job replaced
+// by its render, a render queued again and a job submitted anew after Board.Forget are not the same.
+func (j *Job) Same(other *Job) bool {
+	return j.EffectiveStage() == other.EffectiveStage() && j.CreatedAt.Equal(other.CreatedAt)
+}
+
 // JobID is the ID of the job that makes the version of the task: the same for every run of the task.
 func JobID(taskID int64, version int) string {
 	return "task-" + strconv.FormatInt(taskID, 10) + "-v" + strconv.Itoa(version)

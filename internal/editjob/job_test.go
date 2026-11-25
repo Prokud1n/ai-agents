@@ -1,6 +1,7 @@
 package editjob
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -148,4 +149,70 @@ type failingKeys struct{}
 
 func (failingKeys) ResultKey(string, string, string) (string, error) {
 	return "", errNoKeys
+}
+
+func TestJobSame(t *testing.T) {
+	t.Parallel()
+
+	job := Job{ID: JobID(5, 1), CreatedAt: testDeadline}
+
+	tests := []struct {
+		name     string
+		other    func(j Job) Job
+		expected bool
+	}{
+		{name: "the same job", other: func(j Job) Job { return j }, expected: true},
+		{name: "an empty stage is auto", other: func(j Job) Job { j.Stage = AutoStage; return j }, expected: true},
+		{
+			name:     "the same moment in another zone",
+			other:    func(j Job) Job { j.CreatedAt = j.CreatedAt.In(time.FixedZone("MSK", 3*60*60)); return j },
+			expected: true,
+		},
+		{name: "replaced by its render", other: func(j Job) Job { j.Stage = RenderStage; return j }},
+		{name: "submitted anew", other: func(j Job) Job { j.CreatedAt = j.CreatedAt.Add(time.Nanosecond); return j }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			other := tt.other(job)
+			assert.Equal(t, tt.expected, job.Same(&other))
+		})
+	}
+}
+
+// TestCreatedAtMatchesJSON: the board compares the stored job's created_at with createdAt as strings, so they must
+// be spelled the same for any time, including one decoded from the stream entry.
+func TestCreatedAtMatchesJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input time.Time
+	}{
+		{name: "utc", input: testDeadline},
+		{name: "nanoseconds", input: testDeadline.Add(123456789 * time.Nanosecond)},
+		{name: "trailing zeros", input: testDeadline.Add(500 * time.Millisecond)},
+		{name: "zone", input: testDeadline.In(time.FixedZone("MSK", 3*60*60)).Add(time.Microsecond)},
+		{name: "with a monotonic reading", input: time.Now()},
+		{name: "zero"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data, err := json.Marshal(&Job{CreatedAt: tt.input})
+			require.NoError(t, err)
+
+			var stored map[string]any
+			require.NoError(t, json.Unmarshal(data, &stored))
+			assert.Equal(t, stored["created_at"], createdAt(&Job{CreatedAt: tt.input}))
+
+			var decoded Job
+			require.NoError(t, json.Unmarshal(data, &decoded))
+			assert.Equal(t, stored["created_at"], createdAt(&decoded), "a decoded delivery is spelled the same")
+		})
+	}
 }
