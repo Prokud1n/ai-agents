@@ -110,7 +110,7 @@ func startEditEnv(t *testing.T) *editEnv {
 	require.NoError(t, err)
 
 	clip := filepath.Join(t.TempDir(), "source.mkv")
-	makeSpeechClip(t, clip, "720x1280", 30, false)
+	makeSpeechClip(t, clip, verticalSize, 30, false)
 
 	f, err := os.Open(clip)
 	require.NoError(t, err)

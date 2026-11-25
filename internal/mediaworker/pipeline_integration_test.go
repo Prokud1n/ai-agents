@@ -28,6 +28,9 @@ import (
 // repoFontsDir is the brand fonts of the repository; the media image has them in SUBTITLES_FONTS_DIR (/app/fonts).
 const repoFontsDir = "../../assets/fonts"
 
+// verticalSize of the synthetic vertical sources.
+const verticalSize = "720x1280"
+
 // clipDuration of the synthetic source: four tone "words", one of them a filler, with long pauses between.
 const clipDuration = 6
 
@@ -54,12 +57,12 @@ func TestIntegrationPipeline(t *testing.T) {
 		padded bool
 		hdr    bool
 	}{
-		{name: "vertical 720p at 30 fps fills the frame", size: "720x1280", rate: 30},
+		{name: "vertical 720p at 30 fps fills the frame", size: verticalSize, rate: 30},
 		{name: "horizontal at 25 fps is padded", size: "640x360", rate: 25, padded: true},
 		// An iPhone-like HDR source: 10-bit HLG (bt2020, arib-std-b67) is tone mapped to an 8-bit SDR bt709 reel.
-		{name: "10-bit HLG is tone mapped to SDR bt709", size: "720x1280", rate: 30, hdr: true},
+		{name: "10-bit HLG is tone mapped to SDR bt709", size: verticalSize, rate: 30, hdr: true},
 		// iPhone records 60 fps: the draft is 30 fps, cut on the frames of 30 fps.
-		{name: "60 fps HLG becomes 30 fps", size: "720x1280", rate: 60, reel: 30, hdr: true},
+		{name: "60 fps HLG becomes 30 fps", size: verticalSize, rate: 60, reel: 30, hdr: true},
 	}
 
 	for _, tt := range tests {

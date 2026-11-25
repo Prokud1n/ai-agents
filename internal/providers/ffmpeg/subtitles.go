@@ -19,7 +19,7 @@ import (
 const (
 	// publishPreset: the draft is published to Instagram, which encodes it again for its own bitrate (a few Mbit/s
 	// at 1080×1920); veryfast at CRF 20 keeps more than that survives, and encodes about twice as fast as medium.
-	publishPreset = "veryfast"
+	publishPreset = videoPreset // the same as the rough cut render
 	videoProfile  = "high"
 	outAudioRate  = "48000"
 	outAudioBits  = "128k"

@@ -1,6 +1,7 @@
 package roughcut
 
 import (
+	"math"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -47,7 +48,11 @@ func generateSpeechVideo(t *testing.T, path string, src *transcription.Result) {
 const lavfiComma = `\,`
 
 // syncOffset delays the audio of the sync clip, so its start_time differs from the video's.
-const syncOffset = "0.1"
+const (
+	syncOffset        = "0.1"
+	syncOffsetSeconds = 0.1
+	syncFPS           = 30
+)
 
 // generateSyncVideo writes a variable frame rate clip (every 5th frame of 30 fps dropped, the audio
 // delayed by syncOffset) where each word of spans sounds as a tone and shows as a bright picture,
@@ -62,11 +67,15 @@ func generateSyncVideo(t *testing.T, path string, spans [][2]float64, duration f
 
 	for _, s := range spans {
 		audioExpr = append(audioExpr, "between(t"+lavfiComma+format(s[0])+lavfiComma+format(s[1])+")")
-		videoExpr = append(videoExpr, "between(T-"+syncOffset+lavfiComma+format(s[0])+lavfiComma+format(s[1])+")")
+		// Frame numbers, not times: a start like 29/30 s written with 3 decimals (0.967) would light the next frame
+		// and put the picture of the word a frame after its sound.
+		first := int(math.Round((s[0] + syncOffsetSeconds) * syncFPS))
+		last := int(math.Round((s[1]+syncOffsetSeconds)*syncFPS)) - 1
+		videoExpr = append(videoExpr, "between(N"+lavfiComma+strconv.Itoa(first)+lavfiComma+strconv.Itoa(last)+")")
 	}
 
 	d := format(duration)
-	video := "nullsrc=s=180x320:r=30:d=" + d + ",geq=lum=if(" + strings.Join(videoExpr, "+") +
+	video := "nullsrc=s=180x320:r=" + strconv.Itoa(syncFPS) + ":d=" + d + ",geq=lum=if(" + strings.Join(videoExpr, "+") +
 		"\\,235\\,16):cb=128:cr=128,select=not(eq(mod(n\\,5)\\,2))"
 	audio := "aevalsrc=if(" + strings.Join(audioExpr, "+") + "\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=" + d
 

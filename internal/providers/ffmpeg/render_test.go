@@ -290,7 +290,7 @@ func TestRunnerRenderSegments(t *testing.T) {
 		commonArgs(),
 		lavfiInput("aevalsrc=if(between(t\\,1\\,2)+between(t\\,4\\,5)\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=6"),
 		lavfiInput("testsrc=duration=6:size=180x320:rate=30"),
-		[]string{"-codec:v", videoCodec, "-codec:a", renderACodec, "-shortest", src},
+		[]string{"-codec:v", videoCodec, "-codec:a", renderACodec, shortestFlag, src},
 	), nil)
 	require.NoError(t, err)
 
@@ -341,7 +341,7 @@ func TestRunnerRenderHalvesFrameRate(t *testing.T) {
 		commonArgs(),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=1.2"),
 		lavfiInput("color=c=black:s=64x64:r=60:d=1.2,format=gray,geq=lum='N*3'"),
-		[]string{"-c:v", "ffv1", "-c:a", "pcm_s16le", "-shortest", src},
+		[]string{"-c:v", "ffv1", audioCodecFlag, "pcm_s16le", shortestFlag, src},
 	), nil)
 	require.NoError(t, err)
 
@@ -358,8 +358,8 @@ func TestRunnerRenderHalvesFrameRate(t *testing.T) {
 	in, err := localFile(dst)
 	require.NoError(t, err)
 
-	frames, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(), []string{"-loglevel", "error"}, inputArgs(in),
-		[]string{"-vf", "crop=4:4,format=gray", "-f", "rawvideo", "-"}), nil)
+	frames, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
+		[]string{"-vf", "crop=4:4,format=gray", formatFlag, "rawvideo", "-"}), nil)
 	require.NoError(t, err)
 
 	expected := make([]int, 0, len(frames)/sampleSize)

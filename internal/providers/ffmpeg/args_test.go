@@ -28,7 +28,7 @@ func TestBuildArgs(t *testing.T) {
 	t.Parallel()
 
 	common := []string{"-hide_banner", "-nostdin", "-nostats", "-y"}
-	encode := []string{"-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "32k"}
+	encode := []string{"-vn", "-ac", "1", "-ar", "16000", audioCodecFlag, "libmp3lame", "-b:a", "32k"}
 	input := func(path string) []string {
 		return []string{"-protocol_whitelist", "file", inputFlag, path}
 	}
@@ -62,7 +62,7 @@ func TestBuildArgs(t *testing.T) {
 			name:  "detect silences with configured level",
 			input: silenceDetectArgs(testAudio, SilenceOptions{NoiseDB: -25, MinDuration: 300 * time.Millisecond}),
 			expected: concat(
-				common, input(testAudio), []string{"-af", "silencedetect=noise=-25.000dB:d=0.300", "-f", "null", "-"},
+				common, input(testAudio), []string{"-af", "silencedetect=noise=-25.000dB:d=0.300", formatFlag, "null", "-"},
 			),
 		},
 	}

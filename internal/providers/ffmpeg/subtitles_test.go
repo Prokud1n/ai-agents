@@ -8,12 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testOutput = "file:/out/reel.mp4"
+const (
+	testOutput        = "file:/out/reel.mp4"
+	testSubtitlesName = "subtitles.ass"
+	testFontsName     = "fonts"
+	testJobDir        = "/tmp/job"
+)
 
 func TestBurnSubtitlesArgs(t *testing.T) {
 	t.Parallel()
 
-	base := BurnSubtitlesData{SubtitlesName: "subtitles.ass", FontsName: "fonts", Width: 1080, Height: 1920, Fit: PadFitMode}
+	base := BurnSubtitlesData{SubtitlesName: testSubtitlesName, FontsName: testFontsName, Width: 1080, Height: 1920, Fit: PadFitMode}
 	encode := []string{
 		videoCodecFlag, "libx264", "-preset", "veryfast", "-crf", "20", "-maxrate", "10M", "-bufsize", "20M",
 		"-profile:v", "high", "-pix_fmt", "yuv420p",
@@ -194,7 +199,7 @@ func TestBurnSubtitlesArgsWithCut(t *testing.T) {
 	t.Parallel()
 
 	data := BurnSubtitlesData{
-		SubtitlesName: "subtitles.ass", FontsName: "fonts", Width: 1080, Height: 1920, Fit: PadFitMode, Dir: "/tmp/job",
+		SubtitlesName: testSubtitlesName, FontsName: testFontsName, Width: 1080, Height: 1920, Fit: PadFitMode, Dir: testJobDir,
 		Cut: &Cut{
 			Segments: []Segment{{Start: 1, End: 2}, {Start: 3, End: 4}},
 			Options:  RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}},
@@ -278,7 +283,7 @@ func TestBurnGraphOrder(t *testing.T) {
 	t.Parallel()
 
 	data := BurnSubtitlesData{
-		SubtitlesName: "subtitles.ass", FontsName: "fonts", Width: 1080, Height: 1920, Fit: CropFitMode, Dir: "/tmp/job",
+		SubtitlesName: testSubtitlesName, FontsName: testFontsName, Width: 1080, Height: 1920, Fit: CropFitMode, Dir: testJobDir,
 		ToneMap: true, Shade: &Shade{Height: 900, Plateau: 600, Alpha: 153},
 		Cut: &Cut{
 			Segments: []Segment{{Start: 1, End: 2}, {Start: 3, End: 4.5}},
