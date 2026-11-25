@@ -378,7 +378,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frame; the export uses x264 `veryfast` instead of `medium` (CRF 20, VBV 10 Mbit/s as before). Local measurement,
   not CI (2 CPUs, ffmpeg 6.1, a 4K 60 fps 10-bit HEVC HLG source at 50 Mbit/s with a rough cut): 7.5 → 2.7 s of
   render per second of the reel (at 13 Mbit/s: 6.5 → 2.15); a whole source (a workout) about 2.2 s per second of the
-  source, so 10 minutes of 4K60 take about 22 minutes against `MEDIA_WORKER_FFMPEG_TIMEOUT` 30m. CI (job media-image)
+  source, so 10 minutes of 4K60 take about 22 minutes. For that margin the defaults are raised:
+  `MEDIA_WORKER_FFMPEG_TIMEOUT` 30m → 40m, `EDITOR_JOB_TIMEOUT` 45m → 60m. CI (job media-image)
   measures it on 2 CPUs (`TestRenderSpeed`) and compares the colours of the new order with the old one for HLG and PQ
   (`TestBurnSubtitlesWithFFmpegToneMap`).
 - Dead ends point to `/help`: an unknown command answers «Такой команды нет. Команды — /help.» instead of listing
