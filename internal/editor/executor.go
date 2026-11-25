@@ -107,15 +107,17 @@ type Executor struct {
 	// reelsTarget is the longest talking-head reel recommended (EDITOR_REELS_TARGET_DURATION): a longer cleaned first
 	// version is shortened by the editor's selection; 0 turns it off.
 	reelsTarget time.Duration
-	log         *slog.Logger
-	now         func() time.Time
+	// hookTitle: the model proposes the hook title of every first version (EDITOR_HOOK_TITLE).
+	hookTitle bool
+	log       *slog.Logger
+	now       func() time.Time
 }
 
 func NewExecutor(b board, s store, d decider, tech techReporter, cfg *config.Editor, log *slog.Logger) *Executor {
 	return &Executor{
 		board: b, store: s, decider: d, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
 		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, reelsMax: cfg.ReelsMaxDuration,
-		reelsTarget: max(cfg.ReelsTargetDuration, 0), log: log, now: time.Now,
+		reelsTarget: max(cfg.ReelsTargetDuration, 0), hookTitle: cfg.HookTitle, log: log, now: time.Now,
 	}
 }
 
@@ -214,13 +216,14 @@ func (e *Executor) dropStaleRevision(ctx context.Context, data *tasks.ExecuteDat
 	return nil
 }
 
-// autoJob is the first edit: the worker stops after the plan when the caption is to be applied, a repeat decided or
-// a talking head longer than the target shortened.
+// autoJob is the first edit: the worker stops after the plan when the caption is to be applied, a repeat decided,
+// a talking head longer than the target shortened or the hook title proposed.
 func (e *Executor) autoJob(data *tasks.ExecuteData) *editjob.Job {
 	job := e.newJob(data)
 	job.Stage = editjob.AutoStage
 	job.Decide = strings.TrimSpace(data.Input) != ""
 	job.TargetDuration = e.reelsTarget.Seconds()
+	job.Hook = e.hookTitle
 
 	return job
 }
@@ -247,11 +250,13 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 
 	req.Caption = data.Input
 	req.TargetSeconds = e.reelsTarget.Seconds()
+	req.Hook = e.hookTitle
 
 	outcome, err := e.decide(ctx, data, req)
 	if err != nil {
-		// A workout or a long talking head has a usable plan without the model: nothing cut, or the cleaning only.
-		if (!isWorkout(req.Plan) && !req.Selecting()) || !e.fallBack(ctx, data, err) {
+		// A workout, a long talking head or a reel stopped only for the hook has a usable plan without the model:
+		// nothing cut, or the cleaning only (and no hook).
+		if (!isWorkout(req.Plan) && !req.Selecting() && !req.HookOnly()) || !e.fallBack(ctx, data, err) {
 			return err
 		}
 
@@ -284,7 +289,8 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	return &tasks.DeferredError{After: e.pollInterval}
 }
 
-// fallBack reports whether the first version of a workout or of a long talking head is rendered without the model:
+// fallBack reports whether the first version of a workout, of a long talking head or of a reel stopped only for the
+// hook title is rendered without the model:
 // its plan cuts nothing (a workout) or only cleans the speech (a talking head), so it is a usable draft, better than
 // no draft. A technical failure (already told to «Техничка») falls back at once, a
 // temporary one only on the last attempt of the task (before it, the task retries the model).

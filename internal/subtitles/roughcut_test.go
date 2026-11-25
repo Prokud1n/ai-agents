@@ -60,7 +60,7 @@ func TestRoughCutTranscriptToSubtitles(t *testing.T) {
 	style := svc.Style()
 	style.Accent.MaxPerCue = 0 // plain text: the test is about words, punctuation and times
 
-	result, err := svc.CreateSubtitles(subtitles.CreateSubtitlesData{Transcript: &transcript, Style: &style})
+	result, err := svc.CreateSubtitles(&subtitles.CreateSubtitlesData{Transcript: &transcript, Style: &style})
 	require.NoError(t, err)
 
 	matches := dialogueRe.FindAllStringSubmatch(string(result.ASS), -1)

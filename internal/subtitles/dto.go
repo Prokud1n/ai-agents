@@ -17,6 +17,10 @@ type CreateSubtitlesData struct {
 	// Titles are the exercise titles («Выпады — 12 раз») on the timeline of the transcript, drawn in the Title style
 	// apart from the speech subtitles. Their text is plain: it is escaped like speech.
 	Titles []Title
+	// Hook is the hook title drawn large in the Hook style over the first seconds (HookStyle.Duration, at most half a
+	// second after the first phrase and the transcript's Duration); the subtitles of that time stand clear of it.
+	// Plain text, escaped like speech; empty: none.
+	Hook string
 }
 
 // Title is a caption shown from Start to End, in seconds.
@@ -53,4 +57,6 @@ type BurnResult struct {
 	FontFallbacks []string
 	// MissingGlyphs are libass reports of characters absent in the fonts (e.g. emoji in the transcript).
 	MissingGlyphs []string
+	// Fonts are the fonts libass selected for the style families.
+	Fonts []ffmpeg.FontSelection
 }

@@ -104,7 +104,7 @@ func TestBurnSubtitlesPreparesRender(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, &BurnResult{Cues: 1, FontFallbacks: []string{}}, result)
+	assert.Equal(t, &BurnResult{Cues: 1, FontFallbacks: []string{}, Fonts: renderer.report.Fonts}, result)
 
 	assert.Equal(t, inputVideo, renderer.got.Input)
 	assert.Equal(t, outDir, filepath.Dir(renderer.got.Output), "rendered next to the output")

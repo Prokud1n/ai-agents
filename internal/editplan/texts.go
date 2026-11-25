@@ -42,6 +42,9 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 	lines := make([]string, 0, maxChangeLines)
 	previous := previousEdit(req.Plan)
 
+	// The hook first: the description never folds it into «И ещё изменений».
+	lines = append(lines, hookLines(&previous, in)...)
+
 	if sel.on {
 		lines = append(lines, selectionLines(req, in, sel)...)
 	}

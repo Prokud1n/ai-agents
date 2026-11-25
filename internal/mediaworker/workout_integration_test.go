@@ -201,7 +201,7 @@ func TestIntegrationWorkoutKeepsPauses(t *testing.T) {
 	assert.InDelta(t, word.Start, got.Titles[0].Start, 0.05)
 	assert.InDelta(t, workoutDuration, got.Titles[0].End, 0.1, "the last title runs to the end")
 
-	ass, err := burner.service.CreateSubtitles(got.CreateSubtitlesData)
+	ass, err := burner.service.CreateSubtitles(&got.CreateSubtitlesData)
 	require.NoError(t, err)
 	assert.Contains(t, string(ass.ASS), "Style: Title,Fira Sans Extra Condensed ExtraBold,")
 	assert.Contains(t, string(ass.ASS), ",Title,,0,0,0,,ВЫПАДЫ — 12 РАЗ\n")
@@ -214,7 +214,7 @@ func TestIntegrationWorkoutKeepsPauses(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, done.Duration, hidden.Duration, 0.01, "hiding a word cuts nothing")
 
-	ass, err = burner.service.CreateSubtitles(burner.last().CreateSubtitlesData)
+	ass, err = burner.service.CreateSubtitles(&burner.last().CreateSubtitlesData)
 	require.NoError(t, err)
 	assert.NotContains(t, string(ass.ASS), ",Main,,")
 	assert.Contains(t, string(ass.ASS), ",Title,,0,0,0,,ВЫПАДЫ — 12 РАЗ\n")

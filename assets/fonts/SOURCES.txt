@@ -1,7 +1,8 @@
-Subtitle fonts (SUBTITLES_FONTS_DIR). Both are licensed under the SIL Open Font License 1.1:
+Subtitle fonts (SUBTITLES_FONTS_DIR). All are licensed under the SIL Open Font License 1.1:
 the license texts are next to the fonts and must stay with them.
 libass matches a static font by its legacy family name, which includes the weight for weights other than
-Regular/Bold: the style names them "Manrope Medium" and "Fira Sans Extra Condensed ExtraBold".
+Regular/Bold: the style names them "Manrope Medium" and "Fira Sans Extra Condensed ExtraBold"; the Regular weight is
+plain "Manrope" (the hook title).
 
 Manrope Medium — Manrope-Medium.ttf, license OFL-Manrope.txt
   Source: https://github.com/googlefonts/manrope (the upstream that Google Fonts builds from)
@@ -16,6 +17,13 @@ Manrope Medium — Manrope-Medium.ttf, license OFL-Manrope.txt
   Result: sha256 f7c3def2dcebca8d8a210e654fd32dd41f8237a5da4d6d96394eb9cfad055923
   (the instancer writes a timestamp, so a rebuild differs in bytes but not in glyphs).
   License: OFL.txt of the same commit, sha256 e01b637272e0cbdfb240184dd98ea5cc671556d9894dae2668d92ab2c906787c
+
+Manrope Regular — Manrope-Regular.ttf, license OFL-Manrope.txt (the hook title, T3.15b)
+  Cut from the same variable font as Manrope Medium (same commit 6f81ebecdf65e4463b798cc07b16a4f8d5216917, same
+  sha256 d0639be4…0a40) with fontTools 4.67.0:
+    fonttools varLib.instancer --static --update-name-table -o Manrope-Regular.ttf "Manrope[wght].ttf" wght=400
+  Names: family "Manrope", style "Regular", PostScript "Manrope-Regular".
+  Result: sha256 c5da4bac5d30885ee4a432f2a65a92792d906dc2fdf551c7e447206f08747ab3
 
 Fira Sans Extra Condensed ExtraBold — FiraSansExtraCondensed-ExtraBold.ttf, license OFL-FiraSansExtraCondensed.txt
   Source: https://github.com/googlefonts/FiraGFVersion (the Google Fonts build of Mozilla/Carrois Fira)

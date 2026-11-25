@@ -40,8 +40,8 @@ const (
 type Stage string
 
 const (
-	// AutoStage transcribes the source and plans the cut; with nothing to decide (no Decide, no disputed repeats,
-	// a cleaned talking head within TargetDuration and its margin) it renders the reel at once, otherwise it stops
+	// AutoStage transcribes the source and plans the cut; with nothing to decide (no Decide or Hook, no disputed
+	// repeats, a cleaned talking head within TargetDuration and its margin) it renders the reel at once, otherwise it stops
 	// with PlannedStatus after storing the transcript and the plan. An empty stage is AutoStage.
 	AutoStage Stage = "auto"
 	// RenderStage renders the reel with the editor's Edit from the stored transcript of the source: the speech
@@ -107,6 +107,9 @@ type Job struct {
 	// margin (roughcut.LongerThanTarget) stops after the plan, so the editor picks the best phrases for the reel
 	// (EDITOR_REELS_TARGET_DURATION); 0 turns it off.
 	TargetDuration float64 `json:"target_duration,omitempty"`
+	// Hook stops every AutoStage job after the plan: the editor's model proposes the hook title of the first version
+	// (EDITOR_HOOK_TITLE). The worker gets only the checked text of the hook, in the Edit of the RenderStage job.
+	Hook bool `json:"hook,omitempty"`
 	// Settings and Edit of a RenderStage job: the plan is built with the settings of the plan the editor
 	// decided on (so the IDs of its candidates hold) and the editor's changes, checked by the app.
 	Settings *roughcut.Settings `json:"settings,omitempty"`

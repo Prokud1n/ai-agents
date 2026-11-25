@@ -131,7 +131,7 @@ func startSelectionEnv(t *testing.T) (*editEnv, *talkTranscriber, *selectingMode
 	client := redistest.Connect(t)
 
 	files, err := media.NewStore(s3test.Connect(t),
-		&config.Media{KeyPrefix: "incoming", ResultPrefix: "edits", UploadTimeout: time.Minute}, log)
+		&config.Media{KeyPrefix: testKeyPrefix, ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)
 	require.NoError(t, err)
 
 	cfg := &config.Editor{
@@ -158,7 +158,7 @@ func startSelectionEnv(t *testing.T) (*editEnv, *talkTranscriber, *selectingMode
 	t.Cleanup(func() { _ = f.Close() })
 
 	source, err := files.Save(t.Context(), &media.File{
-		ChatID: clipChat, MessageID: clipMsgID, FileUniqueID: "talk", MIMEType: "video/x-matroska",
+		ChatID: clipChat, MessageID: clipMsgID, FileUniqueID: "talk", MIMEType: matroskaType,
 	}, f)
 	require.NoError(t, err)
 

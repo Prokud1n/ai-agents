@@ -380,8 +380,8 @@ func classifyTranscription(err error) error {
 
 // cut plans the rough cut: an auto job with the default settings (disputed repeats are kept), a render job with the
 // settings and the edit the editor decided on. An auto job with something to decide stops after it: the trainer's
-// caption, disputed repeats, little speech, or a talking head longer than the reel's target after the cleaning
-// (roughcut.LongerThanTarget). A source with little speech (autoPlan) may be a workout: cutting its silence would cut
+// caption, the hook title (Job.Hook), disputed repeats, little speech, or a talking head longer than the reel's
+// target after the cleaning (roughcut.LongerThanTarget). A source with little speech (autoPlan) may be a workout: cutting its silence would cut
 // the exercises, so it is planned in the workout mode (nothing cut) and the editor decides; that plan is also what is
 // rendered if the model cannot decide.
 func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
@@ -412,12 +412,13 @@ func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	// A talking head longer than the target after the cleaning is shortened by the editor: the best phrases are picked.
 	long := auto && !lowSpeech && roughcut.LongerThanTarget(cut.Plan.Duration, w.job.TargetDuration)
 
-	if auto && (w.job.Decide || lowSpeech || long || len(cut.Plan.Candidates) > 0) {
+	if auto && (w.job.Decide || w.job.Hook || lowSpeech || long || len(cut.Plan.Candidates) > 0) {
 		w.planned = true
 
 		p.log.InfoContext(ctx, "mediaworker: plan ready, the editor decides before the render", "job_id", w.job.ID,
-			"candidates", len(cut.Plan.Candidates), "caption", w.job.Decide, "little_speech", lowSpeech,
-			"longer_than_target", long, "duration", cut.Plan.Duration, "target_duration", w.job.TargetDuration)
+			"candidates", len(cut.Plan.Candidates), "caption", w.job.Decide, "hook", w.job.Hook,
+			"little_speech", lowSpeech, "longer_than_target", long, "duration", cut.Plan.Duration,
+			"target_duration", w.job.TargetDuration)
 	}
 
 	return nil
@@ -503,12 +504,14 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 	cut := p.sound.cut(w.cut, w.transcript.Loudness)
 
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
-		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: speech, Titles: subtitleTitles(w.cut.Titles)},
-		VideoPath:           w.source,
-		OutputPath:          w.reel,
-		Fit:                 p.fit,
-		Cut:                 cut,
-		ToneMap:             w.hdr,
+		CreateSubtitlesData: subtitles.CreateSubtitlesData{
+			Transcript: speech, Titles: subtitleTitles(w.cut.Titles), Hook: editHook(w.cut.Plan.Edit),
+		},
+		VideoPath:  w.source,
+		OutputPath: w.reel,
+		Fit:        p.fit,
+		Cut:        cut,
+		ToneMap:    w.hdr,
 	})
 	if err != nil {
 		return err
@@ -529,6 +532,15 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 	}
 
 	return nil
+}
+
+// editHook is the hook title of the edit, "" without one: its text was checked by the app.
+func editHook(edit *roughcut.Edit) string {
+	if edit == nil {
+		return ""
+	}
+
+	return edit.Hook
 }
 
 // subtitleTitles are the exercise titles of the cut for the subtitles.

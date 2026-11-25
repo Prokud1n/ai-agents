@@ -199,6 +199,17 @@ func TestPromptLength(t *testing.T) {
 			expected: []string{"рекомендуемая длина рилс — 30–60 с. Сокращай, только если тренер просит"},
 		},
 		{
+			name: "no target: not shortened unless asked",
+			req: func(t *testing.T) *Request {
+				req := selectionRequest(t, 1)
+				req.TargetSeconds = 0
+
+				return req
+			},
+			expected: []string{"Не сокращай его сам: длину меняй, только если тренер просит"},
+			absent:   []string{"редакторский отбор (раздел", "рекомендуемая длина"},
+		},
+		{
 			name: "a workout",
 			req: func(t *testing.T) *Request {
 				req := selectionRequest(t, 1)

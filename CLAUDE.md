@@ -253,7 +253,8 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   черновика ≤ 920 UTF-16 (`editor.fitDescription`): заголовок и пометки первыми, хвост списков режется с пометкой. `Mute` — `volume=0` в графе (дорожка остаётся), субтитров речи нет. Проверка с ffmpeg —
   `mediaworker.TestIntegrationWorkoutKeepsPauses` и `TestIntegrationNoSpeechIsPlanned`. Черновик длиннее
   `EDITOR_REELS_MAX_DURATION` — пометка в описании.
-- Редакторский отбор (T3.16a): `editjob.Job.TargetDuration` (`EDITOR_REELS_TARGET_DURATION`, 60 с) — стадия `auto`
+- Редакторский отбор (T3.16a): `editjob.Job.TargetDuration` (`EDITOR_REELS_TARGET_DURATION`, по умолчанию `0` — отбор выключен, ролик
+  сокращается только по длине из подписи или правки через `target_seconds`; при `60s` — стадия `auto`
   разговорного ролика (не мало речи), чей чистовой план длиннее цели × `roughcut.TargetMargin` (1,1), завершается
   `planned` и без подписи/кандидатов; app решает по той же `roughcut.LongerThanTarget`.
   `editplan.Request.TargetSeconds` → `Selecting()` (первая версия, talk, длиннее цели с запасом; диапазон `TargetRange` —
@@ -269,6 +270,23 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`editplan.phrases`: интервал или причина выреза, сегмент, пауза > 0,7 с, ≤ 8 слов; начало, длительность, начало в
   ролике) с диапазонами индексов слов.
   Проверка — `mediaworker.TestIntegrationSelectionForLongTalk`.
+- Заголовок-хук (T3.15b): `roughcut.Edit.Hook` (накапливается по версиям, `omitempty`), `hook_title` в `submit_edit`
+  (текст — поставить/поменять, `""` — убрать, нет поля — оставить; `editplan.checkHook`: 1–14 слов, ≤ 90 символов, без
+  управляющих/Cf-символов, `{}\<>`, эмодзи и `#`; обрамляющие кавычки и точка в конце снимаются — `normalizeHook`). `EDITOR_HOOK_TITLE` (по умолчанию `true`) → `editjob.Job.Hook`:
+  стадия `auto` всегда завершается `planned`, `editplan.Request.Hook` просит модель предложить хук.
+  `Request.HookOnly()` (первая версия talk без подписи, спорных повторов и отбора): промпт «предложи только
+  заголовок-хук», `Apply` отклоняет вырезы и обрезку; без модели — `fallBack`, черновик без заголовка. Модель не
+  поставила хук (без подписи) — последняя строка описания `editor.noHookHint`. Воркер передаёт
+  `Plan.Edit.Hook` в `subtitles.CreateSubtitlesData.Hook`: событие стиля `hook` (Manrope Regular 60, белый, по центру; слой 2,
+  `\fad`, ≤ 4 строк с переносом по словам и `\fscx`; ключевое слово `highlight` и плашка `box` — опции, выключены;
+  текст без управляющих/Cf, ≤ 90 символов по словам) с 0 до min(длина ролика, clamp(конец первого сегмента + 0,5 с,
+  `hook.min_duration` 2,5, `hook.max_duration` 8)); субтитры, начавшиеся до конца хука,
+  получают `MarginV` под ним на всё своё время (`Style.hookSubtitlesMargin` по фактическому числу строк хука), а под
+  ними — подложка `Shade` (первое событие, слой 0, векторный прямоугольник с `\blur` и прозрачностью виньетки) до
+  конца последнего сдвинутого субтитра; граф ffmpeg не меняется. Валидация стиля — хук и сдвинутые субтитры не
+  пересекают друг друга, подписи упражнений и зоны Instagram. Строка описания —
+  первой в `Outcome.Changes` (`editplan.hookLines`). Проверка — `mediaworker.TestIntegrationHookTitle`,
+  `TestIntegrationHookRender` (без Redis/S3, в media-image), `subtitles.TestBurnHookWithFFmpeg`.
 - Звук и зумы (T3.15a): `ffmpeg.Runner.ExtractAudioMeasured` меряет громкость исходника (`ebur128`) в том же проходе,
   что извлекает звук для Whisper, → `transcription.Result.Loudness` (хранится в транскрипте исходника, render и правки
   не меряют заново). `mediaworker.soundSettings.cut` (`MEDIA_WORKER_LOUDNESS`/`_DENOISE`/`_ZOOM`) добавляет к

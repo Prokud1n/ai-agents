@@ -50,6 +50,7 @@ type options struct {
 	accents    []string
 	assOnly    bool
 	karaoke    bool
+	hook       string
 	fit        ffmpeg.FitMode
 }
 
@@ -97,7 +98,7 @@ func run(args []string) error {
 	}
 
 	if opts.assOnly {
-		result, err := svc.CreateSubtitles(data)
+		result, err := svc.CreateSubtitles(&data)
 		if err != nil {
 			return err
 		}
@@ -136,6 +137,7 @@ func parseFlags(args []string, output io.Writer) (options, error) {
 	fs.BoolVar(&opts.assOnly, "ass-only", false, "write only the ASS subtitles, do not render the video")
 	fs.StringVar(&accents, "accents", "", "comma-separated words or phrases to accent instead of the automatic choice")
 	fs.BoolVar(&opts.karaoke, "karaoke", false, "highlight the word being spoken")
+	fs.StringVar(&opts.hook, "hook", "", "hook title over the first seconds (at most 40 characters, plain text)")
 	fs.StringVar(&fit, "fit", string(ffmpeg.PadFitMode), "video of another size: pad (keep the whole frame) or crop (fill)")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: subtitles -in video.mp4 -transcript result.json -out reel.mp4 [flags]")
@@ -193,7 +195,8 @@ func loadInput(opts *options) (subtitles.CreateSubtitlesData, error) {
 		return subtitles.CreateSubtitlesData{}, fmt.Errorf("failed to parse transcript %s: %w", opts.transcript, err)
 	}
 
-	data := subtitles.CreateSubtitlesData{Transcript: &transcript, Accents: opts.accents, Karaoke: opts.karaoke}
+	data := subtitles.CreateSubtitlesData{Transcript: &transcript, Accents: opts.accents, Karaoke: opts.karaoke,
+		Hook: opts.hook}
 
 	if opts.style != "" {
 		style, err := subtitles.LoadStyle(opts.style)

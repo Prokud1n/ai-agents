@@ -271,8 +271,12 @@ func writeCuts(b *strings.Builder, cuts []Cut, reason CutReason, title string) {
 	}
 }
 
-// writeEditExtras logs the sound and the exercise titles of the edit.
+// writeEditExtras logs the sound, the hook title and the exercise titles of the edit.
 func writeEditExtras(b *strings.Builder, edit *Edit) {
+	if edit.Hook != "" {
+		fmt.Fprintf(b, "\nЗаголовок-хук: «%s»\n", edit.Hook)
+	}
+
 	if edit.Mute {
 		b.WriteString("\nЗвук исходника убран, субтитров речи нет\n")
 	}
