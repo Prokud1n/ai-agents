@@ -215,8 +215,9 @@ func burnSubtitlesArgs(input, output string, data *BurnSubtitlesData, ffmpegMajo
 }
 
 // burnGraph scales the frame to the output size (pad or crop) first, tone maps an HDR picture on that small frame,
-// lays the shade over it, then draws the subtitles with libass: every filter after the scale works on 1080×1920. The shade is one generated frame: overlay repeats it over the whole video. With a cut the fragments
-// are cut and joined first (segmentsGraph), and the joined picture is what is scaled.
+// lays the shade over it, then draws the subtitles with libass: every filter after the scale works on 1080×1920.
+// The shade is one generated frame: overlay repeats it over the whole video. With a cut the fragments are cut and
+// joined first (segmentsGraph, at the draft's frame rate), and the joined picture is what is scaled.
 func burnGraph(data *BurnSubtitlesData) (string, error) {
 	input, cut := "[0:v]", ""
 
