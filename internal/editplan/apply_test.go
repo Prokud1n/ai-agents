@@ -99,22 +99,22 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 		},
 		{
 			name: "markup in a subtitle word", version: 2,
-			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: `{\b1}делаем`}} }),
+			input:    edit(func(in *Input) { in.FixWords = []FixInput{{Index: 7, Text: `{\b1}делаем`}} }),
 			expected: noLineBreaks,
 		},
 		{
 			name: "an empty subtitle word", version: 2,
-			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: " "}} }),
+			input:    edit(func(in *Input) { in.FixWords = []FixInput{{Index: 7, Text: " "}} }),
 			expected: titleLength,
 		},
 		{
 			name: "a sentence instead of a word", version: 2,
-			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: strings.Repeat("а", 41)}} }),
+			input:    edit(func(in *Input) { in.FixWords = []FixInput{{Index: 7, Text: strings.Repeat("а", 41)}} }),
 			expected: titleLength,
 		},
 		{
 			name: "a subtitle word past the transcript", version: 2,
-			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 11, Text: "да"}} }),
+			input:    edit(func(in *Input) { in.FixWords = []FixInput{{Index: 11, Text: "да"}} }),
 			expected: "слова с индексом 11 нет",
 		},
 		{
@@ -124,12 +124,12 @@ func TestApplyRejectsInvalidEdit(t *testing.T) {
 		},
 		{
 			name: "a subtitle word as it is", version: 2,
-			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: "делаем"}} }),
+			input:    edit(func(in *Input) { in.FixWords = []FixInput{{Index: 7, Text: "делаем"}} }),
 			expected: "ничего не меняет: в субтитрах уже «делаем»",
 		},
 		{
 			name: "an invisible character in a subtitle word", version: 2,
-			input:    edit(func(in *Input) { in.FixWords = []roughcut.WordFix{{Index: 7, Text: "дела\u200bем"}} }),
+			input:    edit(func(in *Input) { in.FixWords = []FixInput{{Index: 7, Text: "дела\u200bем"}} }),
 			expected: "невидимых символов",
 		},
 		{
@@ -247,7 +247,7 @@ func TestApplyRevision(t *testing.T) {
 			},
 			input: Input{
 				Decision: EditDecision, Candidates: []CandidateDecision{{ID: 0, Cut: true, Reason: "второй дубль"}},
-				FixWords: []roughcut.WordFix{{Index: 8, Text: " по "}, {Index: 9, Text: "10"}},
+				FixWords: []FixInput{{Index: 8, Text: " по "}, {Index: 9, Text: "10"}},
 			},
 			expectedEdit: roughcut.Edit{
 				Accept: []int{0}, Remove: []roughcut.WordRange{{From: 10, To: 10}},
@@ -287,10 +287,10 @@ func TestDescribeChangesLimit(t *testing.T) {
 	in := &Input{Decision: EditDecision}
 
 	for i := range 8 {
-		in.FixWords = append(in.FixWords, roughcut.WordFix{Index: i, Text: "слово"})
+		in.FixWords = append(in.FixWords, FixInput{Index: i, Text: "слово"})
 	}
 
-	lines := describeChanges(req, in, &trim{}, &placedTitles{newTitles: &newTitles{}})
+	lines := describeChanges(req, in, &trim{}, &placedTitles{newTitles: &newTitles{}}, &selection{})
 
 	assert.Len(t, lines, maxChangeLines)
 	assert.Equal(t, "И ещё изменений: 3.", lines[maxChangeLines-1])

@@ -108,7 +108,7 @@ func TestApplyWorkoutFirstVersion(t *testing.T) {
 			require.Equal(t, EditOutcome, outcome.Kind)
 
 			edit := outcome.Edit
-			edit.Notes = nil
+			edit.Notes, edit.Details = nil, nil
 
 			assert.Equal(t, tt.edit, edit)
 			assert.Equal(t, roughcut.WorkoutMode, outcome.Mode)
