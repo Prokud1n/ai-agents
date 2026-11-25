@@ -15,7 +15,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent-run ./cmd/agent-run && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kb ./cmd/kb
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kb ./cmd/kb && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/edit-local ./cmd/edit-local
 
 # Tools that need ffmpeg (transcribe, roughcut, subtitles, media-worker) are built separately, so the app image below
 # stays unchanged.

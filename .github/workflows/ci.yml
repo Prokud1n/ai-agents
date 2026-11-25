@@ -164,6 +164,8 @@ jobs:
           go test -count=1 -v -run 'TestExecutor|TestFailureText' ./internal/editor/
           go test -count=1 -v -run 'TestWorker|TestPipelineToneMapsHDR' ./internal/mediaworker/
           go test -count=1 -v -run 'TestChildEnv|TestMediaInfoHDR' ./internal/providers/ffmpeg/
+          go test -count=1 -v ./internal/editlocal/ ./cmd/edit-local/
+          go test -count=1 -v -run 'TestEditLocalHasNoTelegram' ./internal/
 
       # Hostile input for kb: PDFs are parsed in real child processes (the test binary re-run as the
       # parser), symlinks inside KB_ROOT lead outside it. The log shows each attack failing as an ordinary
@@ -294,7 +296,7 @@ jobs:
           fi
 
       - name: Shellcheck scripts
-        run: shellcheck --version | sed -n 2p && shellcheck -x scripts/m0-check.sh scripts/kb.sh
+        run: shellcheck --version | sed -n 2p && shellcheck -x scripts/m0-check.sh scripts/kb.sh scripts/edit.sh
 
       # make kb-* turns a host path inside ./kb into a path under /kb in the container; anything outside fails.
       - name: Knowledge base paths (scripts/kb.sh)
@@ -407,6 +409,48 @@ jobs:
           [[ $code -ne 0 ]] && grep -q 'стек не поднят' nostack.out || fail "kb without postgres must say the stack is down"
 
           rm -rf kb/_ci
+
+      # make edit (T3.18) in the stack without keys: the binary is in the app image, the arguments and OUT are checked by
+      # scripts/edit.sh, and a real run goes the whole local path — the source mounted read-only, uploaded to S3 under a
+      # synthetic task, the job taken by the media worker — and fails as the bot would without OPENAI_API_KEY, with the
+      # trainer's text and no state.json (no version made). Nothing reaches Telegram: there are no bot tokens here.
+      - name: Editor without Telegram (make edit)
+        shell: bash
+        run: |
+          set +e
+          fail() { echo "::error::$*"; exit 1; }
+
+          docker run --rm --network none --entrypoint /app/edit-local ai-agents-app:local -h > help.txt 2>&1
+          code=$?
+          cat help.txt
+          [[ $code -eq 0 ]] && grep -q '^usage:' help.txt || fail "edit-local -h: expected usage, exit 0 (got $code)"
+
+          make edit > usage.txt 2>&1
+          code=$?
+          cat usage.txt
+          [[ $code -ne 0 ]] && grep -q 'make edit FILE=' usage.txt || fail "make edit without FILE: expected the usage"
+
+          for bad in / . "$PWD" ./.git /tmp/a:b; do
+            if scripts/edit.sh check-out "$bad" 2>err.txt; then fail "OUT '$bad' must be rejected"; fi
+            cat err.txt
+          done
+          [[ $(scripts/edit.sh check-out ./edits/x/../ci) == "$PWD/edits/ci" ]] || fail "OUT ./edits/ci must be accepted"
+
+          mkdir -p ci-edit
+          ffmpeg -hide_banner -nostdin -loglevel error -y -f lavfi -i "sine=frequency=440:duration=3" \
+            -f lavfi -i "testsrc=duration=3:size=360x640:rate=30" -c:v mpeg4 -c:a aac -shortest ci-edit/clip.mp4
+          timeout 300 make edit FILE=./ci-edit/clip.mp4 OUT=./edits/ci > edit.out 2> edit.err
+          code=$?
+          cat edit.out
+          echo "--- exit $code; stderr:"
+          grep -v '^{' edit.err || true
+          [[ $code -eq 2 ]] && fail "make edit stopped before the run (exit 2)"
+          [[ $code -ne 0 ]] || fail "make edit without OPENAI_API_KEY must fail"
+          grep -q 'Тренер получил бы: Монтаж сейчас недоступен' edit.err || fail "expected the trainer's text of a technical failure"
+          grep -qE '^Задача: 1[0-9]{18} ' edit.out || fail "expected a synthetic task ID above 10^18"
+          [[ ! -e edits/ci/state.json ]] || fail "a failed version must not write state.json"
+          [[ -d edits/ci && "$(stat -c %u edits/ci)" == "$(id -u)" ]] || fail "OUT must belong to the user"
+          rm -rf ci-edit edits
 
       # Without keys: environment and stack PASS, LLM, knowledge base, transcription and Telegram SKIP.
       # The script itself exits non-zero on any FAIL; the summary is checked too, so a step that is

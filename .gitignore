@@ -12,3 +12,5 @@ docker-compose.override.yml
 # make m0-check: temporary agent (removed by the script) and results (report.md, logs, transcript)
 /agents/m0check-*/
 /m0-results/
+# make edit: local edits of the editor (reels, plans, state)
+/edits/

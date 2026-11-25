@@ -1,4 +1,4 @@
-.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe roughcut subtitles media-image agent-run test-integration redis-test-up redis-test-down s3-test-up s3-test-down kb-ingest kb-search kb-delete kb-reembed
+.PHONY: setup run build test lint fmt check up down logs migrate migrate-down transcribe roughcut subtitles media-image agent-run edit test-integration redis-test-up redis-test-down s3-test-up s3-test-down kb-ingest kb-search kb-delete kb-reembed
 
 GOLANGCI_LINT := ./scripts/golangci-lint.sh
 
@@ -135,6 +135,15 @@ media-image:
 agent-run:
 	docker compose run --rm --build migrate up
 	docker compose run --rm --entrypoint /app/agent-run app -agent "$(AGENT)" -prompt "$(PROMPT)"
+
+# The editor (Монтажёр) without Telegram on a local video: the app's edit (the model, its decisions and revisions) with
+# the running media worker, nothing sent to the group, no task queued (README, «Проверка Монтажёра без Telegram»).
+# Needs `make up` and ANTHROPIC_API_KEY, OPENAI_API_KEY in .env. FILE, CAPTION, OUT and REVISION reach scripts/edit.sh
+# through the environment (make exports command line variables), so quotes in the texts are kept.
+#   make edit FILE=/path/to/video.mov [CAPTION="подпись"] [OUT=./edits/<name>]   version 1 into OUT/v1
+#   make edit OUT=./edits/<name> REVISION="сделай 40 секунд"                       a revision of the last version
+edit:
+	@./scripts/edit.sh
 
 # Knowledge base CLI (needs `make up` and OPENAI_API_KEY in .env). Runs /app/kb inside the app image through
 # docker compose: no Go on the host. ./kb is mounted read-only at /kb (KB_ROOT there); KB_PATH is given as on the

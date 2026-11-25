@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `make edit` — the editor without Telegram (T3.18). `make edit FILE=<video> [CAPTION=…] [OUT=./edits/<name>]` runs
+  the app's edit of a local video — the editor's model, its decisions, the running media worker — and puts the reel,
+  `plan.json`, `decisions.log`, the draft's description and the timings by stage into `OUT/v1/`; `make edit OUT=…
+  REVISION="…"` makes the next version as a reply to the draft would. Nothing goes to the group and no task is queued:
+  the task is synthetic (ID above 10^18 from a Redis counter), the state is `OUT/state.json`. The summary shows the
+  model's calls and their cost for the run (also recorded in `llm_usage`). New binary `cmd/edit-local` in the app image,
+  `scripts/edit.sh` (the video is mounted read-only, `OUT` belongs to the user).
+
 - Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more
   than `roughcut.TargetMargin` (10 %: over 66 s) after the cleaning is planned by the worker and given to the editor's
   model even without a caption or disputed repeats (shorter ones are rendered at once, no model call; the worker and
