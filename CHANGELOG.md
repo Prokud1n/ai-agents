@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REVISION="…"` makes the next version as a reply to the draft would. Nothing goes to the group and no task is queued:
   the task is synthetic (ID above 10^18 from a Redis counter), the state is `OUT/state.json`. The summary shows the
   model's calls and their cost for the run (also recorded in `llm_usage`). New binary `cmd/edit-local` in the app image,
-  `scripts/edit.sh` (the video is mounted read-only, `OUT` belongs to the user).
+  `scripts/edit.sh` (the video is mounted read-only, `OUT` belongs to the user). Ctrl+C takes the job off the worker's
+  board; `OUT/.lock` keeps two runs out of one directory; a version made but not downloaded is `pending` in
+  `state.json` and `make edit OUT=…` alone downloads it; the source gets a random S3 name and a taken key is never
+  overwritten; `~` in paths is expanded, `$` in texts is kept; an app image older than the code asks for `make up`
+  (the check is shared with `make kb-*`, `scripts/image-age.sh`).
 
 - Editorial cut of a talking head (T3.16a). A first version longer than `EDITOR_REELS_TARGET_DURATION` (60 s) by more
   than `roughcut.TargetMargin` (10 %: over 66 s) after the cleaning is planned by the worker and given to the editor's

@@ -91,6 +91,11 @@ func (s *Store) Save(ctx context.Context, f *File, r io.ReadSeeker) (string, err
 	return key, nil
 }
 
+// Key is the key Save stores the file under (see Key): a caller can check the object before it writes it.
+func (s *Store) Key(f *File) (string, error) {
+	return Key(s.prefix, f)
+}
+
 // ResultKey is the key of a result file made from the stored source (see the package's ResultKey): the editor
 // and the app compute the same keys, so no key comes from the other side. ErrInvalidKey for a key that is not an
 // incoming key of this store, ErrInvalidConfig without MEDIA_RESULT_PREFIX.

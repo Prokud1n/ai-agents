@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	testSourceKey = "incoming/1/1000000000000000007/local.mov"
+	testKeyPrefix = "incoming"
+	testSourceKey = testKeyPrefix + "/1/1000000000000000007/local-0a1b2c3d.mov"
 	testCaption   = "подпись"
 	testRevision  = "сделай 40 секунд"
 	testClip      = "clip.mp4"
@@ -103,7 +104,7 @@ func TestSaveAndLoadState(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoState, "a new output directory")
 
 	state := &State{
-		TaskID: TaskIDBase + 7, SourceKey: testSourceKey, SourceFile: "clip.mov", Caption: testCaption, Version: 1,
+		Format: StateFormat, TaskID: TaskIDBase + 7, SourceKey: testSourceKey, SourceFile: "clip.mov", Caption: testCaption, Version: 1,
 		UpdatedAt: time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC),
 	}
 	require.NoError(t, SaveState(dir, state))
@@ -134,9 +135,18 @@ func TestLoadStateInvalid(t *testing.T) {
 		content string
 	}{
 		{name: "not json", content: "{"},
-		{name: "a task of the app", content: `{"task_id": 42, "source_key": "` + testSourceKey + `", "version": 1}`},
-		{name: "no version", content: `{"task_id": 1000000000000000007, "source_key": "` + testSourceKey + `"}`},
-		{name: "bad key", content: `{"task_id": 1000000000000000007, "source_key": "../etc/passwd", "version": 1}`},
+		{name: "another format", content: `{"format": 2, "task_id": 1000000000000000007, "source_key": "` +
+			testSourceKey + `", "version": 1}`},
+		{name: "no format", content: `{"task_id": 1000000000000000007, "source_key": "` + testSourceKey + `", "version": 1}`},
+		{name: "a task of the app", content: `{"format": 1, "task_id": 42, "source_key": "` + testSourceKey + `", "version": 1}`},
+		{name: "no version", content: `{"format": 1, "task_id": 1000000000000000007, "source_key": "` + testSourceKey + `"}`},
+		{name: "pending above version", content: `{"format": 1, "task_id": 1000000000000000007, "source_key": "` +
+			testSourceKey + `", "version": 1, "pending": 2}`},
+		{name: "bad key", content: `{"format": 1, "task_id": 1000000000000000007, "source_key": "../etc/passwd", "version": 1}`},
+		{name: "another task's source", content: `{"format": 1, "task_id": 1000000000000000008, "source_key": "` +
+			testSourceKey + `", "version": 1}`},
+		{name: "a video of the team chat", content: `{"format": 1, "task_id": 1000000000000000007, ` +
+			`"source_key": "incoming/-100123/1000000000000000007/local-0a1b2c3d.mov", "version": 1}`},
 	}
 
 	for _, tt := range tests {
@@ -155,6 +165,6 @@ func TestLoadStateInvalid(t *testing.T) {
 func TestSaveStateRefusesInvalid(t *testing.T) {
 	t.Parallel()
 
-	err := SaveState(t.TempDir(), &State{TaskID: 42, SourceKey: testSourceKey, Version: 1})
+	err := SaveState(t.TempDir(), &State{Format: StateFormat, TaskID: 42, SourceKey: testSourceKey, Version: 1})
 	require.ErrorIs(t, err, ErrInvalidState)
 }

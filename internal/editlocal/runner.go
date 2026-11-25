@@ -4,9 +4,11 @@
 //
 // A local edit is a synthetic task: its ID is above TaskIDBase (a Redis counter), so its jobs, result files and done
 // messages never meet those of a real task. The source goes to S3 like a video of the team chat (chat LocalChatID,
-// the task ID as the message), the executor is run in a loop as the task workers run it — deferred runs wait, temporary
-// failures are retried with the backoff of the tasks — and the files of the version are downloaded into
-// <out>/v<N>/. The state of the edit (state.json) lets the next run make a revision of the last version.
+// the task ID as the message, a random file name, never over an object that is there), the executor is run in a loop
+// as the task workers run it — deferred runs wait, temporary failures are retried with the backoff of the tasks, an
+// interrupted run takes its job off the board — and the files of the version are downloaded into <out>/v<N>/. The
+// state of the edit (state.json) lets the next run make a revision of the last version or finish a download; a lock
+// keeps two runs out of one output directory.
 package editlocal
 
 import (
@@ -15,7 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -39,15 +41,13 @@ const (
 const (
 	// LocalChatID is the chat of local sources in their S3 keys: the team chat is a group, its ID is negative.
 	LocalChatID int64 = 1
-	// localFileID is the file unique id of local sources in their S3 keys (the task ID makes the key unique).
-	localFileID = "local"
-	// minWait between two runs of the executor: a deferred run without a delay does not spin.
-	minWait = 100 * time.Millisecond
 	// DefaultPollInterval is the longest wait between two runs of the executor (EDITOR_POLL_INTERVAL is meant for the
 	// task queue and is minutes long; the done channel usually wakes the loop earlier).
 	DefaultPollInterval = 5 * time.Second
-	dirMode             = 0o750
-	fileMode            = 0o600
+	// DefaultRunTimeout of one run of the executor when Settings has none (TASKS_TIMEOUT).
+	DefaultRunTimeout = 15 * time.Minute
+	dirMode           = 0o750
+	fileMode          = 0o600
 )
 
 // VersionFiles are the files of every finished version.
@@ -62,6 +62,12 @@ var (
 	ErrInvalidSource = errors.New("invalid source video")
 	// ErrEmptyRevision: a revision without text.
 	ErrEmptyRevision = errors.New("the revision has no text")
+	// ErrSourceMissing: the source of the edit is gone from S3 (the storage was cleaned): only a new edit helps.
+	ErrSourceMissing = errors.New("the source of the edit is not in S3")
+	// ErrPendingDownload: the last version is made but not downloaded; it is downloaded first.
+	ErrPendingDownload = errors.New("the last version is not downloaded")
+	// ErrNothingPending: every version of the edit is downloaded.
+	ErrNothingPending = errors.New("nothing to download")
 )
 
 type executor interface {
@@ -72,12 +78,15 @@ type board interface {
 	Job(ctx context.Context, id string) (editjob.Job, bool, error)
 	WorkerAlive(ctx context.Context) (bool, error)
 	ListenDone(ctx context.Context, handle func(ctx context.Context, taskID int64)) error
+	Forget(ctx context.Context, id string) error
 }
 
 type store interface {
+	Key(f *media.File) (string, error)
 	Save(ctx context.Context, f *media.File, r io.ReadSeeker) (string, error)
 	ResultKey(sourceKey, name, ext string) (string, error)
 	Download(ctx context.Context, key, dir string, maxSize int64) (*media.LocalFile, error)
+	Read(ctx context.Context, key string, maxSize int64) ([]byte, error)
 }
 
 type sequence interface {
@@ -97,8 +106,13 @@ type Settings struct {
 	MaxAttempts    int
 	RetryBaseDelay time.Duration
 	RetryMaxDelay  time.Duration
+	// RunTimeout bounds one run of the executor (TASKS_TIMEOUT); 0 is DefaultRunTimeout.
+	RunTimeout time.Duration
 	// PollInterval is the longest wait between two runs; 0 is DefaultPollInterval.
 	PollInterval time.Duration
+	// LockStaleAfter: a lock of the output directory older than this is reported as stale (EDITOR_JOB_TIMEOUT: the
+	// longest edit); 0 is never by age.
+	LockStaleAfter time.Duration
 }
 
 // Params of NewRunner.
@@ -148,6 +162,14 @@ func NewRunner(p *Params) *Runner {
 		r.settings.PollInterval = DefaultPollInterval
 	}
 
+	if r.settings.RunTimeout <= 0 {
+		r.settings.RunTimeout = DefaultRunTimeout
+	}
+
+	if r.settings.LockStaleAfter <= 0 {
+		r.settings.LockStaleAfter = time.Duration(math.MaxInt64)
+	}
+
 	return r
 }
 
@@ -168,8 +190,8 @@ type ReviseData struct {
 	Revision string
 }
 
-// Report of a run. Done: the version is made, its files are in Dir (relative to the output directory). A run that
-// failed after the upload still has its task, timings and usage.
+// Report of a run. Done: the version is made and downloaded, its files are in Dir (relative to the output
+// directory). A run that failed after the upload still has its task, timings and usage.
 type Report struct {
 	TaskID  int64
 	Version int
@@ -185,7 +207,13 @@ type Report struct {
 func (r *Runner) First(ctx context.Context, data *FirstData) (*Report, error) {
 	started := r.now()
 
-	_, err := LoadState(data.OutDir)
+	release, err := acquireLock(data.OutDir, r.settings.LockStaleAfter, started)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	_, err = LoadState(data.OutDir)
 
 	switch {
 	case err == nil:
@@ -204,29 +232,30 @@ func (r *Runner) First(ctx context.Context, data *FirstData) (*Report, error) {
 	}
 	defer source.Close()
 
-	taskID, err := r.sequence.NextTaskID(ctx)
+	name := filepath.Base(data.Path)
+
+	file, err := r.newSource(ctx, name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get a local task id: %w", err)
+		return nil, err
 	}
 
-	name := filepath.Base(data.Path)
-	report := &Report{TaskID: taskID, Version: 1}
-	r.progressf("задача %d: загружаю %s в S3", taskID, name)
+	report := &Report{TaskID: file.MessageID, Version: 1}
+	r.progressf("задача %d: загружаю %s в S3", file.MessageID, name)
 
 	uploadStart := r.now()
 
-	key, err := r.store.Save(ctx, &media.File{
-		ChatID: LocalChatID, MessageID: taskID, FileUniqueID: localFileID, FileName: name,
-	}, source)
+	key, err := r.store.Save(ctx, file, source)
 	if err != nil {
 		return report, fmt.Errorf("failed to upload the source: %w", err)
 	}
 
 	report.Timings.Upload = r.now().Sub(uploadStart)
 
-	state := &State{TaskID: taskID, SourceKey: key, SourceFile: name, Caption: data.Caption, Version: 1}
+	state := &State{
+		Format: StateFormat, TaskID: file.MessageID, SourceKey: key, SourceFile: name, Caption: data.Caption, Version: 1,
+	}
 	run := &tasks.ExecuteData{
-		TaskID: taskID, Agent: editor.AgentName, Kind: teamchat.ReelsEditTaskKind, Input: data.Caption,
+		TaskID: file.MessageID, Agent: editor.AgentName, Kind: teamchat.ReelsEditTaskKind, Input: data.Caption,
 		Media: []string{key}, Version: 1,
 	}
 
@@ -243,12 +272,26 @@ func (r *Runner) Revise(ctx context.Context, data *ReviseData) (*Report, error) 
 		return nil, ErrEmptyRevision
 	}
 
+	release, err := acquireLock(data.OutDir, r.settings.LockStaleAfter, started)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	current, err := LoadState(data.OutDir)
 	if err != nil {
 		return nil, err
 	}
 
+	if current.Pending > 0 {
+		return nil, fmt.Errorf("version %d: %w", current.Pending, ErrPendingDownload)
+	}
+
 	if err := r.checkWorker(ctx); err != nil {
+		return nil, err
+	}
+
+	if err := r.checkSource(ctx, current.SourceKey); err != nil {
 		return nil, err
 	}
 
@@ -264,7 +307,38 @@ func (r *Runner) Revise(ctx context.Context, data *ReviseData) (*Report, error) 
 	return report, r.complete(ctx, run, next, data.OutDir, report, started)
 }
 
-// complete runs the version, downloads its files and saves the state.
+// Resume downloads the version a run made but did not download (interrupted, or the download failed).
+func (r *Runner) Resume(ctx context.Context, outDir string) (*Report, error) {
+	started := r.now()
+
+	release, err := acquireLock(outDir, r.settings.LockStaleAfter, started)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	state, err := LoadState(outDir)
+	if err != nil {
+		return nil, err
+	}
+
+	if state.Pending == 0 {
+		return nil, fmt.Errorf("version %d: %w", state.Version, ErrNothingPending)
+	}
+
+	report := &Report{TaskID: state.TaskID, Version: state.Pending}
+	r.progressf("задача %d: докачиваю версию %d", state.TaskID, state.Pending)
+
+	if err := r.finishDownload(ctx, state, outDir, report); err != nil {
+		return report, err
+	}
+
+	report.Timings.Total = r.now().Sub(started)
+
+	return report, nil
+}
+
+// complete runs the version, saves it as pending (its files are in S3), downloads its files and saves the state.
 func (r *Runner) complete(
 	ctx context.Context,
 	run *tasks.ExecuteData,
@@ -275,37 +349,55 @@ func (r *Runner) complete(
 ) error {
 	output, err := r.execute(ctx, run, &report.Timings)
 	report.Usage = r.meter.Snapshot()
+	report.Timings.Total = r.now().Sub(started)
 
 	if err != nil {
-		report.Timings.Total = r.now().Sub(started)
-
 		return err
 	}
 
 	report.Output = output
-	dir := VersionDir(run.Version)
-	path := filepath.Join(outDir, dir)
+	path := filepath.Join(outDir, VersionDir(run.Version))
 
-	r.progressf("задача %d: скачиваю версию %d", run.TaskID, run.Version)
+	if err := r.writeVersionTexts(path, output.Text, &report.Timings); err != nil {
+		return err
+	}
+
+	next.Pending = run.Version
+	next.UpdatedAt = r.now()
+
+	if err := SaveState(outDir, next); err != nil {
+		return err
+	}
+
+	if err := r.finishDownload(ctx, next, outDir, report); err != nil {
+		return err
+	}
+
+	report.Timings.Total = r.now().Sub(started)
+
+	// timings.txt again, now with the download.
+	return writeFile(path, TimingsFile, report.Timings.Format())
+}
+
+// finishDownload downloads the pending version of the state and clears it.
+func (r *Runner) finishDownload(ctx context.Context, state *State, outDir string, report *Report) error {
+	version := state.Pending
+	dir := VersionDir(version)
+
+	r.progressf("задача %d: скачиваю версию %d", state.TaskID, version)
 
 	downloadStart := r.now()
-	if err := r.download(ctx, next.SourceKey, run.Version, path); err != nil {
+	if err := r.download(ctx, state.SourceKey, version, filepath.Join(outDir, dir)); err != nil {
 		return err
 	}
 
 	report.Timings.Download = r.now().Sub(downloadStart)
-	report.Timings.Total = r.now().Sub(started)
 
-	if err := writeFile(path, DescriptionFile, output.Text+"\n"); err != nil {
-		return err
-	}
+	done := *state
+	done.Pending = 0
+	done.UpdatedAt = r.now()
 
-	if err := writeFile(path, TimingsFile, report.Timings.Format()); err != nil {
-		return err
-	}
-
-	next.UpdatedAt = r.now()
-	if err := SaveState(outDir, next); err != nil {
+	if err := SaveState(outDir, &done); err != nil {
 		return err
 	}
 
@@ -314,151 +406,17 @@ func (r *Runner) complete(
 	return nil
 }
 
-// execute runs the executor as the task workers do until the version is made or fails: a deferred run waits (the
-// done channel wakes it early), any other failure but a permanent one is retried while attempts are left.
-func (r *Runner) execute(ctx context.Context, data *tasks.ExecuteData, timings *Timings) (tasks.Output, error) {
-	wake, stop := r.listen(ctx, data.TaskID)
-	defer stop()
-
-	run := *data
-	attempt := 1
-
-	var last stage
-
-	for {
-		current := r.stage(ctx, &run)
-		if current != last {
-			r.progressf("задача %d: %s", run.TaskID, stageText(current))
-			last = current
-		}
-
-		start, model := r.now(), r.meter.Snapshot().ModelTime
-		run.LastAttempt = attempt >= r.settings.MaxAttempts
-
-		output, err := r.executor.Execute(ctx, &run)
-		if err == nil {
-			timings.add(current, r.now().Sub(start), r.meter.Snapshot().ModelTime-model)
-
-			return output, nil
-		}
-
-		delay, err := r.retryDelay(err, &attempt)
-		if err == nil {
-			err = wait(ctx, delay, wake)
-		}
-
-		timings.add(current, r.now().Sub(start), r.meter.Snapshot().ModelTime-model)
-
-		if err != nil {
-			return tasks.Output{}, err
-		}
-	}
-}
-
-func stageText(s stage) string {
-	if s == renderStage {
-		return "воркер рендерит"
+// writeVersionTexts writes the description and the timings so far into the directory of the version.
+func (*Runner) writeVersionTexts(path, description string, timings *Timings) error {
+	if err := mkdir(path); err != nil {
+		return err
 	}
 
-	return "воркер: очередь, транскрипция и план"
-}
-
-// stage is the stage of the job of the version on the board; before it is submitted, the stage it will have.
-func (r *Runner) stage(ctx context.Context, run *tasks.ExecuteData) stage {
-	job, found, err := r.board.Job(ctx, editjob.JobID(run.TaskID, run.Version))
-	if err != nil {
-		r.log.DebugContext(ctx, "editlocal: failed to read the job", "error", err, "task_id", run.TaskID)
+	if err := writeFile(path, DescriptionFile, description+"\n"); err != nil {
+		return err
 	}
 
-	switch {
-	case found && job.EffectiveStage() == editjob.RenderStage:
-		return renderStage
-	case found:
-		return planStage
-	case run.Version > 1:
-		return renderStage
-	default:
-		return planStage
-	}
-}
-
-// retryDelay is how long to wait before the next run, or the error that ends the edit. A deferred run is not an
-// attempt; a permanent error and a failure of the last attempt end it.
-func (r *Runner) retryDelay(err error, attempt *int) (time.Duration, error) {
-	var deferred *tasks.DeferredError
-	if errors.As(err, &deferred) {
-		return min(max(deferred.After, minWait), r.settings.PollInterval), nil
-	}
-
-	var permanent *tasks.PermanentError
-	if errors.As(err, &permanent) || *attempt >= r.settings.MaxAttempts {
-		return 0, err
-	}
-
-	delay := backoff(r.settings.RetryBaseDelay, r.settings.RetryMaxDelay, *attempt)
-	r.progressf("попытка %d из %d не удалась, повтор через %s: %v", *attempt, r.settings.MaxAttempts, delay, err)
-	*attempt++
-
-	return max(delay, minWait), nil
-}
-
-// backoff is base * 2^(attempt-1), at most limit (as the tasks retry).
-func backoff(base, limit time.Duration, attempt int) time.Duration {
-	delay := base
-
-	for range attempt - 1 {
-		delay *= 2
-		if delay >= limit {
-			return limit
-		}
-	}
-
-	return min(delay, limit)
-}
-
-func wait(ctx context.Context, delay time.Duration, wake <-chan struct{}) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("failed to wait for the edit: %w", ctx.Err())
-	case <-wake:
-	case <-timer.C:
-	}
-
-	return nil
-}
-
-// listen signals wake when the worker announces a finished job of the task; stop ends the listener. A lost
-// announcement only delays the loop until the poll.
-func (r *Runner) listen(ctx context.Context, taskID int64) (wake <-chan struct{}, stop func()) {
-	listenCtx, cancel := context.WithCancel(ctx)
-	signal := make(chan struct{}, 1)
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-
-		err := r.board.ListenDone(listenCtx, func(_ context.Context, id int64) {
-			if id != taskID {
-				return
-			}
-
-			select {
-			case signal <- struct{}{}:
-			default:
-			}
-		})
-		if err != nil && listenCtx.Err() == nil {
-			r.log.WarnContext(listenCtx, "editlocal: failed to listen for finished jobs, polling", "error", err)
-		}
-	}()
-
-	return signal, func() {
-		cancel()
-		<-done
-	}
+	return writeFile(path, TimingsFile, timings.Format())
 }
 
 func (r *Runner) checkWorker(ctx context.Context) error {
@@ -469,81 +427,6 @@ func (r *Runner) checkWorker(ctx context.Context) error {
 
 	if !alive {
 		return ErrWorkerNotRunning
-	}
-
-	return nil
-}
-
-// download copies the reel, the plan and the decisions of the version into dir.
-func (r *Runner) download(ctx context.Context, sourceKey string, version int, dir string) error {
-	files, err := editjob.Files(r.store, sourceKey, version)
-	if err != nil {
-		return fmt.Errorf("failed to make the keys of the result: %w", err)
-	}
-
-	if err := os.MkdirAll(dir, dirMode); err != nil {
-		return fmt.Errorf("failed to create %s: %w", dir, err)
-	}
-
-	for _, f := range []struct{ key, name string }{
-		{key: files.Reel, name: ReelFile},
-		{key: files.Plan, name: PlanFile},
-		{key: files.Decisions, name: DecisionsFile},
-	} {
-		local, err := r.store.Download(ctx, f.key, dir, r.settings.MaxFileSize)
-		if err != nil {
-			return fmt.Errorf("failed to download %s: %w", f.name, err)
-		}
-
-		if err := os.Rename(local.Path, filepath.Join(dir, f.name)); err != nil {
-			_ = local.Remove()
-
-			return fmt.Errorf("failed to save %s: %w", f.name, err)
-		}
-	}
-
-	return nil
-}
-
-// openSource opens the local source read-only after the checks the bot makes: a regular file of a video type, not
-// empty and not above maxSize.
-func openSource(path string, maxSize int64) (*os.File, error) {
-	name := filepath.Base(path)
-	if media.Extension("", name) == media.UnknownExtension {
-		return nil, fmt.Errorf("%s: not a video file (mp4, mov, webm, mkv, avi, 3gp, mpeg): %w", name, ErrInvalidSource)
-	}
-
-	file, err := os.Open(filepath.Clean(path))
-	if err != nil {
-		return nil, fmt.Errorf("failed to open the source: %w", err)
-	}
-
-	info, err := file.Stat()
-
-	switch {
-	case err != nil:
-		err = fmt.Errorf("failed to read the source: %w", err)
-	case !info.Mode().IsRegular():
-		err = fmt.Errorf("%s is not a regular file: %w", name, ErrInvalidSource)
-	case info.Size() == 0:
-		err = fmt.Errorf("%s is empty: %w", name, ErrInvalidSource)
-	case info.Size() > maxSize:
-		err = fmt.Errorf("%s is %d bytes, above the limit of %d (TELEGRAM_MAX_FILE_SIZE): %w", name, info.Size(), maxSize,
-			ErrInvalidSource)
-	}
-
-	if err != nil {
-		_ = file.Close()
-
-		return nil, err
-	}
-
-	return file, nil
-}
-
-func writeFile(dir, name, content string) error {
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), fileMode); err != nil {
-		return fmt.Errorf("failed to write %s: %w", name, err)
 	}
 
 	return nil

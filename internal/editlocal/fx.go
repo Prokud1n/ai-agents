@@ -53,6 +53,7 @@ type runnerParams struct {
 	Meter    *UsageMeter
 	Telegram *config.Telegram
 	Tasks    *config.Tasks
+	Editor   *config.Editor
 	Log      *slog.Logger
 }
 
@@ -61,7 +62,8 @@ func newRunner(p runnerParams) *Runner {
 		Executor: p.Executor, Board: p.Board, Store: p.Store, Sequence: p.Sequence, Meter: p.Meter,
 		Settings: Settings{
 			MaxFileSize: p.Telegram.MaxFileSize, MaxAttempts: p.Tasks.MaxAttempts,
-			RetryBaseDelay: p.Tasks.RetryBaseDelay, RetryMaxDelay: p.Tasks.RetryMaxDelay,
+			RetryBaseDelay: p.Tasks.RetryBaseDelay, RetryMaxDelay: p.Tasks.RetryMaxDelay, RunTimeout: p.Tasks.Timeout,
+			LockStaleAfter: p.Editor.JobTimeout,
 		},
 		Log: p.Log, Progress: os.Stderr,
 	})

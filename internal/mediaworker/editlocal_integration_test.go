@@ -24,6 +24,7 @@ import (
 
 const (
 	localRevision  = "убери «привет» в начале"
+	localCaption   = "сделай без «привет» в начале"
 	localKeyPrefix = "incoming"
 	localStream    = "editor:jobs"
 )
@@ -144,4 +145,40 @@ func fileDuration(t *testing.T, path string) float64 {
 	require.NoError(t, err)
 
 	return duration
+}
+
+// TestIntegrationEditLocalCaption: with a caption the first version goes planned → the model → render; the timings
+// count the time of the plan and of the render apart, and the files are in <out>/v1.
+func TestIntegrationEditLocalCaption(t *testing.T) {
+	t.Parallel()
+
+	env := startLocalEdit(t)
+
+	clip := filepath.Join(t.TempDir(), "source.mkv")
+	makeSpeechClip(t, clip, verticalSize, 30, false)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*editWait)
+	defer cancel()
+
+	out := t.TempDir()
+
+	report, err := env.runner.First(ctx, &editlocal.FirstData{Path: clip, Caption: localCaption, OutDir: out})
+	require.NoError(t, err)
+	assert.True(t, report.Done)
+	assert.Equal(t, int32(1), env.transcriber.calls.Load(), "the render reads the stored transcript")
+
+	requests := env.decider.Requests()
+	require.Len(t, requests, 1)
+	assert.Equal(t, localCaption, requests[0].Caption)
+
+	assert.Positive(t, report.Timings.Plan, "the auto job: queue, transcription and plan")
+	assert.Positive(t, report.Timings.Render, "the render job after the decision")
+
+	for _, name := range editlocal.VersionFiles {
+		assert.FileExists(t, filepath.Join(out, editlocal.VersionDir(1), name))
+	}
+
+	description, err := os.ReadFile(filepath.Join(out, editlocal.VersionDir(1), editlocal.DescriptionFile))
+	require.NoError(t, err)
+	assert.Contains(t, string(description), "Вырезал фрагмент «"+cutHello+"».")
 }

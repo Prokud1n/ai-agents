@@ -3,13 +3,16 @@
 # приложения через docker compose, в сети запущенного стека (make up): тот же путь монтажа, что у бота (модель,
 # решения, правки, media-worker), но без шлюза Telegram и без очереди задач — в группу ничего не уходит.
 #
-#   make edit FILE=/путь/к/видео.mov [CAPTION="подпись"] [OUT=./edits/<имя>]   # версия 1
+#   make edit FILE="$HOME/видео.mov" [CAPTION="подпись"] [OUT=./edits/<имя>]   # версия 1
 #   make edit OUT=./edits/<имя> REVISION="сделай 40 секунд"                    # правка последней версии
+#   make edit OUT=./edits/<имя>                                                # докачать недокачанную версию
 #
-# Переменные приходят из окружения (make передаёт переменные командной строки). Видео монтируется в контейнер
+# Переменные приходят из окружения (Makefile экспортирует их без раскрытия `$`). Видео монтируется в контейнер
 # только для чтения (один файл), OUT — для записи; контейнер работает с uid:gid пользователя (если это не root),
-# поэтому файлы в OUT принадлежат ему. OUT по умолчанию — ./edits/<имя файла без расширения> в корне проекта;
-# явно можно указать любую отдельную папку, но не /, не домашнюю и не корень проекта.
+# поэтому файлы в OUT принадлежат ему. `~` в начале FILE и OUT раскрывается в $HOME (zsh на macOS сам этого не делает
+# в `make FILE=~/…`). OUT по умолчанию — ./edits/<имя файла без расширения>. Внутри проекта OUT — только в ./edits/,
+# вне проекта — любая отдельная папка, кроме / и папок, в которых лежат проект или домашняя папка.
+# Ctrl+C останавливает монтаж: задание снимается с очереди воркера.
 #
 #   scripts/edit.sh check-out <путь>   # только проверяет OUT и печатает абсолютный путь (проверки в CI)
 set -euo pipefail
@@ -20,14 +23,18 @@ CONTAINER_IN=/in
 
 CALLER_DIR=$PWD
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-ROOT=$PWD
+ROOT=$(pwd -P)
+
+# shellcheck source=scripts/image-age.sh
+. "$ROOT/scripts/image-age.sh"
 
 usage() {
 	cat >&2 <<'EOF'
 usage:
-  make edit FILE=/путь/к/видео.mov [CAPTION="подпись"] [OUT=./edits/<имя>]   # новый монтаж: версия 1 в OUT/v1
+  make edit FILE="$HOME/видео.mov" [CAPTION="подпись"] [OUT=./edits/<имя>]   # новый монтаж: версия 1 в OUT/v1
   make edit OUT=./edits/<имя> REVISION="сделай 40 секунд"                    # правка последней версии в OUT
-Нужен запущенный стек (make up) и ANTHROPIC_API_KEY, OPENAI_API_KEY в .env.
+  make edit OUT=./edits/<имя>                                                # докачать версию, которую не скачал прерванный запуск
+Нужен запущенный стек (make up) и ANTHROPIC_API_KEY, OPENAI_API_KEY в .env. Ctrl+C останавливает монтаж.
 EOF
 	exit 2
 }
@@ -51,12 +58,36 @@ normalize() {
 	printf '%s' "${out:-/}"
 }
 
+# expand_home <путь>: `~` и `~/…` → $HOME.
+expand_home() {
+	case $1 in
+	"~") printf '%s' "$HOME" ;;
+	"~/"*) printf '%s/%s' "$HOME" "${1#"~/"}" ;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+
 absolute() {
-	if [[ $1 == /* ]]; then
-		normalize "$1"
+	local path
+	path=$(expand_home "$1")
+	if [[ $path == /* ]]; then
+		normalize "$path"
 	else
-		normalize "$CALLER_DIR/$1"
+		normalize "$CALLER_DIR/$path"
 	fi
+}
+
+# physical <абсолютный путь>: путь без символических ссылок; несуществующий хвост дописывается к реальному пути
+# ближайшей существующей папки (как realpath -m, которого нет в macOS).
+physical() {
+	local path=$1 tail=""
+	while [[ ! -d $path ]]; do
+		tail="/${path##*/}$tail"
+		path=${path%/*}
+		path=${path:-/}
+	done
+	path=$(cd -P "$path" && pwd -P)
+	normalize "$path$tail"
 }
 
 # check_path <имя> <путь>: путь можно передать в docker -v (без перевода строки и двоеточия).
@@ -65,23 +96,35 @@ check_path() {
 	[[ $2 != *:* ]] || die "$1: в пути есть двоеточие, docker такой путь не смонтирует — переименуйте файл или папку"
 }
 
-# out_dir <OUT>: абсолютный путь папки результатов; слишком широкие папки (/, домашняя, корень проекта, .git) — ошибка.
+# is_ancestor <a> <b>: a — сама b или папка, в которой лежит b.
+is_ancestor() {
+	[[ $1 == "$2" || $1 == / || $2 == "$1"/* ]]
+}
+
+# out_dir <OUT>: реальный путь папки результатов. Нельзя: / и папки, в которых лежат проект или домашняя папка;
+# внутри проекта — всё, кроме подпапок ./edits/.
 out_dir() {
-	local out
+	local out home
 	check_path OUT "$1"
-	out=$(absolute "$1")
-	case $out in
-	/ | "$(normalize "${HOME:-/}")" | "$ROOT" | "$ROOT/.git" | "$ROOT/.git/"*)
-		die "OUT=$1 — слишком широкая папка: укажите отдельную, например OUT=./edits/<имя>"
-		;;
-	esac
+	out=$(physical "$(absolute "$1")")
+	home=$(physical "$(normalize "${HOME:-/}")")
+	if is_ancestor "$out" "$ROOT" || is_ancestor "$out" "$home"; then
+		die "OUT=$1 — слишком широкая папка (в ней проект или домашняя папка): укажите отдельную, например OUT=./edits/<имя>"
+	fi
+	if [[ $out == "$ROOT"/* && $out != "$ROOT"/edits/* ]]; then
+		die "OUT=$1 — внутри проекта результаты кладутся только в ./edits/<имя> (папки с кодом не трогаем)"
+	fi
 	[[ ! -e $out || -d $out ]] || die "OUT=$1 — не папка"
 	printf '%s' "$out"
 }
 
 check_stack() {
-	local service
-	docker image inspect "$APP_IMAGE" >/dev/null 2>&1 || die "образ ${APP_IMAGE} не собран: make up"
+	local service created
+	created=$(docker image inspect --format '{{.Created}}' "$APP_IMAGE" 2>/dev/null) ||
+		die "образ ${APP_IMAGE} не собран: make up"
+	if image_older_than_code "$created" cmd internal go.mod go.sum Dockerfile agents skills; then
+		die "образ ${APP_IMAGE} старше кода (cmd, internal, agents, go.mod, Dockerfile менялись после сборки): выполните make up — он пересоберёт app и media-worker"
+	fi
 	for service in postgres redis s3 media-worker; do
 		[[ -n $(docker compose ps -q --status running "$service" 2>/dev/null) ]] ||
 			die "стек не поднят ($service не запущен): make up"
@@ -100,10 +143,10 @@ OUT=${OUT-}
 CAPTION=${CAPTION-}
 REVISION=${REVISION-}
 
-[[ -n $FILE || -n $REVISION ]] || usage
+[[ -n $FILE || -n $REVISION || -n $OUT ]] || usage
 [[ -z $FILE || -z $REVISION ]] ||
 	die "FILE и REVISION вместе нельзя: FILE — новый монтаж, REVISION — правка уже сделанного в OUT"
-[[ -z $REVISION || -z $CAPTION ]] || die "CAPTION — подпись нового исходника; для правки нужен только REVISION"
+[[ -n $FILE || -z $CAPTION ]] || die "CAPTION — подпись нового исходника (с FILE); для правки нужен только REVISION"
 
 args=(run --rm --no-deps -T --entrypoint /app/edit-local)
 cli=(-out "$CONTAINER_OUT")
@@ -116,20 +159,20 @@ if [[ -n $FILE ]]; then
 	name=$(basename "$file")
 	if [[ -z $OUT ]]; then
 		stem=${name%.*}
-		OUT="./edits/${stem:-video}"
+		OUT="$ROOT/edits/${stem:-video}"
 	fi
 	args+=(-v "$file:$CONTAINER_IN/$name:ro")
 	cli+=(-in "$CONTAINER_IN/$name")
 	if [[ -n $CAPTION ]]; then
 		cli+=(-caption "$CAPTION")
 	fi
-else
+elif [[ -n $REVISION ]]; then
 	[[ -n $OUT ]] || die "для правки укажите OUT — папку прошлого монтажа, например OUT=./edits/<имя>"
 	cli+=(-revision "$REVISION")
 fi
 
 out=$(out_dir "$OUT")
-if [[ -n $REVISION ]]; then
+if [[ -z $FILE ]]; then
 	[[ -f $out/state.json ]] || die "в $OUT нет state.json: сначала make edit FILE=<видео> OUT=$OUT"
 fi
 

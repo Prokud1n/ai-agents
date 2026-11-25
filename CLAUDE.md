@@ -272,11 +272,14 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   ролике) с диапазонами индексов слов.
   Проверка — `mediaworker.TestIntegrationSelectionForLongTalk`.
 - `make edit` (T3.18, `internal/editlocal`, `scripts/edit.sh`): синтетическая задача (ID = `editlocal.TaskIDBase`
-  10^18 + `INCR edit-local:seq`, исходник — чат `editlocal.LocalChatID` 1), `editor.Executor` в цикле как воркеры
-  задач (`DeferredError` — ожидание ≤ 5 с или канал `done`, остальное кроме `PermanentError` — ретраи с бэкоффом
-  `TASKS_*`, `LastAttempt`), файлы версии из S3 → `OUT/v<N>/`, `OUT/state.json` — для правки (`Revision`, версия N+1).
+  10^18 + `INCR edit-local:seq`, исходник — чат `editlocal.LocalChatID` 1, имя `local-<8 hex>`; занятый в S3 ключ не
+  перезаписывается — следующий ID), `editor.Executor` в цикле как воркеры задач (`DeferredError` — ожидание ≤ 5 с или
+  канал `done`, остальное кроме `PermanentError` — ретраи с бэкоффом `TASKS_*`, `LastAttempt`, прогон ≤ `TASKS_TIMEOUT`;
+  отмена контекста — `Board.Forget` задания, воркер его отменяет), файлы версии из S3 → `OUT/v<N>/`, `OUT/state.json`
+  (`format` 1, `pending` — сделанная, но не скачанная версия; без FILE/REVISION — докачка) и `OUT/.lock`.
   Расход модели — `editlocal.UsageMeter` поверх `agents.Runtime` (decider собирается в модуле, не из `editplan.Module`).
-  Проверка — `mediaworker.TestIntegrationEditLocalRevision`.
+  Makefile экспортирует `FILE`/`CAPTION`/`OUT`/`REVISION` через `$(value …)` (без раскрытия `$`); «образ старше кода» —
+  общий `scripts/image-age.sh` (и `kb.sh`). Проверка — `mediaworker.TestIntegrationEditLocalRevision`/`…Caption`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

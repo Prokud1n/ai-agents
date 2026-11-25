@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ const (
 	inFlag       = "-in"
 	outFlag      = "-out"
 	revisionFlag = "-revision"
+	captionFlag  = "-caption"
 	testClip     = "/in/clip.mov"
 	testOut      = "/out"
 )
@@ -37,7 +39,7 @@ func TestParseFlags(t *testing.T) {
 		},
 		{
 			name:     "new edit with a caption",
-			args:     []string{inFlag, testClip, "-caption", "-5 кг за месяц", outFlag, testOut},
+			args:     []string{inFlag, testClip, captionFlag, "-5 кг за месяц", outFlag, testOut},
 			expected: options{in: testClip, caption: "-5 кг за месяц", out: testOut},
 		},
 		{
@@ -46,10 +48,11 @@ func TestParseFlags(t *testing.T) {
 			expected: options{out: testOut, revision: "сделай 40 секунд"},
 		},
 		{name: "no out", args: []string{inFlag, testClip}, expectErr: true},
-		{name: "nothing to do", args: []string{outFlag, testOut}, expectErr: true},
+		{name: "download what is left", args: []string{outFlag, testOut}, expected: options{out: testOut}},
+		{name: "caption without a source", args: []string{outFlag, testOut, captionFlag, "x"}, expectErr: true},
 		{name: "blank revision", args: []string{outFlag, testOut, revisionFlag, "  "}, expectErr: true},
 		{name: "both", args: []string{inFlag, testClip, outFlag, testOut, revisionFlag, "короче"}, expectErr: true},
-		{name: "caption of a revision", args: []string{outFlag, testOut, revisionFlag, "короче", "-caption", "x"}, expectErr: true},
+		{name: "caption of a revision", args: []string{outFlag, testOut, revisionFlag, "короче", captionFlag, "x"}, expectErr: true},
 		{name: "extra argument", args: []string{inFlag, testClip, outFlag, testOut, "more"}, expectErr: true},
 		{name: "unknown flag", args: []string{"-file", testClip}, expectErr: true},
 	}
@@ -96,10 +99,12 @@ func TestPrintFailure(t *testing.T) {
 			name: "refused revision",
 			err: errors.Join(errors.New("failed to make the revision"),
 				&tasks.PermanentError{Message: "Не понял, что именно поменять.", Err: errors.New("unclear")}),
-			expected: []string{"Тренер получил бы: Не понял, что именно поменять.", "причина:"},
+			expected: []string{"Тренер получил бы: Не понял, что именно поменять.", "причина: unclear\n"},
 		},
 		{name: "no worker", err: editlocal.ErrWorkerNotRunning, expected: []string{"media-worker не запущен: make up"}},
 		{name: "no state", err: editlocal.ErrNoState, expected: []string{"в OUT нет state.json"}},
+		{name: "stale lock", err: editlocal.ErrStaleLock, expected: []string{"удалите OUT/.lock"}},
+		{name: "source gone", err: editlocal.ErrSourceMissing, expected: []string{"исходник не найден в S3"}},
 	}
 
 	for _, tt := range tests {
@@ -131,4 +136,14 @@ func TestPrintReport(t *testing.T) {
 	assert.Contains(t, out.String(), "Задача: 1000000000000000001")
 	assert.Contains(t, out.String(), "вызовов API 1")
 	assert.Contains(t, out.String(), "Новая версия рилс")
+}
+
+func TestPrintFailureOnce(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+
+	printFailure(&out, &tasks.PermanentError{Message: "Текст тренеру.", Err: errors.New("cause")})
+
+	assert.Equal(t, 1, strings.Count(out.String(), "Текст тренеру."))
 }

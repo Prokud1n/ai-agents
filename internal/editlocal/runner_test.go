@@ -54,6 +54,18 @@ func (e *fakeExecutor) Execute(_ context.Context, data *tasks.ExecuteData) (task
 
 type fakeBoard struct {
 	alive bool
+
+	mu        sync.Mutex
+	forgotten []string
+}
+
+func (b *fakeBoard) Forget(_ context.Context, id string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.forgotten = append(b.forgotten, id)
+
+	return nil
 }
 
 func (*fakeBoard) Job(context.Context, string) (editjob.Job, bool, error) {
@@ -68,19 +80,57 @@ func (*fakeBoard) ListenDone(ctx context.Context, _ func(context.Context, int64)
 	return nil
 }
 
-// fakeStore keeps the saved source keys and gives every result file a content of its key.
+// fakeStore keeps the saved source keys and gives every result file a content of its key. Objects are the saved
+// sources and the keys in taken; downloads fail while failDownload is set.
 type fakeStore struct {
-	mu    sync.Mutex
-	saved []media.File
+	mu           sync.Mutex
+	saved        []media.File
+	keys         map[string]bool
+	failDownload bool
+	// takeAll: every key of this task is taken (an old source after a reset of the counter).
+	takeAll int64
+}
+
+func (*fakeStore) Key(f *media.File) (string, error) {
+	return media.Key(testKeyPrefix, f)
 }
 
 func (s *fakeStore) Save(_ context.Context, f *media.File, _ io.ReadSeeker) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.saved = append(s.saved, *f)
+	key, err := media.Key(testKeyPrefix, f)
+	if err != nil {
+		return "", err
+	}
 
-	return media.Key("incoming", f)
+	s.saved = append(s.saved, *f)
+	s.keys[key] = true
+
+	return key, nil
+}
+
+func (s *fakeStore) Read(_ context.Context, key string, _ int64) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	info, err := media.ParseKey(key)
+	if err != nil {
+		return nil, err
+	}
+
+	if !s.keys[key] && info.MessageID != s.takeAll {
+		return nil, media.ErrFileNotFound
+	}
+
+	return []byte(testContent), nil
+}
+
+func (s *fakeStore) setFailDownload(fail bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.failDownload = fail
 }
 
 func (*fakeStore) ResultKey(sourceKey, name, ext string) (string, error) {
@@ -92,7 +142,15 @@ func (*fakeStore) ResultKey(sourceKey, name, ext string) (string, error) {
 	return media.ResultKey("edits", info, name, ext)
 }
 
-func (*fakeStore) Download(_ context.Context, key, dir string, _ int64) (*media.LocalFile, error) {
+func (s *fakeStore) Download(_ context.Context, key, dir string, _ int64) (*media.LocalFile, error) {
+	s.mu.Lock()
+	fail := s.failDownload
+	s.mu.Unlock()
+
+	if fail {
+		return nil, errors.New("network")
+	}
+
 	file, err := os.CreateTemp(dir, media.TempFilePrefix+"*")
 	if err != nil {
 		return nil, err
@@ -105,13 +163,26 @@ func (*fakeStore) Download(_ context.Context, key, dir string, _ int64) (*media.
 	return &media.LocalFile{Path: file.Name(), Size: int64(len(key))}, file.Close()
 }
 
-type fakeSequence struct{}
+// fakeSequence gives testTaskID, then the next ones.
+type fakeSequence struct {
+	mu   sync.Mutex
+	next int64
+}
 
-func (fakeSequence) NextTaskID(context.Context) (int64, error) { return testTaskID, nil }
+func (s *fakeSequence) NextTaskID(context.Context) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := testTaskID + s.next
+	s.next++
+
+	return id, nil
+}
 
 type runnerEnv struct {
 	runner   *Runner
 	executor *fakeExecutor
+	board    *fakeBoard
 	store    *fakeStore
 	out      string
 	source   string
@@ -120,14 +191,17 @@ type runnerEnv struct {
 func newRunnerEnv(t *testing.T, alive bool, steps ...step) *runnerEnv {
 	t.Helper()
 
-	env := &runnerEnv{executor: &fakeExecutor{steps: steps}, store: &fakeStore{}, out: t.TempDir()}
+	env := &runnerEnv{
+		executor: &fakeExecutor{steps: steps}, board: &fakeBoard{alive: alive}, store: &fakeStore{keys: map[string]bool{}},
+		out: t.TempDir(),
+	}
 	env.source = filepath.Join(t.TempDir(), "Clip.MOV")
 	require.NoError(t, os.WriteFile(env.source, []byte(testContent), 0o600))
 
 	env.runner = NewRunner(&Params{
-		Executor: env.executor, Board: &fakeBoard{alive: alive}, Store: env.store, Sequence: fakeSequence{},
+		Executor: env.executor, Board: env.board, Store: env.store, Sequence: &fakeSequence{},
 		Settings: Settings{MaxFileSize: 1 << 20, MaxAttempts: 3, RetryBaseDelay: time.Millisecond,
-			RetryMaxDelay: time.Millisecond, PollInterval: time.Millisecond},
+			RetryMaxDelay: time.Millisecond, PollInterval: time.Millisecond, LockStaleAfter: time.Hour},
 		Log: slog.New(slog.DiscardHandler),
 	})
 
@@ -155,8 +229,13 @@ func TestRunnerFirstAndRevise(t *testing.T) {
 	assert.Equal(t, testTaskID, first.TaskID)
 
 	require.Len(t, env.store.saved, 1)
-	assert.Equal(t, media.File{ChatID: LocalChatID, MessageID: testTaskID, FileUniqueID: "local", FileName: "Clip.MOV"},
-		env.store.saved[0])
+	saved := env.store.saved[0]
+	assert.Equal(t, LocalChatID, saved.ChatID)
+	assert.Equal(t, testTaskID, saved.MessageID)
+	assert.Regexp(t, `^local-[0-9a-f]{8}$`, saved.FileUniqueID)
+	assert.Equal(t, "Clip.MOV", saved.FileName)
+
+	sourceKey := "incoming/1/1000000000000000007/" + saved.FileUniqueID + ".mov"
 
 	for _, name := range VersionFiles {
 		assert.FileExists(t, filepath.Join(env.out, v1, name))
@@ -164,7 +243,7 @@ func TestRunnerFirstAndRevise(t *testing.T) {
 
 	reel, err := os.ReadFile(filepath.Join(env.out, v1, ReelFile))
 	require.NoError(t, err)
-	assert.Equal(t, "edits/1/1000000000000000007/local-v1-reel.mp4", string(reel))
+	assert.Equal(t, "edits/1/1000000000000000007/"+saved.FileUniqueID+"-v1-reel.mp4", string(reel))
 
 	description, err := os.ReadFile(filepath.Join(env.out, v1, DescriptionFile))
 	require.NoError(t, err)
@@ -180,7 +259,7 @@ func TestRunnerFirstAndRevise(t *testing.T) {
 	assert.Equal(t, editor.AgentName, runs[0].Agent)
 	assert.Equal(t, "reels-edit", runs[0].Kind)
 	assert.Equal(t, testCaption, runs[0].Input)
-	assert.Equal(t, []string{"incoming/1/1000000000000000007/local.mov"}, runs[0].Media)
+	assert.Equal(t, []string{sourceKey}, runs[0].Media)
 	assert.Equal(t, 1, runs[2].Version)
 	assert.Empty(t, runs[2].Revision)
 	assert.Equal(t, 2, runs[4].Version)
@@ -190,7 +269,10 @@ func TestRunnerFirstAndRevise(t *testing.T) {
 	state, err := LoadState(env.out)
 	require.NoError(t, err)
 	assert.Equal(t, 2, state.Version)
+	assert.Zero(t, state.Pending)
+	assert.Equal(t, sourceKey, state.SourceKey)
 	assert.Equal(t, []Revision{{Version: 2, Text: testRevision}}, state.Revisions)
+	assert.NoFileExists(t, filepath.Join(env.out, LockFile), "the lock is released")
 }
 
 func TestRunnerRefusedRevisionKeepsVersion(t *testing.T) {
@@ -294,15 +376,151 @@ func TestRunnerChecksBeforeUpload(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte(tt.content), 0o600))
 
 			if tt.existing {
-				require.NoError(t, SaveState(env.out, &State{TaskID: testTaskID, SourceKey: testSourceKey, Version: 1}))
+				require.NoError(t, SaveState(env.out, &State{
+					Format: StateFormat, TaskID: testTaskID, SourceKey: testSourceKey, Version: 1,
+				}))
 			}
 
 			_, err := env.runner.First(t.Context(), &FirstData{Path: path, OutDir: env.out})
 			require.ErrorIs(t, err, tt.expected)
 			assert.Empty(t, env.store.saved, "nothing is uploaded")
 			assert.Empty(t, env.executor.runs)
+			assert.NoFileExists(t, filepath.Join(env.out, LockFile), "the lock is released")
 		})
 	}
+}
+
+// TestRunnerInterruptForgetsJob: Ctrl+C (the context cancelled) while the worker edits takes the job of the version
+// off the board, so the worker cancels it; no state is written.
+func TestRunnerInterruptForgetsJob(t *testing.T) {
+	t.Parallel()
+
+	steps := make([]step, 0, 1000)
+	for range cap(steps) {
+		steps = append(steps, deferred())
+	}
+
+	env := newRunnerEnv(t, true, steps...)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	go func() {
+		for {
+			env.executor.mu.Lock()
+			runs := len(env.executor.runs)
+			env.executor.mu.Unlock()
+
+			if runs >= 3 {
+				cancel()
+
+				return
+			}
+
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	report, err := env.runner.First(ctx, &FirstData{Path: env.source, OutDir: env.out})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, report.Done)
+
+	env.board.mu.Lock()
+	defer env.board.mu.Unlock()
+
+	assert.Equal(t, []string{"task-1000000000000000007-v1"}, env.board.forgotten)
+	assert.NoFileExists(t, filepath.Join(env.out, StateFile))
+	assert.NoFileExists(t, filepath.Join(env.out, LockFile))
+}
+
+// TestRunnerResumesDownload: a version made but not downloaded stays pending in state.json; a revision waits for it,
+// and a run with the output directory alone downloads it without running the edit again.
+func TestRunnerResumesDownload(t *testing.T) {
+	t.Parallel()
+
+	env := newRunnerEnv(t, true, done("Черновик 1"))
+	env.store.setFailDownload(true)
+
+	_, err := env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+	require.Error(t, err)
+
+	state, err := LoadState(env.out)
+	require.NoError(t, err)
+	assert.Equal(t, 1, state.Pending)
+	assert.FileExists(t, filepath.Join(env.out, VersionDir(1), DescriptionFile), "the description is written first")
+
+	_, err = env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: testRevision})
+	require.ErrorIs(t, err, ErrPendingDownload)
+
+	env.store.setFailDownload(false)
+
+	report, err := env.runner.Resume(t.Context(), env.out)
+	require.NoError(t, err)
+	assert.True(t, report.Done)
+	assert.FileExists(t, filepath.Join(env.out, VersionDir(1), ReelFile))
+	assert.Len(t, env.executor.runs, 1, "the edit is not run again")
+
+	state, err = LoadState(env.out)
+	require.NoError(t, err)
+	assert.Zero(t, state.Pending)
+
+	_, err = env.runner.Resume(t.Context(), env.out)
+	require.ErrorIs(t, err, ErrNothingPending)
+}
+
+// TestRunnerSkipsTakenKey: after a reset of the Redis counter the task ID of an old edit comes again; its source in S3
+// is not overwritten, the next ID is taken.
+func TestRunnerSkipsTakenKey(t *testing.T) {
+	t.Parallel()
+
+	env := newRunnerEnv(t, true, done("Черновик 1"))
+	env.runner.sequence = &takenSequence{store: env.store}
+
+	report, err := env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+	require.NoError(t, err)
+	assert.Equal(t, testTaskID+1, report.TaskID)
+}
+
+// takenSequence gives testTaskID first and marks every key of it taken, as an old source would be.
+type takenSequence struct {
+	store *fakeStore
+	calls int
+}
+
+func (s *takenSequence) NextTaskID(context.Context) (int64, error) {
+	s.calls++
+	if s.calls == 1 {
+		s.store.mu.Lock()
+		s.store.takeAll = testTaskID
+		s.store.mu.Unlock()
+	}
+
+	return testTaskID + int64(s.calls) - 1, nil
+}
+
+func TestRunnerReviseNeedsSource(t *testing.T) {
+	t.Parallel()
+
+	env := newRunnerEnv(t, true)
+	require.NoError(t, SaveState(env.out, &State{
+		Format: StateFormat, TaskID: testTaskID, SourceKey: testSourceKey, Version: 1,
+	}))
+
+	_, err := env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: testRevision})
+	require.ErrorIs(t, err, ErrSourceMissing)
+	assert.Empty(t, env.executor.runs)
+}
+
+func TestRunnerLockedOut(t *testing.T) {
+	t.Parallel()
+
+	env := newRunnerEnv(t, true)
+
+	release, err := acquireLock(env.out, time.Hour, time.Now())
+	require.NoError(t, err)
+
+	defer release()
+
+	_, err = env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: testRevision})
+	require.ErrorIs(t, err, ErrOutLocked)
 }
 
 func TestRunnerReviseNeedsState(t *testing.T) {
@@ -310,7 +528,7 @@ func TestRunnerReviseNeedsState(t *testing.T) {
 
 	env := newRunnerEnv(t, true)
 
-	_, err := env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: "короче"})
+	_, err := env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: testRevision})
 	require.ErrorIs(t, err, ErrNoState)
 
 	_, err = env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: "  "})

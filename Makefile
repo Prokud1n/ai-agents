@@ -138,10 +138,19 @@ agent-run:
 
 # The editor (Монтажёр) without Telegram on a local video: the app's edit (the model, its decisions and revisions) with
 # the running media worker, nothing sent to the group, no task queued (README, «Проверка Монтажёра без Telegram»).
-# Needs `make up` and ANTHROPIC_API_KEY, OPENAI_API_KEY in .env. FILE, CAPTION, OUT and REVISION reach scripts/edit.sh
-# through the environment (make exports command line variables), so quotes in the texts are kept.
-#   make edit FILE=/path/to/video.mov [CAPTION="подпись"] [OUT=./edits/<name>]   version 1 into OUT/v1
-#   make edit OUT=./edits/<name> REVISION="сделай 40 секунд"                       a revision of the last version
+# Needs `make up` and ANTHROPIC_API_KEY, OPENAI_API_KEY in .env. Ctrl+C stops the edit.
+#   make edit FILE="$HOME/video.mov" [CAPTION="подпись"] [OUT=./edits/<name>]   version 1 into OUT/v1
+#   make edit OUT=./edits/<name> REVISION="сделай 40 секунд"                    a revision of the last version
+#   make edit OUT=./edits/<name>                                               download a version left undownloaded
+# FILE, CAPTION, OUT and REVISION reach scripts/edit.sh through the environment as typed: `$(value X)` takes the text
+# without expanding make references (a `$` in a caption stays), and the variables are exported, not put into the recipe,
+# so quotes in them are kept too.
+override FILE := $(value FILE)
+override CAPTION := $(value CAPTION)
+override OUT := $(value OUT)
+override REVISION := $(value REVISION)
+export FILE CAPTION OUT REVISION
+
 edit:
 	@./scripts/edit.sh
 

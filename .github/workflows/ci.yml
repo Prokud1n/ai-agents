@@ -296,7 +296,7 @@ jobs:
           fi
 
       - name: Shellcheck scripts
-        run: shellcheck --version | sed -n 2p && shellcheck -x scripts/m0-check.sh scripts/kb.sh scripts/edit.sh
+        run: shellcheck --version | sed -n 2p && shellcheck -x scripts/m0-check.sh scripts/kb.sh scripts/edit.sh scripts/image-age.sh
 
       # make kb-* turns a host path inside ./kb into a path under /kb in the container; anything outside fails.
       - name: Knowledge base paths (scripts/kb.sh)
@@ -430,7 +430,7 @@ jobs:
           cat usage.txt
           [[ $code -ne 0 ]] && grep -q 'make edit FILE=' usage.txt || fail "make edit without FILE: expected the usage"
 
-          for bad in / . "$PWD" ./.git /tmp/a:b; do
+          for bad in / . "$PWD" ./.git ./internal ./edits "$HOME" /home /tmp/a:b; do
             if scripts/edit.sh check-out "$bad" 2>err.txt; then fail "OUT '$bad' must be rejected"; fi
             cat err.txt
           done
@@ -449,6 +449,7 @@ jobs:
           grep -q 'Тренер получил бы: Монтаж сейчас недоступен' edit.err || fail "expected the trainer's text of a technical failure"
           grep -qE '^Задача: 1[0-9]{18} ' edit.out || fail "expected a synthetic task ID above 10^18"
           [[ ! -e edits/ci/state.json ]] || fail "a failed version must not write state.json"
+          [[ ! -e edits/ci/.lock ]] || fail "the lock of OUT must be released"
           [[ -d edits/ci && "$(stat -c %u edits/ci)" == "$(id -u)" ]] || fail "OUT must belong to the user"
           rm -rf ci-edit edits
 

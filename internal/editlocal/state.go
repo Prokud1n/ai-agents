@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Prokud1n/ai-agents/internal/media"
@@ -14,6 +15,9 @@ import (
 
 // StateFile in the output directory keeps what a revision needs: the task, the source in S3 and the last version.
 const StateFile = "state.json"
+
+// StateFormat is the version of the layout of StateFile; another one is refused.
+const StateFormat = 1
 
 var (
 	// ErrNoState: the output directory has no state of an edit (no version made there yet).
@@ -24,6 +28,7 @@ var (
 
 // State is the local edit in its output directory.
 type State struct {
+	Format int   `json:"format"`
 	TaskID int64 `json:"task_id"`
 	// SourceKey of the source video in S3 (MEDIA_KEY_PREFIX).
 	SourceKey string `json:"source_key"`
@@ -32,7 +37,10 @@ type State struct {
 	// Caption is the trainer's caption of the source (the Input of every version).
 	Caption string `json:"caption,omitempty"`
 	// Version is the last version made; its files are in v<Version>/.
-	Version   int        `json:"version"`
+	Version int `json:"version"`
+	// Pending is a version made (its files are in S3) but not downloaded yet: a run with only the output directory
+	// downloads it; 0 when every version is downloaded.
+	Pending   int        `json:"pending,omitempty"`
 	Revisions []Revision `json:"revisions,omitempty"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -52,6 +60,7 @@ func VersionDir(version int) string {
 func (s *State) Next(revision string) *State {
 	next := *s
 	next.Version = s.Version + 1
+	next.Pending = 0
 
 	revisions := make([]Revision, 0, len(s.Revisions)+1)
 	revisions = append(revisions, s.Revisions...)
@@ -63,14 +72,23 @@ func (s *State) Next(revision string) *State {
 
 func (s *State) validate() error {
 	switch {
+	case s.Format != StateFormat:
+		return fmt.Errorf("format %d, this version reads %d: %w", s.Format, StateFormat, ErrInvalidState)
 	case !IsLocalTaskID(s.TaskID):
 		return fmt.Errorf("task %d is not a local edit: %w", s.TaskID, ErrInvalidState)
-	case s.Version < 1:
-		return fmt.Errorf("version %d: %w", s.Version, ErrInvalidState)
+	case s.Version < 1 || s.Pending < 0 || s.Pending > s.Version:
+		return fmt.Errorf("version %d, pending %d: %w", s.Version, s.Pending, ErrInvalidState)
 	}
 
-	if _, err := media.ParseKey(s.SourceKey); err != nil {
+	// The source is the local source of this very task: a key edited by hand cannot point at another edit or at a
+	// video of the team chat.
+	key, err := media.ParseKey(s.SourceKey)
+	if err != nil {
 		return fmt.Errorf("source key: %w: %w", ErrInvalidState, err)
+	}
+
+	if key.ChatID != LocalChatID || key.MessageID != s.TaskID || !strings.HasPrefix(key.Name, localFilePrefix) {
+		return fmt.Errorf("source key %s is not the local source of task %d: %w", s.SourceKey, s.TaskID, ErrInvalidState)
 	}
 
 	return nil
