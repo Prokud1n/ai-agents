@@ -151,8 +151,10 @@ type Pipeline struct {
 	fit         ffmpeg.FitMode
 	// minSpeechShare: see config.MediaWorker.MinSpeechShare.
 	minSpeechShare float64
-	log            *slog.Logger
-	now            func() time.Time
+	// sound and zoom of the drafts (MEDIA_WORKER_LOUDNESS, _DENOISE, _ZOOM).
+	sound soundSettings
+	log   *slog.Logger
+	now   func() time.Time
 }
 
 // NewPipeline fails on invalid MEDIA_WORKER_* values, so a typo stops the start.
@@ -173,10 +175,15 @@ func NewPipeline(p *PipelineParams) (*Pipeline, error) {
 			ErrInvalidConfig)
 	}
 
+	sound, err := parseSoundSettings(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Pipeline{
 		store: p.Store, prober: p.Prober, keys: p.Keys, transcriber: p.Transcriber, cutter: p.Cutter, burner: p.Burner,
 		workDir: cfg.WorkDir, maxDuration: cfg.MaxSourceDuration.Seconds(), maxSize: cfg.MaxSourceSize, fit: fit,
-		minSpeechShare: cfg.MinSpeechShare, log: p.Log, now: time.Now,
+		minSpeechShare: cfg.MinSpeechShare, sound: sound, log: p.Log, now: time.Now,
 	}, nil
 }
 
@@ -493,15 +500,24 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		speech = &transcription.Result{Language: w.cut.Transcript.Language, Duration: w.cut.Transcript.Duration}
 	}
 
+	cut := p.sound.cut(w.cut, w.transcript.Loudness)
+
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
 		CreateSubtitlesData: subtitles.CreateSubtitlesData{Transcript: speech, Titles: subtitleTitles(w.cut.Titles)},
 		VideoPath:           w.source,
 		OutputPath:          w.reel,
 		Fit:                 p.fit,
-		Cut:                 &ffmpeg.Cut{Segments: w.cut.Segments(), Options: w.cut.Render},
+		Cut:                 cut,
 		ToneMap:             w.hdr,
 	})
 	if err != nil {
+		return err
+	}
+
+	notes := p.sound.notes(cut, w.transcript.Loudness, w.cut.Plan.Mode)
+	p.log.InfoContext(ctx, "mediaworker: sound and framing", "job_id", w.job.ID, "notes", notes)
+
+	if err := appendDecisions(w.cut.Files.Log, notes); err != nil {
 		return err
 	}
 

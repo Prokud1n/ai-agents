@@ -31,6 +31,12 @@ const repoFontsDir = "../../assets/fonts"
 // verticalSize of the synthetic vertical sources.
 const verticalSize = "720x1280"
 
+// testLoudness and testZoom are the defaults of MEDIA_WORKER_LOUDNESS and MEDIA_WORKER_ZOOM.
+const (
+	testLoudness = "-14"
+	testZoom     = 9
+)
+
 // clipDuration of the synthetic source: four tone "words", one of them a filler, with long pauses between.
 const clipDuration = 6
 
@@ -161,8 +167,10 @@ func realPipelineWith(t *testing.T, files store, speech transcriber) *Pipeline {
 
 	p, err := NewPipeline(&PipelineParams{
 		Store: files, Prober: runner, Keys: fakeKeys{}, Transcriber: speech, Cutter: cutter, Burner: burner,
+		// The sound and the zoom as the worker has them by default: the duration and frame checks hold with them.
 		Config: &config.MediaWorker{
 			WorkDir: t.TempDir(), MaxSourceDuration: time.Minute, MaxSourceSize: 1 << 30, Fit: string(ffmpeg.PadFitMode),
+			Loudness: testLoudness, Denoise: true, Zoom: testZoom,
 		},
 		Log: log,
 	})

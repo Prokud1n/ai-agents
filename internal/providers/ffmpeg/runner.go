@@ -46,16 +46,27 @@ func NewRunner(cfg *config.FFmpeg) *Runner {
 
 // ExtractAudio writes the first audio stream of src to dst as mono 16 kHz MP3.
 func (r *Runner) ExtractAudio(ctx context.Context, src, dst string) error {
+	_, err := r.ExtractAudioMeasured(ctx, src, dst)
+
+	return err
+}
+
+// ExtractAudioMeasured is ExtractAudio that also measures the loudness of the source sound (all its channels, before
+// the conversion to mono) on the way: the sound is decoded once for both. The loudness is nil if ffmpeg reported no
+// summary; that is not an error, the audio is extracted.
+func (r *Runner) ExtractAudioMeasured(ctx context.Context, src, dst string) (*Loudness, error) {
 	in, out, err := localFiles(src, dst)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if _, err := r.run(ctx, r.ffmpegPath, extractAudioArgs(in, out), nil); err != nil {
-		return fmt.Errorf("failed to extract audio: %w", err)
+	log := newTailBuffer(measureLogTail)
+
+	if _, err := r.run(ctx, r.ffmpegPath, extractAudioArgs(in, out), log); err != nil {
+		return nil, fmt.Errorf("failed to extract audio: %w", err)
 	}
 
-	return nil
+	return parseLoudness(log.String()), nil
 }
 
 // CutAudio re-encodes the [start, start+duration) fragment of src (in seconds) to dst.

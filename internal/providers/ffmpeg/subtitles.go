@@ -100,6 +100,9 @@ type BurnSubtitlesData struct {
 type Cut struct {
 	Segments []Segment
 	Options  RenderOptions
+	// Zoom, if set, changes the framing at the joints (a talking head); it works on the output frame, after the fit
+	// and the tone mapping, and under the shade and the subtitles, which stay where they are.
+	Zoom *Zoom
 }
 
 // Shade darkens the frame from its top (or bottom) edge: an even Alpha (0..255) over Plateau pixels — where the
@@ -250,6 +253,15 @@ func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 	fit, err := fitFilter(data)
 	if err != nil {
 		return "", err
+	}
+
+	if data.Cut != nil && data.Cut.Zoom != nil {
+		zoom, err := zoomGraph(data.Cut, data.Width, data.Height)
+		if err != nil {
+			return "", err
+		}
+
+		fit += zoom
 	}
 
 	subtitles := "ass=filename=" + data.SubtitlesName + ":fontsdir=" + data.FontsName + "," + colorTagsFilter +

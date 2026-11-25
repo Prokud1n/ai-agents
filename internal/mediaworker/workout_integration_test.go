@@ -91,7 +91,7 @@ func workoutPipeline(t *testing.T, files store, speech transcriber) (*Pipeline, 
 		Store: files, Prober: runner, Keys: fakeKeys{}, Transcriber: speech, Cutter: cutter, Burner: burner,
 		Config: &config.MediaWorker{
 			WorkDir: t.TempDir(), MaxSourceDuration: time.Minute, MaxSourceSize: 1 << 30,
-			Fit: string(ffmpeg.PadFitMode), MinSpeechShare: defaultSpeechShare,
+			Fit: string(ffmpeg.PadFitMode), MinSpeechShare: defaultSpeechShare, Loudness: testLoudness, Denoise: true, Zoom: testZoom,
 		},
 		Log: log,
 	})
