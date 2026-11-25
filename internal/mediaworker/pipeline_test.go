@@ -146,17 +146,20 @@ func TestPipelineToneMapsHDR(t *testing.T) {
 	}
 }
 
-// TestPipelineStopsForDecision: with the trainer's caption or disputed repeats the auto stage stops after the plan:
-// the transcript, the plan and the log are stored for the editor, no reel is rendered.
+// TestPipelineStopsForDecision: with the trainer's caption, disputed repeats or a talking head longer than the reel's
+// target after the cleaning, the auto stage stops after the plan: the transcript, the plan and the log are stored for
+// the editor, no reel is rendered.
 func TestPipelineStopsForDecision(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name   string
 		decide bool
+		target float64
 		change func(f *pipelineFakes)
 	}{
 		{name: "a caption to apply", decide: true},
+		{name: "longer than the target: 2:21 for 1:00", target: 60},
 		{
 			name:   "a disputed repeat",
 			change: func(f *pipelineFakes) { f.cutter.result.Plan.Candidates = make([]roughcut.Candidate, 2) },
@@ -173,7 +176,7 @@ func TestPipelineStopsForDecision(t *testing.T) {
 			}
 
 			job := testJob()
-			job.Decide = tt.decide
+			job.Decide, job.TargetDuration = tt.decide, tt.target
 
 			result, err := fakes.pipeline(t, t.TempDir()).Run(t.Context(), job)
 			require.NoError(t, err)
@@ -185,6 +188,37 @@ func TestPipelineStopsForDecision(t *testing.T) {
 			files, err := editjob.Files(fakes.store, testSourceKey, 1)
 			require.NoError(t, err)
 			assert.Equal(t, []string{files.Plan, files.Decisions, files.Transcript}, fakes.store.order)
+		})
+	}
+}
+
+// TestPipelineTargetDuration: a cleaned talking head within the target and its 10 % margin is rendered at once (no
+// model call), a longer one stops for the editor's selection; without a target nothing is decided by the length.
+func TestPipelineTargetDuration(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		target   float64
+		expected editjob.Status
+	}{
+		{name: "2:21 within 2:30", target: 150, expected: editjob.DoneStatus},
+		{name: "2:21 exactly the target", target: 141, expected: editjob.DoneStatus},
+		{name: "2:21 within the 10 % margin of 2:10", target: 130, expected: editjob.DoneStatus},
+		{name: "2:21 longer than 2:00 with its margin", target: 120, expected: editjob.PlannedStatus},
+		{name: "no target", expected: editjob.DoneStatus},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			job := testJob()
+			job.TargetDuration = tt.target
+
+			result, err := newPipelineFakes(t).pipeline(t, t.TempDir()).Run(t.Context(), job)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result.Status)
 		})
 	}
 }

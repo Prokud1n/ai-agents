@@ -53,8 +53,8 @@ const (
 	// cannotRevisionText and unclearRevisionText: a revision the editor cannot do or did not understand (shown after
 	// «Не получилось применить правку.» above the previous draft).
 	// The note ends with «Можно одобрить эту версию или дать правку ещё раз.», so these texts do not ask for it again.
-	cannotRevisionText = "Такое я пока не умею: могу обрезать, убрать или вернуть фрагмент, выбрать дубль, поправить " +
-		"слово в субтитрах, подписать упражнения и убрать звук."
+	cannotRevisionText = "Такое я пока не умею: могу обрезать, сократить до нужной длины, убрать или вернуть фрагмент, " +
+		"выбрать дубль, поправить слово в субтитрах, подписать упражнения и убрать звук."
 	unclearRevisionText = "Не понял, что именно поменять. Пример правки: „убери первые 3 секунды“ или " +
 		"„оставь второй дубль“."
 	// modelFailedText: the decision failed for a technical reason after all the retries of the task.
@@ -73,9 +73,9 @@ const (
 	artifactsMissingText = "Не нашёл материалы прошлого монтажа этого видео. Пришлите исходник ещё раз — " +
 		"смонтирую заново."
 	// captionCannotNote and captionUnclearNote: the first draft is made without the caption's instruction.
-	captionCannotNote = "Подпись как указание к монтажу не применил: такое я пока не умею. Могу обрезать, убрать или " +
-		"вернуть фрагмент, выбрать дубль, поправить слово в субтитрах, подписать упражнения и убрать звук — ответьте " +
-		"на черновик правкой."
+	captionCannotNote = "Подпись как указание к монтажу не применил: такое я пока не умею. Могу обрезать, сократить до " +
+		"нужной длины, убрать или вернуть фрагмент, выбрать дубль, поправить слово в субтитрах, подписать упражнения и " +
+		"убрать звук — ответьте на черновик правкой."
 	captionUnclearNote = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
 		"правка, ответьте на черновик, например: „убери первые 3 секунды“."
 	// workoutFallbackNote: a source with little speech, the decision failed on our side: the whole video is the draft.
@@ -85,6 +85,13 @@ const (
 	titlesHint = "Подписи упражнений можно добавить правкой с временем, например: „подпиши выпады с 0:15 до 0:45“."
 	// titlesHeader goes before the list of the exercise titles of a workout.
 	titlesHeader = "Подписи упражнений:"
+	// longFailedNote and longUnchosenNote: a talking head longer than a reel was only cleaned, not shortened — the
+	// decision failed on our side, or the editor did not manage to pick the phrases (formatted with the range).
+	longFailedNote = "Ролик длиннее рекомендованных для рилс %s: сократить его не получилось из-за технической " +
+		"ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, " +
+		"например: „сделай %s“."
+	longUnchosenNote = "Ролик длиннее рекомендованных для рилс %s: не смог выбрать, что оставить, поэтому вырезал только " +
+		"паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: „сделай %s“."
 	// shortenedNote ends a description whose lists did not fit into the caption of the video.
 	shortenedNote = "Описание сокращено: не всё поместилось в подпись к видео."
 )
@@ -169,7 +176,7 @@ func Describe(r *editjob.Result, version int, caption string, summary *editjob.S
 			quote = captionQuote(caption, maxWorkoutCaptionRunes)
 		}
 	default:
-		header, body, quote = talkHeader(r), talkBody(r, summary), captionQuote(caption, maxCaptionRunes)
+		header, body, quote = talkHeader(r, summary), talkBody(r, summary), captionQuote(caption, maxCaptionRunes)
 	}
 
 	head := append([]string{header}, notes...)
@@ -213,8 +220,14 @@ func utf16Len(text string) int {
 	return len(utf16.Encode([]rune(text)))
 }
 
-// talkHeader: «Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (…).»
-func talkHeader(r *editjob.Result) string {
+// talkHeader: «Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (…).»; a reel shortened by the selection
+// says so.
+func talkHeader(r *editjob.Result, summary *editjob.Summary) string {
+	if summary != nil && summary.Selected {
+		return fmt.Sprintf("Черновик рилс готов: было %s, стало %s — сократил под рилс.", clock(r.SourceDuration),
+			clock(r.Duration))
+	}
+
 	removed := r.SourceDuration - r.Duration
 	if removed < noCutSeconds {
 		return fmt.Sprintf("Черновик рилс готов: %s, вырезать было почти нечего.", clock(r.Duration))
@@ -301,15 +314,7 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 			summary.Changes = []string{fmt.Sprintf("Спорные повторы оставил в ролике: %d.", candidates)}
 		}
 
-		switch {
-		case workout && outcome.Kind == editplan.FailedOutcome:
-			summary.Note = workoutFallbackNote
-		case strings.TrimSpace(req.Caption) != "":
-			summary.Note = captionNotes[outcome.Kind]
-			if summary.Note == "" {
-				summary.Note = captionUnclearNote
-			}
-		}
+		summary.Note = undecidedNote(req, outcome.Kind, workout)
 
 		if workout && summary.Note != workoutFallbackNote {
 			summary.Changes = append(summary.Changes, titlesHint)
@@ -318,6 +323,7 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 		return summary
 	}
 
+	summary.Selected = outcome.Selected && !workout
 	summary.Changes = append(summary.Changes, outcome.Changes...)
 
 	if candidates > 0 {
@@ -331,6 +337,72 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 	}
 
 	return summary
+}
+
+// undecidedNote says why the first version is the automatic cut: the workout kept whole, the caption not applied, the
+// long talking head only cleaned.
+func undecidedNote(req *editplan.Request, kind editplan.OutcomeKind, workout bool) string {
+	if workout && kind == editplan.FailedOutcome {
+		return workoutFallbackNote
+	}
+
+	notes := make([]string, 0, 2)
+
+	if strings.TrimSpace(req.Caption) != "" {
+		note := captionNotes[kind]
+		if note == "" {
+			note = captionUnclearNote
+		}
+
+		notes = append(notes, note)
+	}
+
+	if req.Selecting() {
+		low, high := req.TargetRange()
+		format := longUnchosenNote
+
+		if kind == editplan.FailedOutcome {
+			format = longFailedNote
+		}
+
+		notes = append(notes, fmt.Sprintf(format, rangeText(low, high), secondsText(high*exampleShare)))
+	}
+
+	return strings.Join(notes, " ")
+}
+
+// exampleShare of the target in the example of a revision («сделай 45 секунд» for 60 s).
+const exampleShare = 0.75
+
+// rangeText: «30–60 с».
+func rangeText(low, high float64) string {
+	return fmt.Sprintf("%.0f–%.0f с", low, high)
+}
+
+// Russian plural forms of «секунда» by the last digits of the number.
+const (
+	pluralTens    = 10
+	pluralHundred = 100
+	teenFrom      = 11
+	teenTo        = 14
+	fewTo         = 4
+)
+
+// secondsText: «45 секунд», «21 секунду», «32 секунды» (whole seconds, the word agreed with the number).
+func secondsText(seconds float64) string {
+	n := int(math.Round(seconds))
+	last, lastTwo := n%pluralTens, n%pluralHundred
+
+	switch {
+	case lastTwo >= teenFrom && lastTwo <= teenTo:
+		return fmt.Sprintf("%d секунд", n)
+	case last == 1:
+		return fmt.Sprintf("%d секунду", n)
+	case last >= 2 && last <= fewTo:
+		return fmt.Sprintf("%d секунды", n)
+	default:
+		return fmt.Sprintf("%d секунд", n)
+	}
 }
 
 // isWorkout: the plan is in the workout mode (the worker planned a source with little speech so).

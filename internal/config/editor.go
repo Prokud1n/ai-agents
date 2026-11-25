@@ -29,6 +29,11 @@ type Editor struct {
 	// ReelsMaxDuration is the longest video Instagram publishes as a reel (3 minutes since January 2025); a longer
 	// draft (a workout is not shortened) gets a note in its description, it is not refused. Read by the app only.
 	ReelsMaxDuration time.Duration `env:"EDITOR_REELS_MAX_DURATION" envDefault:"3m"`
+	// ReelsTargetDuration is the longest talking-head reel the editor aims at: a first version whose cleaned cut is
+	// longer stops after the plan even without a caption or disputed repeats, and the editor's model picks the best
+	// phrases for a reel of half this length up to it (30–60 s by default). The trainer's caption or revision may ask
+	// for another length. 0 turns the selection off. Read by the app; the worker gets it in the job.
+	ReelsTargetDuration time.Duration `env:"EDITOR_REELS_TARGET_DURATION" envDefault:"60s"`
 }
 
 // MediaWorker configures the media worker (cmd/media-worker): it edits videos with ffmpeg in a container of its

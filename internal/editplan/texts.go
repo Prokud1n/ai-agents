@@ -34,10 +34,17 @@ const (
 // fragments cut and brought back, the takes chosen (a revision; the first version counts the repeats itself), the
 // corrected words, the exercise titles (a revision; the first version lists them all) and the sound. No indices, times
 // of the source or technical words: times are those of the timeline the trainer gave (the reel of a revision).
-func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitles) []string {
+//
+// A reel shortened for its length (sel) gets how it starts and ends and what did not make it instead of a line for
+// every fragment cut.
+func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitles, sel *selection) []string {
 	words := req.Transcript.Words
 	lines := make([]string, 0, maxChangeLines)
 	previous := previousEdit(req.Plan)
+
+	if sel.on {
+		lines = append(lines, selectionLines(req, in, sel)...)
+	}
 
 	if mode := nextMode(req, in); req.IsRevision() && mode != previous.Mode.Effective() {
 		lines = append(lines, map[roughcut.Mode]string{
@@ -53,13 +60,7 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 		lines = append(lines, "Обрезал конец: убрал "+secondsText(trimmed.end, "последнюю секунду", "последние")+".")
 	}
 
-	for _, r := range in.Remove {
-		lines = append(lines, "Вырезал фрагмент «"+quote(words, r)+"».")
-	}
-
-	for _, r := range in.Restore {
-		lines = append(lines, "Вернул фрагмент «"+quote(words, r)+"».")
-	}
+	lines = append(lines, fragmentLines(words, in, sel.on)...)
 
 	if req.IsRevision() {
 		lines = append(lines, takeLines(req.Plan, in.Candidates)...)
@@ -87,6 +88,24 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 	if len(lines) > maxChangeLines {
 		rest := len(lines) - maxChangeLines + 1
 		lines = append(lines[:maxChangeLines-1], fmt.Sprintf("И ещё изменений: %d.", rest))
+	}
+
+	return lines
+}
+
+// fragmentLines: «Вырезал фрагмент «…».» for every fragment cut (unless the selection named them), «Вернул фрагмент
+// «…».» for every one brought back.
+func fragmentLines(words []transcription.Word, in *Input, selected bool) []string {
+	lines := make([]string, 0, len(in.Remove)+len(in.Restore))
+
+	if !selected {
+		for _, r := range in.Remove {
+			lines = append(lines, "Вырезал фрагмент «"+quote(words, r)+"».")
+		}
+	}
+
+	for _, r := range in.Restore {
+		lines = append(lines, "Вернул фрагмент «"+quote(words, r)+"».")
 	}
 
 	return lines

@@ -373,9 +373,10 @@ func classifyTranscription(err error) error {
 
 // cut plans the rough cut: an auto job with the default settings (disputed repeats are kept), a render job with the
 // settings and the edit the editor decided on. An auto job with something to decide stops after it: the trainer's
-// caption, disputed repeats, or little speech. A source with little speech (autoPlan) may be a workout: cutting its
-// silence would cut the exercises, so it is planned in the workout mode (nothing cut) and the editor decides; that plan
-// is also what is rendered if the model cannot decide.
+// caption, disputed repeats, little speech, or a talking head longer than the reel's target after the cleaning
+// (roughcut.LongerThanTarget). A source with little speech (autoPlan) may be a workout: cutting its silence would cut
+// the exercises, so it is planned in the workout mode (nothing cut) and the editor decides; that plan is also what is
+// rendered if the model cannot decide.
 func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	auto := w.job.EffectiveStage() == editjob.AutoStage
 
@@ -401,11 +402,15 @@ func (p *Pipeline) cut(ctx context.Context, w *jobWork) error {
 	w.result.Retakes = len(cut.Plan.Takes)
 	w.result.Candidates = len(cut.Plan.Candidates)
 
-	if auto && (w.job.Decide || lowSpeech || len(cut.Plan.Candidates) > 0) {
+	// A talking head longer than the target after the cleaning is shortened by the editor: the best phrases are picked.
+	long := auto && !lowSpeech && roughcut.LongerThanTarget(cut.Plan.Duration, w.job.TargetDuration)
+
+	if auto && (w.job.Decide || lowSpeech || long || len(cut.Plan.Candidates) > 0) {
 		w.planned = true
 
 		p.log.InfoContext(ctx, "mediaworker: plan ready, the editor decides before the render", "job_id", w.job.ID,
-			"candidates", len(cut.Plan.Candidates), "caption", w.job.Decide, "little_speech", lowSpeech)
+			"candidates", len(cut.Plan.Candidates), "caption", w.job.Decide, "little_speech", lowSpeech,
+			"longer_than_target", long, "duration", cut.Plan.Duration, "target_duration", w.job.TargetDuration)
 	}
 
 	return nil
