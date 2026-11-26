@@ -67,8 +67,9 @@ type MediaWorker struct {
 	// MinSpeechShare: an auto job whose talking-head cut would keep less than this share of the source (the speech
 	// with its short pauses) stops for the editor's decision even without a caption or disputed repeats — it may be
 	// a workout, where cutting the silence cuts the exercises — and its plan is the safe workout one (nothing cut).
-	// 0 turns the check off: then only a source without words is decided. Why 0.6 — docs/SETUP.md.
-	MinSpeechShare float64 `env:"MEDIA_WORKER_MIN_SPEECH_SHARE" envDefault:"0.6"`
+	// 0 turns the check off: then only a source without words is decided. Why 0.35 — docs/SETUP.md (measured: talking
+	// heads 0.44–0.58, a workout 0.26, music 0.01).
+	MinSpeechShare float64 `env:"MEDIA_WORKER_MIN_SPEECH_SHARE" envDefault:"0.35"`
 	// Loudness the drafts are brought to: integrated loudness in LUFS (EBU R128; Instagram and other networks play
 	// at about -14), the true peaks at most -1.5 dBTP. "off" (or empty) keeps the level of the source.
 	Loudness string `env:"MEDIA_WORKER_LOUDNESS" envDefault:"-14"`

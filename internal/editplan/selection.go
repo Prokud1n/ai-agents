@@ -1,7 +1,10 @@
 package editplan
 
 import (
+	"cmp"
 	"fmt"
+	"math"
+	"slices"
 	"strings"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
@@ -25,18 +28,22 @@ const (
 
 // selection is the editorial selection of a decision: whether phrases were picked for the length of a reel (and the
 // reel got shorter), the length asked for (0: the recommended range), and the reel built with the decision.
+//
+// cleanup is the cleaning of a first version without a caption (Request.CleanupOnly), cleaned what it removed.
 type selection struct {
 	on       bool
 	target   float64
 	duration float64
 	keep     []roughcut.Interval
+	cleanup  bool
+	cleaned  cleaning
 }
 
 // newSelection is the selection of a decision with the plan it builds: on only when the reel got shorter.
 func newSelection(req *Request, in *Input, mode roughcut.Mode, plan *roughcut.Plan) selection {
 	return selection{
 		on:     isSelected(req, in, mode) && plan.Duration < req.Plan.Duration-minShortenSeconds,
-		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep,
+		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep, cleanup: req.CleanupOnly(),
 	}
 }
 
@@ -86,17 +93,105 @@ func buildSized(req *Request, in *Input, mode roughcut.Mode, edit *roughcut.Edit
 		return plan, nil
 	}
 
+	hint := lengthHint(req, in, &plan, low, high)
+
 	if in.TargetSeconds > 0 {
 		return roughcut.Plan{}, checkFailedf("после решения ролик длится %.1f с, а длина по просьбе тренера — %.0f с "+
-			"(допустимо %.1f–%.1f с): вырежи или верни целые фразы, чтобы попасть в длину", plan.Duration,
-			in.TargetSeconds, low, high)
+			"(допустимо %.1f–%.1f с): %s", plan.Duration, in.TargetSeconds, low, high, hint)
 	}
 
 	from, to := req.TargetRange()
 
 	return roughcut.Plan{}, checkFailedf("после решения ролик длится %.1f с, а рилс должен быть %.0f–%.0f с "+
-		"(допустимо %.1f–%.1f с): оставь лучшие фразы, остальное вырежи целыми фразами через remove_words; если "+
-		"тренер просила другую длину, укажи её в target_seconds", plan.Duration, from, to, low, high)
+		"(допустимо %.1f–%.1f с): %s; если тренер просила другую длину, укажи её в target_seconds", plan.Duration,
+		from, to, low, high, hint)
+}
+
+// maxSizedHints are the phrases named in a length hint.
+const maxSizedHints = 3
+
+// sized is a run of words [from, to] that lasts seconds in the source.
+type sized struct {
+	from, to int
+	seconds  float64
+}
+
+// lengthHint says the model of a reel out of its length how many seconds to cut or to bring back and which phrases
+// are about that long, so the second attempt gets the length: kept phrases of a reel too long, the ranges the model
+// cut of a reel too short.
+func lengthHint(req *Request, in *Input, plan *roughcut.Plan, low, high float64) string {
+	words := req.Transcript.Words
+
+	if plan.Duration > high {
+		least, most := plan.Duration-high, plan.Duration-low
+
+		return fmt.Sprintf("вырежи ещё от %.1f до %.1f с целыми фразами через remove_words%s", least, most,
+			sizedHint("подходят по длине оставленные фразы", words, keptPhrases(req, plan), least, most))
+	}
+
+	least, most := low-plan.Duration, high-plan.Duration
+
+	return fmt.Sprintf("ролик короче нужного: вырежи на %.1f–%.1f с меньше — не вырезай часть фраз из remove_words "+
+		"(в правке — верни их через restore_words)%s", least, most,
+		sizedHint("подходят по длине вырезанные тобой отрезки", words, removedRanges(words, in.Remove), least, most))
+}
+
+// keptPhrases are the phrases of the transcript (as the prompt lists them) left in the reel by the plan.
+func keptPhrases(req *Request, plan *roughcut.Plan) []sized {
+	words := req.Transcript.Words
+	all := phrases(req.Transcript, plan)
+	out := make([]sized, 0, len(all))
+
+	for _, ph := range all {
+		if ph.key.interval >= 0 {
+			out = append(out, sized{from: ph.from, to: ph.to, seconds: words[ph.to].End - words[ph.from].Start})
+		}
+	}
+
+	return out
+}
+
+// removedRanges are the ranges of words cut by the decision with their length.
+func removedRanges(words []transcription.Word, cut []roughcut.WordRange) []sized {
+	out := make([]sized, 0, len(cut))
+	for _, r := range cut {
+		out = append(out, sized{from: r.From, to: r.To, seconds: words[r.To].End - words[r.From].Start})
+	}
+
+	return out
+}
+
+// sizedHint names up to maxSizedHints runs that last least–most seconds or, without such, the closest ones; "" when
+// there is nothing to name.
+func sizedHint(label string, words []transcription.Word, runs []sized, least, most float64) string {
+	if len(runs) == 0 {
+		return ""
+	}
+
+	middle := (least + most) / 2
+	picked := make([]sized, 0, len(runs))
+
+	for _, r := range runs {
+		if r.seconds >= least && r.seconds <= most {
+			picked = append(picked, r)
+		}
+	}
+
+	if len(picked) == 0 {
+		label = "ближе всего по длине"
+		picked = slices.Clone(runs)
+		slices.SortStableFunc(picked, func(a, b sized) int {
+			return cmp.Compare(math.Abs(a.seconds-middle), math.Abs(b.seconds-middle))
+		})
+	}
+
+	names := make([]string, 0, maxSizedHints)
+	for _, r := range picked[:min(len(picked), maxSizedHints)] {
+		names = append(names, fmt.Sprintf("слова %s (%s) «%s»", indexRange(r.from, r.to), durationText(r.seconds),
+			truncate(joinWords(words[r.from:r.to+1]), maxDroppedRunes)))
+	}
+
+	return "; " + label + ": " + strings.Join(names, ", ")
 }
 
 // selectionLines are the sentences for the trainer about a shortened reel: how it starts and ends, and what did not

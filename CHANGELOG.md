@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The editor cleans the first version without a caption (T3.19a): the model removes the failed takes (the same
+  thought said again 5–90 s later: the last full take stays), a phrase said again in a row («ну привет» ×3 → one) and
+  the preparation for the shooting (a countdown, «начинаем», «это последний дубль», talking to the operator) —
+  `remove_words` and the trim only, no length, cuts by time, workout mode, exercise titles or muting
+  (`editplan.Request.CleanupOnly`, which replaces the hook-only first version); a cleaning that keeps less than 40 % of
+  the automatic cut goes back to the model. The prompt lists the hints found by the code: similar kept phrases
+  (stems of the content words), words said again in a row inside a phrase, phrases about the shooting. The draft says
+  «Убрал неудачные дубли и подготовку к съёмке: N фрагментов (M с).» in one line, the decisions log names every range.
+- `declined` in `submit_edit` (T3.19a): requests the editor does not do — music, color, effects and transitions,
+  B-roll, speed, beauty filters, reordering — are marked by kind and the trainer gets a prepared text for each
+  («Музыку добавьте в Instagram при публикации — я её не накладываю.»): with the rest of a caption or a revision, or
+  as the refusal; the model's own words are never shown.
+
 - Screen notes of a talking head (T3.17). The editor's model puts what the trainer lists or names on the screen
   (`screen_notes` of `submit_edit`: a list title «3 вещи», list items «1/ на русском», callouts «6 лет»; at most 12, 40
   characters, from the speech only, no markup, emoji or hashtags; a start by a word or seconds of the source, an
@@ -462,6 +475,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
 
 ### Changed
+
+- `MEDIA_WORKER_MIN_SPEECH_SHARE` defaults to 0.35 instead of 0.6 (T3.19a): the trainer's talking heads keep
+  0.44–0.58 of the source, a workout 0.26, music 0.01 — a usual talking head (0.583) was planned as a workout.
+- The draft names the failed takes in «вырезал … (паузы, оговорки и неудачные дубли)» only when some were cut (the
+  worker's retakes or the editor's cleaning), otherwise «(паузы и оговорки)»; so do the notes of a long talking head.
+- The hook title starts with a small letter like the reference reels: unless its first word is an abbreviation (two
+  capitals first), the first letter is lowered (T3.19a).
+- A reel out of its length tells the model exactly how many seconds to cut or bring back and names phrases of about
+  that length, so the second attempt gets the length (T3.19a).
 
 - The default subtitle style follows the reference reels (T3.17): one word at a time (a number with its unit together,
   every quantity of its own — «3 подхода» | «10 повторений» —, «10 000 шагов» as one, a word shorter than 0.15 s with

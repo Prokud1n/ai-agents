@@ -78,7 +78,9 @@ const (
 		"нужной длины, убрать или вернуть фрагмент, выбрать дубль, поправить слово в субтитрах, подписать упражнения, " +
 		"добавить, поменять или убрать заголовок, добавить или убрать пункты и цифры на экране, убрать звук — ответьте " +
 		"на черновик правкой."
-	captionUnclearNote = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
+	// captionDeclinedNote goes before the texts of the requests the editor does not do (editplan.DeclinedText).
+	captionDeclinedNote = "Подпись как указание к монтажу не применил."
+	captionUnclearNote  = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
 		"правка, ответьте на черновик, например: „убери первые 3 секунды“."
 	// workoutFallbackNote: a source with little speech, the decision failed on our side: the whole video is the draft.
 	workoutFallbackNote = "Смонтировал как тренировку, ничего не вырезая: разобрать подпись и речь не получилось из-за " +
@@ -89,11 +91,15 @@ const (
 	titlesHeader = "Подписи упражнений:"
 	// longFailedNote and longUnchosenNote: a talking head longer than a reel was only cleaned, not shortened — the
 	// decision failed on our side, or the editor did not manage to pick the phrases (formatted with the range).
+	// The middle %s is what the automatic cut removed (cutKinds).
 	longFailedNote = "Ролик длиннее рекомендованных для рилс %s: сократить его не получилось из-за технической " +
-		"ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, " +
-		"например: „сделай %s“."
+		"ошибки, поэтому вырезал только %s. Если нужно короче, ответьте на черновик, например: „сделай %s“."
 	longUnchosenNote = "Ролик длиннее рекомендованных для рилс %s: не смог выбрать, что оставить, поэтому вырезал только " +
-		"паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: „сделай %s“."
+		"%s. Если нужно короче, ответьте на черновик, например: „сделай %s“."
+	// cutWithTakes and cutWithoutTakes are what a talking-head cut removed: the failed takes are named only when they
+	// were cut.
+	cutWithTakes    = "паузы, оговорки и неудачные дубли"
+	cutWithoutTakes = "паузы и оговорки"
 	// noHookHint: the editor proposed no hook title for a first version without a caption (EDITOR_HOOK_TITLE).
 	noHookHint = "Заголовок не поставил: в ролике не нашёл короткой цепляющей мысли. Если нужен — ответьте правкой, " +
 		"например: „добавь заголовок …“."
@@ -238,8 +244,24 @@ func talkHeader(r *editjob.Result, summary *editjob.Summary) string {
 		return fmt.Sprintf("Черновик рилс готов: %s, вырезать было почти нечего.", clock(r.Duration))
 	}
 
-	return fmt.Sprintf("Черновик рилс готов: было %s, стало %s — вырезал %s (паузы, оговорки и неудачные дубли).",
-		clock(r.SourceDuration), clock(r.Duration), clock(removed))
+	return fmt.Sprintf("Черновик рилс готов: было %s, стало %s — вырезал %s (%s).",
+		clock(r.SourceDuration), clock(r.Duration), clock(removed), cutKinds(r.Retakes > 0 || cleaned(summary)))
+}
+
+// cutKinds names what a talking-head cut removed, the failed takes only when there were some.
+func cutKinds(takes bool) string {
+	if takes {
+		return cutWithTakes
+	}
+
+	return cutWithoutTakes
+}
+
+// cleaned: the editor's cleaning of the first version removed failed takes (its line is in the changes).
+func cleaned(summary *editjob.Summary) bool {
+	return summary != nil && slices.ContainsFunc(summary.Changes, func(line string) bool {
+		return strings.HasPrefix(line, editplan.CleanupLinePrefix)
+	})
 }
 
 // talkBody is what the editor changed, or how many disputed repeats an automatic cut left.
@@ -319,7 +341,7 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 			summary.Changes = []string{fmt.Sprintf("Спорные повторы оставил в ролике: %d.", candidates)}
 		}
 
-		summary.Note = undecidedNote(req, outcome.Kind, workout)
+		summary.Note = undecidedNote(req, outcome.Kind, outcome.Declined, workout)
 
 		if workout && summary.Note != workoutFallbackNote {
 			summary.Changes = append(summary.Changes, titlesHint)
@@ -330,6 +352,7 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 
 	summary.Selected = outcome.Selected && !workout
 	summary.Changes = append(summary.Changes, outcome.Changes...)
+	summary.Note = editplan.DeclinedText(outcome.Declined)
 
 	if candidates > 0 {
 		summary.Changes = append(summary.Changes, fmt.Sprintf("Спорные повторы: вырезал %d, оставил %d.",
@@ -358,7 +381,7 @@ func hookHint(req *editplan.Request, outcome *editplan.Outcome) []string {
 
 // undecidedNote says why the first version is the automatic cut: the workout kept whole, the caption not applied, the
 // long talking head only cleaned.
-func undecidedNote(req *editplan.Request, kind editplan.OutcomeKind, workout bool) string {
+func undecidedNote(req *editplan.Request, kind editplan.OutcomeKind, declined []string, workout bool) string {
 	if workout && kind == editplan.FailedOutcome {
 		return workoutFallbackNote
 	}
@@ -367,7 +390,11 @@ func undecidedNote(req *editplan.Request, kind editplan.OutcomeKind, workout boo
 
 	if strings.TrimSpace(req.Caption) != "" {
 		note := captionNotes[kind]
-		if note == "" {
+
+		switch {
+		case kind == editplan.CannotOutcome && len(declined) > 0:
+			note = captionDeclinedNote + " " + editplan.DeclinedText(declined)
+		case note == "":
 			note = captionUnclearNote
 		}
 
@@ -382,7 +409,8 @@ func undecidedNote(req *editplan.Request, kind editplan.OutcomeKind, workout boo
 			format = longFailedNote
 		}
 
-		notes = append(notes, fmt.Sprintf(format, rangeText(low, high), secondsText(high*exampleShare)))
+		notes = append(notes, fmt.Sprintf(format, rangeText(low, high), cutKinds(len(req.Plan.Takes) > 0),
+			secondsText(high*exampleShare)))
 	}
 
 	return strings.Join(notes, " ")

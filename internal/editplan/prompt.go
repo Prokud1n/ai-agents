@@ -51,9 +51,8 @@ func Prompt(req *Request) string {
 	case req.Selecting():
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет, а ролик после чистки длиннее рилс — сделай " +
 			"редакторский отбор (раздел «Редакторский отбор») и реши спорные повторы.\n")
-	case req.HookOnly():
-		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи только заголовок-хук; вырезать ничего " +
-			"не нужно. Пункты и цифры на экране — можно.\n")
+	case req.CleanupOnly():
+		b.WriteString(cleanupTask(req))
 	case req.Hook:
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи заголовок-хук и реши спорные повторы.\n")
 	default:
@@ -68,6 +67,7 @@ func Prompt(req *Request) string {
 	writeWords(&b, req.Transcript, plan)
 	writeCandidates(&b, plan)
 	writeTakes(&b, plan)
+	writeRepeats(&b, req)
 	writePrevious(&b, req)
 	writeWorkoutState(&b, req)
 	writeHook(&b, req)
@@ -119,10 +119,7 @@ func writeWords(b *strings.Builder, transcript *transcription.Result, plan *roug
 	words := transcript.Words
 
 	for _, ph := range phrases(transcript, plan) {
-		indices := strconv.Itoa(ph.from)
-		if ph.to > ph.from {
-			indices += "–" + strconv.Itoa(ph.to)
-		}
+		indices := indexRange(ph.from, ph.to)
 
 		place := "вырезано"
 		if ph.key.cut != "" {
@@ -136,6 +133,15 @@ func writeWords(b *strings.Builder, transcript *transcription.Result, plan *roug
 		fmt.Fprintf(b, "%s | %s | %.1f с | %s | %s\n", indices, roughcut.FormatTimecode(words[ph.from].Start),
 			words[ph.to].End-words[ph.from].Start, place, joinWords(words[ph.from:ph.to+1]))
 	}
+}
+
+// indexRange is «12–19» for the words 12 to 19, «12» for one word.
+func indexRange(from, to int) string {
+	if to > from {
+		return strconv.Itoa(from) + "–" + strconv.Itoa(to)
+	}
+
+	return strconv.Itoa(from)
 }
 
 // phrases groups the words: a new phrase starts at another kept interval or cut reason, another segment of the

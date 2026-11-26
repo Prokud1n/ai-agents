@@ -27,7 +27,7 @@ func TestDescribe(t *testing.T) {
 	}{
 		{
 			name:    "cut with the trainer's caption",
-			result:  editjob.Result{SourceDuration: 182.4, Duration: 141.2},
+			result:  editjob.Result{SourceDuration: 182.4, Duration: 141.2, Retakes: 2},
 			version: 1,
 			caption: " про планку ",
 			expected: "Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (паузы, оговорки и неудачные дубли).\n" +
@@ -37,7 +37,7 @@ func TestDescribe(t *testing.T) {
 			name:    "repeats left in without a decision",
 			result:  editjob.Result{SourceDuration: 60, Duration: 45, Candidates: 2},
 			version: 1,
-			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы, оговорки и неудачные дубли).\n" +
+			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы и оговорки).\n" +
 				"Спорные повторы оставил в ролике: 2.",
 		},
 		{
@@ -46,7 +46,7 @@ func TestDescribe(t *testing.T) {
 			version: 1,
 			caption: "без первой фразы",
 			summary: &editjob.Summary{Changes: []string{"Вырезал фрагмент «всем привет».", "Спорные повторы: вырезал 1, оставил 1."}},
-			expected: "Черновик рилс готов: было 1:00, стало 0:40 — вырезал 0:20 (паузы, оговорки и неудачные дубли).\n" +
+			expected: "Черновик рилс готов: было 1:00, стало 0:40 — вырезал 0:20 (паузы и оговорки).\n" +
 				"Вырезал фрагмент «всем привет».\nСпорные повторы: вырезал 1, оставил 1.\n" +
 				"Ваша подпись к исходнику: «без первой фразы»",
 		},
@@ -56,7 +56,7 @@ func TestDescribe(t *testing.T) {
 			version: 1,
 			caption: "добавь музыку",
 			summary: &editjob.Summary{Note: captionCannotNote},
-			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы, оговорки и неудачные дубли).\n" +
+			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы и оговорки).\n" +
 				captionCannotNote + "\nВаша подпись к исходнику: «добавь музыку»",
 		},
 		{
@@ -93,8 +93,25 @@ func TestDescribe(t *testing.T) {
 			result:  editjob.Result{SourceDuration: 182, Duration: 141},
 			version: 1,
 			summary: &editjob.Summary{Note: longFailed60},
-			expected: "Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (паузы, оговорки и неудачные дубли).\n" +
+			expected: "Черновик рилс готов: было 3:02, стало 2:21 — вырезал 0:41 (паузы и оговорки).\n" +
 				longFailed60,
+		},
+		{
+			name:    "the editor's cleaning names the failed takes",
+			result:  editjob.Result{SourceDuration: 236, Duration: 129},
+			version: 1,
+			summary: &editjob.Summary{Changes: []string{testCleanupLine}},
+			expected: "Черновик рилс готов: было 3:56, стало 2:09 — вырезал 1:47 (паузы, оговорки и неудачные дубли).\n" +
+				testCleanupLine,
+		},
+		{
+			name:    "a caption declined",
+			result:  editjob.Result{SourceDuration: 60, Duration: 45},
+			version: 1,
+			caption: "добавь музыку",
+			summary: &editjob.Summary{Note: testMusicText},
+			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы и оговорки).\n" + testMusicText +
+				"\nВаша подпись к исходнику: «добавь музыку»",
 		},
 		{
 			name:     "nothing to cut",
@@ -191,6 +208,22 @@ func TestFirstSummary(t *testing.T) {
 			},
 		},
 		{
+			name: "the caption declined, the rest applied", caption: "добавь музыку и убери начало", plan: &roughcut.Plan{},
+			outcome: editplan.Outcome{
+				Kind: editplan.EditOutcome, Changes: []string{"Обрезал начало: убрал первые 2 с."},
+				Declined: []string{testMusicText},
+			},
+			expected: editjob.Summary{Changes: []string{"Обрезал начало: убрал первые 2 с."}, Note: testMusicText},
+		},
+		{
+			name: "the caption declined", caption: "добавь музыку", plan: twoCandidates,
+			outcome: editplan.Outcome{Kind: editplan.CannotOutcome, Declined: []string{testMusicText}},
+			expected: editjob.Summary{
+				Changes: []string{"Спорные повторы оставил в ролике: 2."},
+				Note:    captionDeclinedNote + " " + testMusicText,
+			},
+		},
+		{
 			name: "the caption not understood", caption: "сделай красиво", plan: &roughcut.Plan{},
 			outcome:  editplan.Outcome{Kind: editplan.UnclearOutcome},
 			expected: editjob.Summary{Note: captionUnclearNote},
@@ -238,14 +271,17 @@ func TestFirstSummary(t *testing.T) {
 }
 
 const (
-	droppedHello = "Не вошло: «привет»."
-	cutNoneOfOne = "Спорные повторы: вырезал 0, оставил 1."
+	testCleanupLine = "Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с)."
+	testMusicText   = "Музыку добавьте в Instagram при публикации — я её не накладываю."
+	testSpeedText   = "Ускорение и замедление я не делаю — видео идёт с обычной скоростью."
+	droppedHello    = "Не вошло: «привет»."
+	cutNoneOfOne    = "Спорные повторы: вырезал 0, оставил 1."
 )
 
 // The notes of a long talking head only cleaned, for the recommended 30–60 s.
 var (
-	longFailed60   = fmt.Sprintf(longFailedNote, "30–60 с", "45 секунд")
-	longUnchosen60 = fmt.Sprintf(longUnchosenNote, "30–60 с", "45 секунд")
+	longFailed60   = fmt.Sprintf(longFailedNote, "30–60 с", cutWithoutTakes, "45 секунд")
+	longUnchosen60 = fmt.Sprintf(longUnchosenNote, "30–60 с", cutWithoutTakes, "45 секунд")
 )
 
 // TestLongNotes: the notes of a long talking head as the trainer reads them.
@@ -253,11 +289,11 @@ func TestLongNotes(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, "Ролик длиннее рекомендованных для рилс 30–60 с: сократить его не получилось из-за технической "+
-		"ошибки, поэтому вырезал только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, "+
+		"ошибки, поэтому вырезал только паузы и оговорки. Если нужно короче, ответьте на черновик, "+
 		"например: „сделай 45 секунд“.", longFailed60)
 	assert.Equal(t, "Ролик длиннее рекомендованных для рилс 30–60 с: не смог выбрать, что оставить, поэтому вырезал "+
 		"только паузы, оговорки и неудачные дубли. Если нужно короче, ответьте на черновик, например: „сделай 45 "+
-		"секунд“.", longUnchosen60)
+		"секунд“.", fmt.Sprintf(longUnchosenNote, "30–60 с", cutWithTakes, "45 секунд"))
 }
 
 func TestSecondsText(t *testing.T) {

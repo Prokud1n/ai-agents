@@ -286,12 +286,13 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	req.Caption = data.Input
 	req.TargetSeconds = e.reelsTarget.Seconds()
 	req.Hook = e.hookTitle
+	req.Cleanup = true
 
 	outcome, err := e.decide(ctx, data, req)
 	if err != nil {
-		// A workout, a long talking head or a reel stopped only for the hook has a usable plan without the model:
-		// nothing cut, or the cleaning only (and no hook).
-		if (!isWorkout(req.Plan) && !req.Selecting() && !req.HookOnly()) || !e.fallBack(ctx, data, err) {
+		// A workout, a long talking head or a reel without a caption has a usable plan without the model: nothing cut,
+		// or the automatic cleaning only (and no hook).
+		if (!isWorkout(req.Plan) && !req.Selecting() && !req.CleanupOnly()) || !e.fallBack(ctx, data, err) {
 			return err
 		}
 
@@ -374,7 +375,7 @@ func (e *Executor) revise(ctx context.Context, data *tasks.ExecuteData) error {
 	switch outcome.Kind {
 	case editplan.EditOutcome:
 	case editplan.CannotOutcome:
-		return &tasks.PermanentError{Message: cannotRevisionText, Err: refusal(outcome)}
+		return &tasks.PermanentError{Message: cannotText(outcome), Err: refusal(outcome)}
 	default:
 		return &tasks.PermanentError{Message: unclearRevisionText, Err: refusal(outcome)}
 	}
@@ -383,9 +384,21 @@ func (e *Executor) revise(ctx context.Context, data *tasks.ExecuteData) error {
 	job.Stage = editjob.RenderStage
 	job.Settings = new(req.Plan.Settings)
 	job.Edit = new(outcome.Edit)
-	job.Summary = &editjob.Summary{Changes: outcome.Changes, PreviousDuration: req.Plan.Duration}
+	job.Summary = &editjob.Summary{
+		Changes: outcome.Changes, PreviousDuration: req.Plan.Duration, Note: editplan.DeclinedText(outcome.Declined),
+	}
 
 	return e.submit(ctx, job)
+}
+
+// cannotText is the trainer's text of a revision the editor does not do: the prepared texts of the declined requests
+// («Музыку добавьте в Instagram…»), or the list of what the editor can do.
+func cannotText(outcome *editplan.Outcome) string {
+	if text := editplan.DeclinedText(outcome.Declined); text != "" {
+		return text
+	}
+
+	return cannotRevisionText
 }
 
 func refusal(outcome *editplan.Outcome) error {

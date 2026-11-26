@@ -61,7 +61,7 @@ func emojiRune(r rune) bool {
 var hookQuotes = [][2]string{{"«", "»"}, {`"`, `"`}, {"„", "“"}, {"“", "”"}}
 
 // normalizeHook is the hook as the reel shows it: spaces collapsed, without the quotes around it and a period at the
-// end (an ellipsis stays).
+// end (an ellipsis stays), from a small letter like the hooks of the reference reels (lowerFirst).
 func normalizeHook(hook string) string {
 	text := trimHookPeriod(strings.Join(strings.Fields(hook), " "))
 
@@ -73,7 +73,52 @@ func normalizeHook(hook string) string {
 		}
 	}
 
-	return trimHookPeriod(text)
+	return lowerFirst(trimHookPeriod(text))
+}
+
+// lowerFirst puts the first letter of the first word in lower case unless the word is an abbreviation (its first two
+// letters are capitals: «ЗОЖ», «SMART-цели»). A proper name is not told from a word: the model writes the hook from a
+// small letter and keeps the capitals of names, the code only catches a sentence-like capital.
+func lowerFirst(text string) string {
+	first, _, _ := strings.Cut(text, " ")
+	if abbreviation(first) {
+		return text
+	}
+
+	for i, r := range first {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+
+		if !unicode.IsUpper(r) {
+			return text
+		}
+
+		return text[:i] + string(unicode.ToLower(r)) + text[i+utf8.RuneLen(r):]
+	}
+
+	return text
+}
+
+// abbreviation: the first two letters of the word are capitals.
+func abbreviation(word string) bool {
+	capitals := 0
+
+	for _, r := range word {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+
+		if !unicode.IsUpper(r) {
+			return false
+		}
+
+		if capitals++; capitals == 2 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // trimHookPeriod drops one period at the end; an ellipsis stays.
@@ -83,25 +128,6 @@ func trimHookPeriod(text string) string {
 	}
 
 	return text
-}
-
-// checkHookOnly refuses cuts, trims, the workout mode, exercise titles and muting in a first version stopped only for
-// the hook title: there is no caption, the trainer asked for nothing, so the model does not change the reel on its own
-// initiative; the hook and the screen notes (they cut nothing) pass.
-func checkHookOnly(req *Request, in *Input) error {
-	if !req.HookOnly() {
-		return nil
-	}
-
-	cuts := in.TrimStart > 0 || in.TrimEnd > 0 || len(in.Remove) > 0 || len(in.CutSeconds) > 0 || in.TargetSeconds > 0
-	extras := in.Mode == roughcut.WorkoutMode || len(in.AddTitles) > 0 || (in.Mute != nil && *in.Mute)
-
-	if cuts || extras {
-		return checkFailedf("в этом ролике ничего не вырезай, не обрезай и не меняй режим, подписи упражнений и звук: " +
-			"подписи нет, тренер ни о чём не просила — укажи только hook_title и screen_notes (или не указывай их)")
-	}
-
-	return nil
 }
 
 // nextHook is the hook title of the new version: the decision's (checked), or the previous version's.

@@ -147,11 +147,11 @@ func TestApplyScreenNotesRevision(t *testing.T) {
 	assert.Contains(t, check.Message, "ничего не меняет")
 }
 
-// TestApplyHookOnlyAllowsNotes: a reel stopped only for the hook takes the screen notes: they cut nothing.
-func TestApplyHookOnlyAllowsNotes(t *testing.T) {
+// TestApplyCleanupAllowsNotes: a reel only cleaned by the editor takes the screen notes: they cut nothing.
+func TestApplyCleanupAllowsNotes(t *testing.T) {
 	t.Parallel()
 
-	outcome, err := Apply(hookOnlyRequest(), &Input{
+	outcome, err := Apply(cleanupRequest(), &Input{
 		Decision: EditDecision, HookTitle: new(testHook),
 		ScreenNotes: new([]NoteInput{{Kind: roughcut.CalloutNote, Text: noteSquats, Word: new(9)}}),
 	})

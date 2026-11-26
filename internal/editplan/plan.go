@@ -47,6 +47,9 @@ type Request struct {
 	// Hook: the editor proposes the hook title of the first version (EDITOR_HOOK_TITLE). Without it a first version
 	// gets one only when the trainer's caption asks; a revision changes it either way.
 	Hook bool
+	// Cleanup: the editor cleans a first version without a caption (CleanupOnly) — the failed takes, a phrase said
+	// again in a row, the preparation for the shooting — instead of leaving the automatic cut as it is.
+	Cleanup bool
 }
 
 // minTargetShare: the recommended reel is from this share of TargetSeconds up to it (30–60 s for 60 s).
@@ -60,12 +63,13 @@ func (r *Request) Selecting() bool {
 		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 
-// HookOnly reports whether the first version stopped only for the hook title: the hook is on, no caption, no disputed
-// repeats, a talking head within the recommended length. Then nothing is to be cut: the short reel is not cut on the
-// model's own initiative (Apply refuses it), and without the model its automatic cut is the draft.
-func (r *Request) HookOnly() bool {
-	return !r.IsRevision() && r.Hook && strings.TrimSpace(r.Caption) == "" && r.Plan != nil &&
-		len(r.Plan.Candidates) == 0 && !r.Selecting() && previousEdit(r.Plan).Mode != roughcut.WorkoutMode
+// CleanupOnly reports whether the first version is only cleaned by the editor: the cleanup is on, no caption, a
+// talking head within the recommended length. The model removes the failed takes, a phrase said again in a row and the
+// preparation for the shooting, but does not shorten the reel, change the mode, the sound or add exercise titles (Apply
+// refuses it); without the model the automatic cut is the draft.
+func (r *Request) CleanupOnly() bool {
+	return !r.IsRevision() && r.Cleanup && strings.TrimSpace(r.Caption) == "" && r.Plan != nil && !r.Selecting() &&
+		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 
 // TargetRange is the recommended length of a reel, in seconds: 30–60 s for TargetSeconds 60.
@@ -129,4 +133,7 @@ type Outcome struct {
 	// length the trainer asked for) in a talking head; Target is that length, 0 for the recommended range.
 	Selected bool
 	Target   float64
+	// Declined are the texts for the trainer about what was asked and is not done (music, color...): with an edit
+	// (the rest is done) or with a refusal (CannotOutcome).
+	Declined []string
 }
