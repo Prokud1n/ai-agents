@@ -103,7 +103,7 @@ func TestApplyCleanupOnly(t *testing.T) {
 		},
 		{
 			name: "an exercise title", req: cleanupRequest, err: refused,
-			input: Input{AddTitles: []TitleInput{{Text: "Планка", Word: new(7)}}},
+			input: Input{AddTitles: []TitleInput{{Text: "Мостик", Word: new(7)}}},
 		},
 		{name: "muted", req: cleanupRequest, input: Input{Mute: new(true)}, err: refused},
 		{
