@@ -18,7 +18,7 @@ var Module = fx.Module("editor",
 	fx.Provide(NewExecutor),
 	Route,
 	fx.Provide(NewWaker, asBoard, asDoneListener, asStore, asDecider, asTaskWaker, asTechReporter, fx.Private),
-	fx.Invoke(registerWaker),
+	fx.Invoke(registerWaker, CheckBranding),
 )
 
 // Route sends the editor's tasks to Executor (a part of Module; internal.TestTaskRoutes checks it is in the group).

@@ -97,8 +97,9 @@ func TestBurnSubtitlesPreparesRender(t *testing.T) {
 	outDir := t.TempDir()
 	output := filepath.Join(outDir, outputVideo)
 
+	phrase := PhraseStyle()
 	result, err := svc.BurnSubtitles(t.Context(), &BurnSubtitlesData{
-		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech(wPrivetCapExcl)},
+		CreateSubtitlesData: CreateSubtitlesData{Transcript: speech(wPrivetCapExcl), Style: &phrase},
 		VideoPath:           inputVideo,
 		OutputPath:          output,
 	})
@@ -195,7 +196,7 @@ func TestShade(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			style := DefaultStyle()
+			style := PhraseStyle()
 			tt.modify(&style)
 
 			assert.Equal(t, tt.expected, shade(&style))
@@ -207,7 +208,7 @@ func TestBurnSubtitlesErrors(t *testing.T) {
 	t.Parallel()
 
 	emptyFonts := t.TempDir()
-	invalid := DefaultStyle()
+	invalid := PhraseStyle()
 	invalid.Layout.MarginTop = 0
 
 	tests := []struct {
@@ -305,7 +306,7 @@ func TestNewServiceStyleFile(t *testing.T) {
 func TestFontFallbacks(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 
 	tests := []struct {
 		name     string

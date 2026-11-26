@@ -155,7 +155,7 @@ jobs:
         run: |
           go test -count=1 -v -run 'TestRunner' ./internal/providers/ffmpeg/
           go test -count=1 -v -run 'TestRender' ./internal/roughcut/
-          go test -count=1 -v -run 'TestBurnSubtitlesWithFFmpeg' ./internal/subtitles/
+          go test -count=1 -v -run 'TestBurnSubtitlesWithFFmpeg|TestBurnReferenceStyleWithFFmpeg' ./internal/subtitles/
 
       # The editor's limits (a job waits in the queue, then runs its timeout from the start; no worker → a technical
       # failure) and the environment ffmpeg gets: shown verbosely, they are the proof of the review's points.
@@ -580,12 +580,17 @@ jobs:
           run_check load --memory=3g --memory-swap=3g
 
       # Subtitle rendering against the ffmpeg/libass of the image and the fonts in /app/fonts (SUBTITLES_FONTS_DIR):
-      # 1080x1920 output, H.264 + AAC, text outside the Instagram zones, no font fallback; the hook title (T3.15b).
+      # 1080x1920 output, H.264 + AAC, text outside the Instagram zones, no font fallback; the hook title (T3.15b); the
+      # reference style (T3.17): the word on its white plate, a callout, the handle and the end card, checked by pixels.
       - name: Run subtitle render tests inside the media image
         run: |
           CGO_ENABLED=0 go test -c -o subtitles.test ./internal/subtitles
           docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/subtitles.test:/app/subtitles.test:ro" \
-            --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 -test.run 'TestBurnSubtitlesWithFFmpeg|TestBurnHookWithFFmpeg'
+            --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 \
+            -test.run 'TestBurnSubtitlesWithFFmpeg|TestBurnHookWithFFmpeg|TestBurnReferenceStyleWithFFmpeg' | tee render.txt
+          for test in TestBurnSubtitlesWithFFmpeg TestBurnHookWithFFmpeg TestBurnReferenceStyleWithFFmpeg; do
+            grep -q -- "--- PASS: $test " render.txt || { echo "::error::$test did not pass"; exit 1; }
+          done
 
       # Render speed of a draft (T3.11): a vertical 4K 60 fps 10-bit HEVC HLG source with grain, rough cut into several
       # fragments with subtitles in one pass, on 2 CPUs as the VPS has. The log line "render speed" is the measurement.
@@ -631,7 +636,9 @@ jobs:
           JSON
             /app/subtitles -transcript /tmp/result.json -out /tmp/subtitles.ass -ass-only
             grep -q "PlayResY: 1920" /tmp/subtitles.ass
-            grep -q "ПОДХОДА" /tmp/subtitles.ass
+            grep -q ",Word,,0,0,0,,{.q2}3 подхода" /tmp/subtitles.ass
+            /app/subtitles -transcript /tmp/result.json -style /app/subtitles-style-phrase.yaml -out /tmp/phrase.ass -ass-only
+            grep -q "ПОДХОДА" /tmp/phrase.ass
             /app/subtitles -in /tmp/clip.mp4 -transcript /tmp/result.json -out /tmp/reel.mp4 -karaoke
             ffprobe -v error -show_entries stream=codec_type,codec_name,width,height -of csv=p=0 /tmp/reel.mp4
           ' > subtitles.txt 2>&1 || { cat subtitles.txt; exit 1; }

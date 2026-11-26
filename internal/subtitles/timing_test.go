@@ -76,7 +76,7 @@ func TestCueTimingFollowsSpeech(t *testing.T) {
 
 	const tolerance = 0.1
 
-	style := DefaultStyle()
+	style := PhraseStyle()
 	result := speech(
 		"Привет! Сегодня делаем присед со штангой.",
 		"Делаем 3 подхода по 10 повторений, держим спину ровной и не заваливаем колени внутрь.",

@@ -73,14 +73,16 @@ type Service struct {
 // Render is how the plan is rendered: with PlanOnly the caller renders it itself in one pass with the subtitles
 // (Segments and Render go to ffmpeg as they are).
 // Titles are the exercise titles of the edit on the timeline of the cut (RemapTitles); Render.Mute silences the
-// source (Edit.Mute).
+// source (Edit.Mute). ScreenNotes are the points and numbers of a talking head on the timeline of the cut
+// (RemapScreenNotes).
 type Result struct {
-	Plan       Plan
-	Transcript transcription.Result
-	Log        string
-	Files      Files
-	Render     ffmpeg.RenderOptions
-	Titles     []Title
+	Plan        Plan
+	Transcript  transcription.Result
+	Log         string
+	Files       Files
+	Render      ffmpeg.RenderOptions
+	Titles      []Title
+	ScreenNotes []ScreenNote
 }
 
 // Segments are the kept fragments of the plan for ffmpeg.
@@ -165,7 +167,8 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 		Render: ffmpeg.RenderOptions{
 			Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info), Mute: plan.Edit != nil && plan.Edit.Mute,
 		},
-		Titles: RemapTitles(editTitles(plan.Edit), plan.Keep),
+		Titles:      RemapTitles(editTitles(plan.Edit), plan.Keep),
+		ScreenNotes: RemapScreenNotes(editScreenNotes(plan.Edit), plan.Keep),
 	}
 
 	if err := prepareOutDir(data.OutDir); err != nil {

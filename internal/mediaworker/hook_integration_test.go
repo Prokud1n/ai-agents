@@ -42,8 +42,8 @@ const (
 	// same band of the two versions after the hook (only encoding noise).
 	hookDiff = 5.0
 	sameDiff = 4.0
-	// hookBandLines: two lines of the hook with the line spacing, in font sizes.
-	hookBandLines = 2.5
+	// hookBandLines: a line of the hook with the line spacing, in font sizes.
+	hookBandLines = 1.25
 )
 
 // hookModel is the editor's model behind the real decider: it proposes the hook title of the first version and removes
@@ -79,8 +79,24 @@ func (m *hookModel) Prompts() []string {
 }
 
 // startHookEnv is the editor of the app with the hook title on (no selection: the talking head is short enough) and
-// the real media worker, through a real Redis and S3, the source being the synthetic talking head.
+// the model that proposes the hook, without a handle.
 func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
+	t.Helper()
+
+	model := &hookModel{}
+	env, speech := startModelEnv(t, model, "")
+
+	return env, speech, model
+}
+
+// modelRunner is the editor's model behind the real decider.
+type modelRunner interface {
+	Run(ctx context.Context, data *agents.RunAgentData) (*agents.Result, error)
+}
+
+// startModelEnv is the editor of the app with the hook title on and the model, the trainer's handle (REELS_HANDLE;
+// empty: none), and the real media worker, through a real Redis and S3, the source being the synthetic talking head.
+func startModelEnv(t *testing.T, model modelRunner, handle string) (*editEnv, *talkTranscriber) {
 	t.Helper()
 
 	requireIntegrationFFmpeg(t)
@@ -95,6 +111,7 @@ func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
 	cfg := &config.Editor{
 		Stream: redistest.Prefix(t, client) + "editor:jobs", JobTimeout: editWait, PollInterval: time.Second,
 		QueueTimeout: time.Hour, WorkerWait: time.Minute, HookTitle: true,
+		ReelsHandle: handle, ReelsHandleIcon: true, ReelsEndCard: true,
 	}
 
 	board, err := editjob.NewBoard(client, cfg, log)
@@ -120,7 +137,7 @@ func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
 	}, f)
 	require.NoError(t, err)
 
-	speech, model := &talkTranscriber{}, &hookModel{}
+	speech := &talkTranscriber{}
 	env := &editEnv{
 		files: files, source: source,
 		executor: editor.NewExecutor(board, files, editplan.NewDecider(model, log), noTech{}, cfg, log),
@@ -130,7 +147,7 @@ func startHookEnv(t *testing.T) (*editEnv, *talkTranscriber, *hookModel) {
 	require.NoError(t, worker.Start(t.Context()))
 	t.Cleanup(func() { require.NoError(t, worker.Stop(context.Background())) })
 
-	return env, speech, model
+	return env, speech
 }
 
 // reelFrame decodes the frame of the reel at the second as 8-bit gray pixels, row by row.
@@ -147,15 +164,22 @@ func reelFrame(t *testing.T, reel []byte, at float64) []byte {
 	return frame
 }
 
-// meanDiff is the mean absolute difference of the rows [from, to) of two frames.
+// meanDiff is the mean absolute difference of the rows [from, to) of two frames in the middle half of their width,
+// where the centered hook and screen notes stand (the words of the word layout stand at the left edge, the handle at
+// the right one).
 func meanDiff(a, b []byte, from, to int) float64 {
+	const left, right = subtitles.FrameWidth / 4, subtitles.FrameWidth * 3 / 4
+
 	total := 0
 
-	for i := from * subtitles.FrameWidth; i < to*subtitles.FrameWidth; i++ {
-		total += max(int(a[i])-int(b[i]), int(b[i])-int(a[i]))
+	for y := from; y < to; y++ {
+		for x := left; x < right; x++ {
+			i := y*subtitles.FrameWidth + x
+			total += max(int(a[i])-int(b[i]), int(b[i])-int(a[i]))
+		}
 	}
 
-	return float64(total) / float64((to-from)*subtitles.FrameWidth)
+	return float64(total) / float64((to-from)*(right-left))
 }
 
 // TestIntegrationHookTitle: a short talking head without a caption or disputed repeats stops after the plan only for
@@ -198,9 +222,8 @@ func TestIntegrationHookTitle(t *testing.T) {
 	checkHookDrawn(t, env.read(t, v1.MediaKey), env.read(t, v2.MediaKey))
 }
 
-// checkHookDrawn compares the reels with and without the hook in the band of the hook (two lines of its size from the
-// subtitles' margin; without the hook only a subtitle line is there): different while the hook is shown, the same
-// after it.
+// checkHookDrawn compares the reels with and without the hook in the band of its first line (from the subtitles'
+// margin; the words stand lower): different while the hook is shown, the same after it.
 func checkHookDrawn(t *testing.T, hooked, plain []byte) {
 	t.Helper()
 

@@ -80,7 +80,7 @@ func (s *Service) CreateSubtitles(data *CreateSubtitlesData) (*Subtitles, error)
 		return nil, err
 	}
 
-	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles, data.Hook)
+	ass, cues := buildDocument(data, &style)
 
 	return &Subtitles{ASS: []byte(ass), Cues: cues}, nil
 }
@@ -96,7 +96,7 @@ func (s *Service) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*
 		return nil, err
 	}
 
-	ass, cues := buildASS(data.Transcript, &style, data.Accents, data.Karaoke, data.Titles, data.Hook)
+	ass, cues := buildDocument(&data.CreateSubtitlesData, &style)
 
 	dir, err := os.MkdirTemp("", tempDirPattern)
 	if err != nil {
@@ -186,10 +186,11 @@ func (s *Service) render(ctx context.Context, output string, data *ffmpeg.BurnSu
 	return report, nil
 }
 
-// shade is the vignette of the style at the subtitles' edge; none in the middle position or when disabled.
+// shade is the vignette of the style at the subtitles' edge; none in the middle position, in the word layout (the
+// plate gives the contrast) or when disabled.
 func shade(style *Style) *ffmpeg.Shade {
 	v := style.Vignette
-	if !v.Enabled || style.Layout.Position == MiddlePosition {
+	if !v.Enabled || style.Layout.Position == MiddlePosition || style.wordMode() {
 		return nil
 	}
 
@@ -311,8 +312,7 @@ func fontFallbacks(style *Style, fonts []ffmpeg.FontSelection, shown bool) []str
 
 	for _, f := range fonts {
 		family := squash(f.Family)
-		if family != squash(style.Text.Font) && family != squash(style.Accent.Font) && family != squash(style.Title.Font) &&
-			family != squash(style.Hook.Font) {
+		if !slices.ContainsFunc(styleFonts(style), func(font string) bool { return squash(font) == family }) {
 			continue
 		}
 
@@ -324,11 +324,24 @@ func fontFallbacks(style *Style, fonts []ffmpeg.FontSelection, shown bool) []str
 		}
 	}
 
-	if shown && !reported[squash(style.Text.Font)] {
-		fallbacks = append(fallbacks, style.Text.Font+" -> (libass reported no font)")
+	speechFont := style.Text.Font
+	if style.wordMode() {
+		speechFont = style.WordBox.Font
+	}
+
+	if shown && !reported[squash(speechFont)] {
+		fallbacks = append(fallbacks, speechFont+" -> (libass reported no font)")
 	}
 
 	return fallbacks
+}
+
+// styleFonts are the font families of the style.
+func styleFonts(style *Style) []string {
+	return []string{
+		style.Text.Font, style.Accent.Font, style.Title.Font, style.Hook.Font, style.WordBox.Font, style.Handle.Font,
+		style.EndCard.Font,
+	}
 }
 
 // squash lowercases a font name and drops spaces, dashes and underscores.

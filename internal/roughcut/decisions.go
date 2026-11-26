@@ -277,6 +277,8 @@ func writeEditExtras(b *strings.Builder, edit *Edit) {
 		fmt.Fprintf(b, "\nЗаголовок-хук: «%s»\n", edit.Hook)
 	}
 
+	writeScreenNotes(b, edit.ScreenNotes)
+
 	if edit.Mute {
 		b.WriteString("\nЗвук исходника убран, субтитров речи нет\n")
 	}
@@ -298,5 +300,25 @@ func writeEditExtras(b *strings.Builder, edit *Edit) {
 		}
 
 		fmt.Fprintf(b, "- с %s %s «%s»\n", FormatTimecode(t.Start), end, t.Text)
+	}
+}
+
+// noteKindNames are the kinds of the screen notes in the decisions log.
+var noteKindNames = map[NoteKind]string{
+	ListTitleNote: "заголовок списка",
+	ListItemNote:  "пункт",
+	CalloutNote:   "выноска",
+}
+
+// writeScreenNotes logs the points and numbers on the screen, on the source timeline.
+func writeScreenNotes(b *strings.Builder, notes []ScreenNote) {
+	if len(notes) == 0 {
+		return
+	}
+
+	fmt.Fprintf(b, "\nНа экране: %d\n", len(notes))
+
+	for _, n := range notes {
+		fmt.Fprintf(b, "- с %s, %s «%s»\n", FormatTimecode(n.Start), noteKindNames[n.Kind], n.Text)
 	}
 }

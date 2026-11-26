@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -119,6 +120,38 @@ type Job struct {
 	// RevisionHash is the app's fingerprint of the trainer's text the job was decided on (the revision; the caption
 	// of the first version): a job of a failed revision left on the board is not given to the next revision.
 	RevisionHash string `json:"revision_hash,omitempty"`
+	// Branding is the trainer's handle over the reel and the end card with it (REELS_HANDLE, REELS_HANDLE_ICON,
+	// REELS_END_CARD of the app); nil: none. The worker checks the handle again and draws nothing with an invalid one.
+	Branding *Branding `json:"branding,omitempty"`
+}
+
+// Branding is the trainer's Instagram handle drawn over the reel: small at the right edge with the icon (Icon) and
+// large on the card over the last seconds (EndCard).
+type Branding struct {
+	Handle  string `json:"handle"`
+	Icon    bool   `json:"icon,omitempty"`
+	EndCard bool   `json:"end_card,omitempty"`
+}
+
+// Validate checks the handle: «@» and 1–30 small Latin letters, digits, dots and underscores.
+func (b *Branding) Validate() error {
+	return CheckHandle(b.Handle)
+}
+
+// handleRe is an Instagram handle as the app accepts it (REELS_HANDLE): «@», then 1–30 small letters, digits, dots and
+// underscores. The subtitles draw only a handle that matches it, so nothing else reaches the ASS document.
+var handleRe = regexp.MustCompile(`^@[a-z0-9._]{1,30}$`)
+
+// ErrInvalidHandle: a handle that is not «@» and 1–30 small Latin letters, digits, dots and underscores.
+var ErrInvalidHandle = errors.New("invalid instagram handle")
+
+// CheckHandle checks an Instagram handle («@prokudina.ana»).
+func CheckHandle(handle string) error {
+	if !handleRe.MatchString(handle) {
+		return fmt.Errorf("handle %q must be @ and 1-30 of a-z, 0-9, . and _: %w", handle, ErrInvalidHandle)
+	}
+
+	return nil
 }
 
 // TextHash is the fingerprint of a text for Job.RevisionHash: sha256 in hex, empty for an empty text.

@@ -1,94 +1,59 @@
-# Subtitle style: the built-in default, written out. Copy this file, change it to the trainer's brand book and pass
-# it as `-style file.yaml` or SUBTITLES_STYLE_FILE. Fields left out keep these values; unknown fields are errors.
+# Subtitle style: the built-in default, written out (subtitles.DefaultStyle). Copy this file, change it to the
+# trainer's brand book and pass it as `-style file.yaml` or SUBTITLES_STYLE_FILE. Fields left out keep these values;
+# unknown fields are errors. The look before T3.17 (phrases with accents and a vignette) is style-phrase.yaml next to
+# this file (/app/subtitles-style-phrase.yaml in the media image).
 # Colors: "#RRGGBB" or "#RRGGBBAA" (AA is opacity, FF is opaque). Sizes are pixels of the 1080×1920 frame:
 # it is about 390 pt wide on a phone, so 56 px is about 20 pt.
-
-# Main text. font is the family name libass matches: for a static weight other than Regular/Bold it is the legacy
-# family with the weight ("Manrope Medium"), see `fc-scan --format '%{family}\n' file.ttf` (the last name).
-# The font file goes to SUBTITLES_FONTS_DIR (assets/fonts, /app/fonts in the media image).
-text:
-  font: Manrope Medium
-  size: 56
-  bold: false
-  uppercase: false
-  color: "#F5F0E1" # ivory; text and accent colors must be at least half opaque
-
-# Key words, always: a number with its unit ("10 повторений", not counting "раз два три") and the trainer's
-# dictionary. Otherwise the longest meaningful word of at least 7 letters (not a routine command like "держим"),
-# but never in a subtitle right after an accented one: about a third of subtitles get an accent.
-# In a phrase longer than a line the accent stands on a line of its own.
-# An explicit list (-accents, or from the Montage agent) replaces the automatic choice.
-accent:
-  font: Fira Sans Extra Condensed ExtraBold
-  size: 64
-  bold: false
-  uppercase: true
-  color: "#F2B94B" # warm yellow
-  # Words or phrases always accented. An entry of 4+ letters also matches forms with up to 3 more letters
-  # ("ягодиц" -> "ягодицами"); a shorter one matches only exactly ("вес" is not "весь").
-  words: []
-  # Automatic accents per subtitle (0 turns them off).
-  max_per_cue: 1
-  longest_word: true
-
-# No outline: the vignette and a light shadow (40 % black, 2 px) keep the text readable on a light background.
-outline:
-  color: "#000000"
-  size: 0
-shadow:
-  color: "#00000066"
-  size: 2
-
-# The word being spoken, with -karaoke; differs from the accent color.
-karaoke_color: "#FF8C5A"
-
-# Dark vignette from the top edge (bottom edge for the bottom position; none in the middle), burned in under the
-# subtitles: even opacity from the edge to the bottom of the tallest subtitle (margin + (max_lines + 1) lines),
-# then a smooth fade over fade px. 0.6 gives the text about 5:1 and the accent about 3:1 contrast on white.
-vignette:
-  enabled: true
-  opacity: 0.6
-  fade: 320
+# A font is the family name libass matches: for a static weight other than Regular/Bold it is the legacy family with
+# the weight ("Manrope Medium"), see `fc-scan --format '%{family}\n' file.ttf` (the last name). The font file goes to
+# SUBTITLES_FONTS_DIR (assets/fonts, /app/fonts in the media image).
 
 layout:
+  # word: the speech one word at a time on a plate (word_box below), as the reference reels; phrase: phrases of a few
+  # words in lines with accents and a vignette (style-phrase.yaml). The rest of layout, text, accent, karaoke_color and
+  # vignette are for the phrase layout; in the word layout the hook stands at the top and the titles at the bottom.
+  mode: word
   # top | middle | bottom. Instagram covers the top 250 px, the bottom 420 px (caption, buttons)
-  # and 140 px on the right (buttons): the margins cannot be smaller, and max_lines lines plus an accent line
-  # must fit between the margin and the opposite zone.
+  # and 140 px on the right (buttons): the margins cannot be smaller.
   position: top
   margin_top: 260
   margin_bottom: 440
   margin_side: 140
   max_lines: 2
-  # Short, laconic lines; at most what fits between the margins (width / size / char_width, 28 here).
   max_line_chars: 22
-  # Average character width in font sizes, for the estimate above.
   char_width: 0.5
-  # Drop . , : ; at the end of a subtitle.
   trim_end_punctuation: true
 
-# Exercise titles of a workout reel («Выпады — 12 раз»), drawn apart from the speech subtitles, in the accent font in
-# capitals. position empty: the edge opposite the subtitles (bottom here); margin is from that edge. A title is at
-# most 2 lines; with the box (padding included) it must stay clear of the subtitles and the Instagram zones: here it
-# takes 1252..1460 px, the caption and buttons start at 1500. The translucent dark box keeps it readable over a gym
-# floor or a mat, where there is no vignette.
-title:
-  font: Fira Sans Extra Condensed ExtraBold
-  size: 72
+# The word layout: every word (a quantity together: «10 повторений», «10 000 шагов») alone, in small letters as it is
+# said, without the punctuation of its sentence, black on an opaque white plate (ASS BorderStyle 3: the plate is
+# drawn around the word, padding px wider on every side, so it always fits it). The plate stands at x, y (its top
+# left corner: here the left side margin of Instagram, right under the hook and the screen notes, about 31 % of the
+# height) and is at most max_width wide (a longer word is squeezed). A word stays until the next one (no blinking);
+# one followed by the next within min_duration seconds is shown with it. No accents, no vignette: the plate gives
+# the contrast. The plate must stay clear of the Instagram zones, the hook and the notes (260..560 px here), the
+# exercise titles and the handle.
+word_box:
+  font: Manrope Medium
+  size: 48
   bold: false
-  uppercase: true
-  color: "#F2B94B" # the accent yellow
-  position: ""
-  margin: 460
-  box: "#000000B3" # 70 % black
-  box_padding: 14
+  uppercase: false
+  color: "#111111"
+  lowercase: true
+  box: "#FFFFFF"
+  padding: 9
+  x: 140
+  y: 600
+  max_width: 560
+  min_duration: 0.15
+  # Average character width in font sizes, for the width estimate.
+  char_width: 0.55
 
 # Hook title over the first seconds of the reel («видео для тех, кто боится начать»): the editor's model proposes it,
-# the trainer changes or removes it by a revision. It stands at the subtitles' edge (at the top here; at the top when
-# they are in the middle) at their margin, centered, in plain white Manrope with the soft shadow of the subtitles; at
-# most 4 lines wrapped by words (a hook is at most 90 characters, the app checks it; a longer line is squeezed). While
-# it is shown the subtitles stand right under it (here 260..560 px a hook of four lines, the subtitles 20 px under its
-# last line), clear of it, of the exercise titles and of the Instagram zones, and the vignette is extended under them
-# (an ASS drawing of the same opacity).
+# the trainer changes or removes it by a revision. It stands at the top at layout.margin_top, centered, in plain white
+# Manrope with the soft shadow; at most 4 lines wrapped by words (a hook is at most 90 characters, the app checks it;
+# a longer line is squeezed). The screen notes of a talking head (a list title «3 вещи», its items «1/ …» piling up
+# line by line, callouts «6 лет») are drawn in this style at its place once the hook is gone: at most 4 lines (the
+# earliest items scroll away), a callout for 1.5–3 s.
 hook:
   font: Manrope # the Regular weight (Manrope-Regular.ttf)
   size: 60
@@ -101,12 +66,102 @@ hook:
   # (min_duration without speech), and never past the reel.
   min_duration: 2.5
   max_duration: 8
-  # Fade in and out, ms.
+  # Fade in and out, ms (the notes too).
   fade: 150
-  # Between the hook and the subtitles under it, px.
+  # Between the hook and the phrase subtitles under it, px (the phrase layout).
   gap: 20
   # Average character width in font sizes, for the line estimate: 26 characters a line here.
   char_width: 0.5
   # A plate under the lines, "#RRGGBBAA" (for example "#F28C38E6", orange); "" — none. box_padding: px around the text.
   box: ""
   box_padding: 12
+  # The shadow of the hook and the notes (a box has none).
+  shadow:
+    color: "#000000BF" # 75 % black: no vignette under the hook in the word layout
+    size: 3
+
+# The trainer's handle (REELS_HANDLE, «@prokudina.ana»; none without it) over the whole reel: small white text
+# with a simple Instagram icon before it (REELS_HANDLE_ICON), right-aligned `right` px from the right edge, its top at
+# y (here on the row of the words, about a third of the height: the Instagram buttons on the right start lower, at
+# 1000 px). A handle wider than max_width (the icon included) is squeezed.
+handle:
+  font: Manrope Medium
+  size: 32
+  bold: false
+  uppercase: false
+  color: "#FFFFFF"
+  right: 40
+  # 0: auto — on the row of the words here (620 px); in the phrase layout under the subtitles shifted under the hook
+  # (840 px), between the hook and the subtitles in the middle (700 px).
+  y: 0
+  max_width: 300
+  icon_size: 34
+  char_width: 0.55
+  # The shadow of the handle, its icon and the card's text: it keeps the white readable on a light wall.
+  shadow:
+    color: "#000000BF" # 75 % black
+    size: 2.5
+
+# The end card over the last `duration` seconds of the reel, at most a third of it and with at least 2 s before it
+# (REELS_END_CARD; the reel is not made longer, the sound stays; the words and the notes end where it starts): the
+# frame darkens smoothly (shade is the opacity of the black, fading in over `fade` ms) and the icon and
+# the handle stand large in the middle.
+end_card:
+  font: Manrope Medium
+  size: 64
+  bold: false
+  uppercase: false
+  color: "#FFFFFF"
+  duration: 2
+  shade: 0.7
+  fade: 500
+  icon_size: 120
+
+# Exercise titles of a workout reel («Выпады — 12 раз»), drawn apart from the speech, in the accent font in capitals,
+# at the bottom (position empty: the edge opposite the phrase subtitles; the bottom in the word layout); margin is
+# from that edge. A title is at most 2 lines; with the box it takes 1252..1460 px here, the caption and buttons start
+# at 1500. The translucent dark box keeps it readable over a gym floor or a mat.
+title:
+  font: Fira Sans Extra Condensed ExtraBold
+  size: 72
+  bold: false
+  uppercase: true
+  color: "#F2B94B" # the accent yellow
+  position: ""
+  margin: 460
+  box: "#000000B3" # 70 % black
+  box_padding: 14
+
+# The phrase layout (layout.mode phrase): the main text, key words, the outline and shadow (the shadow is also the one
+# of the hook and the handle), the karaoke word and the vignette. See style-phrase.yaml for their comments.
+text:
+  font: Manrope Medium
+  size: 56
+  bold: false
+  uppercase: false
+  color: "#F5F0E1"
+
+accent:
+  font: Fira Sans Extra Condensed ExtraBold
+  size: 64
+  bold: false
+  uppercase: true
+  color: "#F2B94B"
+  words: []
+  max_per_cue: 1
+  longest_word: true
+
+outline:
+  color: "#000000"
+  size: 0
+shadow:
+  color: "#00000066"
+  size: 2
+
+karaoke_color: "#FF8C5A"
+
+# Off in the word layout (the plate gives the contrast); the phrase layout turns it on.
+vignette:
+  enabled: false
+  opacity: 0.6
+  fade: 320

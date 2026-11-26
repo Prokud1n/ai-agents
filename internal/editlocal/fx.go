@@ -2,6 +2,7 @@ package editlocal
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -39,8 +40,13 @@ func newExecutor(
 	meter *UsageMeter,
 	cfg *config.Editor,
 	log *slog.Logger,
-) *editor.Executor {
-	return editor.NewExecutor(board, store, editplan.NewDecider(meter, log), techLog{log: log}, cfg, log)
+) (*editor.Executor, error) {
+	// An invalid REELS_HANDLE stops the run, as it stops the app.
+	if err := editor.CheckBranding(cfg); err != nil {
+		return nil, fmt.Errorf("failed to configure the editor: %w", err)
+	}
+
+	return editor.NewExecutor(board, store, editplan.NewDecider(meter, log), techLog{log: log}, cfg, log), nil
 }
 
 type runnerParams struct {

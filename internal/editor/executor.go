@@ -109,16 +109,44 @@ type Executor struct {
 	reelsTarget time.Duration
 	// hookTitle: the model proposes the hook title of every first version (EDITOR_HOOK_TITLE).
 	hookTitle bool
-	log       *slog.Logger
-	now       func() time.Time
+	// branding is the trainer's handle and the end card of every job (REELS_HANDLE*); nil: none.
+	branding *editjob.Branding
+	log      *slog.Logger
+	now      func() time.Time
 }
 
 func NewExecutor(b board, s store, d decider, tech techReporter, cfg *config.Editor, log *slog.Logger) *Executor {
 	return &Executor{
 		board: b, store: s, decider: d, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
 		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, reelsMax: cfg.ReelsMaxDuration,
-		reelsTarget: max(cfg.ReelsTargetDuration, 0), hookTitle: cfg.HookTitle, log: log, now: time.Now,
+		reelsTarget: max(cfg.ReelsTargetDuration, 0), hookTitle: cfg.HookTitle, branding: brandingOf(cfg), log: log,
+		now: time.Now,
 	}
+}
+
+// brandingOf is the handle and the card of the jobs by REELS_HANDLE*: nil without a handle.
+func brandingOf(cfg *config.Editor) *editjob.Branding {
+	handle := strings.TrimSpace(cfg.ReelsHandle)
+	if handle == "" {
+		return nil
+	}
+
+	return &editjob.Branding{Handle: handle, Icon: cfg.ReelsHandleIcon, EndCard: cfg.ReelsEndCard}
+}
+
+// CheckBranding fails the start of the app (and of cmd/edit-local) on an invalid REELS_HANDLE: a typo is found at
+// once, not on a draft.
+func CheckBranding(cfg *config.Editor) error {
+	branding := brandingOf(cfg)
+	if branding == nil {
+		return nil
+	}
+
+	if err := branding.Validate(); err != nil {
+		return fmt.Errorf("failed to read REELS_HANDLE: %w", err)
+	}
+
+	return nil
 }
 
 // Execute returns the video draft when the worker has finished, a permanent or temporary error when it failed, and
@@ -169,15 +197,22 @@ func (e *Executor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.
 }
 
 // newJob is a job of the version of the task, due by the configured limits from now, with the fingerprint of the
-// trainer's text it is made for.
+// trainer's text it is made for and the trainer's handle.
 func (e *Executor) newJob(data *tasks.ExecuteData) *editjob.Job {
 	now := e.now()
 
-	return &editjob.Job{
+	job := &editjob.Job{
 		ID: editjob.JobID(data.TaskID, data.Version), TaskID: data.TaskID, Version: data.Version,
 		SourceKey: data.Media[0], CreatedAt: now, QueueDeadline: now.Add(e.queueTimeout), Timeout: e.jobTimeout,
 		RevisionHash: revisionHash(data),
 	}
+
+	if e.branding != nil {
+		branding := *e.branding
+		job.Branding = &branding
+	}
+
+	return job
 }
 
 // revisionHash fingerprints the revision of a new version, the caption of the first one.

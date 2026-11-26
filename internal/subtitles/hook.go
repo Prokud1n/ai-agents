@@ -57,11 +57,14 @@ type HookStyle struct {
 	Gap int `yaml:"gap"`
 	// CharWidth is the average width of a character in font sizes, for the estimate of a line (as layout.char_width).
 	CharWidth float64 `yaml:"char_width"`
+	// Shadow of the hook and the screen notes (no box): stronger in the word layout, where no vignette is under them.
+	Shadow Border `yaml:"shadow"`
 }
 
-// hookPosition is the edge the hook stands at: the subtitles' one, the top for subtitles in the middle.
+// hookPosition is the edge the hook stands at: the subtitles' one, the top for subtitles in the middle and in the word
+// layout.
 func (s *Style) hookPosition() Position {
-	if s.Layout.Position == BottomPosition {
+	if s.Layout.Position == BottomPosition && !s.wordMode() {
 		return BottomPosition
 	}
 
@@ -93,9 +96,9 @@ func (s *Style) hookHeight(lines int) int {
 }
 
 // hookSubtitlesMargin is the margin of the subtitles shown with a hook of the lines: right after it from the same
-// edge. 0 for subtitles in the middle (they stay where they are) or without a hook.
+// edge. 0 for subtitles in the middle or in the word layout (they stay where they are) or without a hook.
 func (s *Style) hookSubtitlesMargin(lines int) int {
-	if s.Layout.Position == MiddlePosition || lines <= 0 {
+	if s.Layout.Position == MiddlePosition || lines <= 0 || s.wordMode() {
 		return 0
 	}
 
@@ -169,6 +172,11 @@ func validateHook(s *Style) []error {
 
 	errs = append(errs, validateHookValues(h)...)
 	errs = append(errs, validateHookBox(h)...)
+
+	if err := validateBorder("hook.shadow", h.Shadow); err != nil {
+		errs = append(errs, err)
+	}
+
 	if len(errs) > 0 {
 		return errs
 	}
@@ -242,6 +250,10 @@ func validateHookPlace(s *Style) []error {
 	if hookTop < titleBottom && titleTop < hookBottom {
 		errs = append(errs, fmt.Errorf("hook (%d..%d px) overlaps the titles (%d..%d px)", hookTop, hookBottom,
 			titleTop, titleBottom))
+	}
+
+	if s.wordMode() {
+		return errs // the words have a place of their own: validateWordBox
 	}
 
 	margin := s.hookSubtitlesMargin(hookLines)
@@ -462,7 +474,7 @@ func charsScale(chars, maxChars int) int {
 }
 
 // hookStyleLine is the style of the hook at the hook's edge: on its plate when the style has one, otherwise with the
-// outline and the shadow of the subtitles.
+// outline of the subtitles and its own shadow.
 func hookStyleLine(style *Style) string {
 	h := &style.Hook
 	alignment, marginV := placement(&Layout{
@@ -470,7 +482,7 @@ func hookStyleLine(style *Style) string {
 	})
 
 	borderStyle, outlineColor, outline := outlineBorderStyle, style.Outline.Color, style.Outline.Size
-	shadowColor, shadow := style.Shadow.Color, style.Shadow.Size
+	shadowColor, shadow := h.Shadow.Color, h.Shadow.Size
 
 	if h.Box != "" {
 		borderStyle, outlineColor, outline, shadow = boxBorderStyle, h.Box, h.BoxPadding, 0
@@ -494,10 +506,12 @@ func hookStyleLine(style *Style) string {
 }
 
 // hookLayout is the hook title of a document: shown until end (0: no hook), the subtitles that start before it stand
-// at margin (0: where they are).
+// at margin (0: where they are); the same for the screen notes after it.
 type hookLayout struct {
 	end    float64
 	margin int
+	// notes are the blocks of the screen notes after the hook: the subtitles shown with one stand under it too.
+	notes []noteBlock
 }
 
 // The shade under the subtitles shown with the hook: the vignette is static (burned by ffmpeg) and reaches only the
@@ -516,37 +530,22 @@ const (
 	assBlack = "&H00000000"
 )
 
-// shadeEvent is the drawing that extends the vignette under the hook and the subtitles shown with it, from the start
-// of the reel to the end of the hook or of the last of those subtitles, fading like the hook; "" without a hook, a
-// vignette or subtitles to move. It is the first event, on layer 0, under every text.
-func shadeEvent(cues []cue, style *Style, hook hookLayout) string {
-	v := style.Vignette
-	if hook.end <= 0 || hook.margin == 0 || !v.Enabled || style.Layout.Position == MiddlePosition {
-		return ""
-	}
-
-	end := hook.end
-
-	for _, c := range cues {
-		if c.Start < hook.end {
-			end = max(end, c.End)
-		}
-	}
-
+// shadeDrawing darkens the frame from start to end (fading in and out by fade, ms) from where the vignette fades down
+// to the subtitles standing at margin (mirrored at the bottom), like the vignette.
+func shadeDrawing(start, end float64, fade [2]int, margin int, style *Style) string {
 	plateau, bottom := style.vignetteSpan()
-	top, low := plateau+shadeInset, hook.margin+style.blockHeight()+shadePad
+	top, low := plateau+shadeInset, margin+style.blockHeight()+shadePad
 
 	if bottom {
 		top, low = FrameHeight-low, FrameHeight-top
 	}
 
-	fade := min(style.Hook.Fade, int(end*millisPerSecond)/2)
-	alpha := opaque - int(math.Round(v.Opacity*opaque))
+	alpha := opaque - int(math.Round(style.Vignette.Opacity*opaque))
 
 	return fmt.Sprintf("Dialogue: 0,%s,%s,%s,,0,0,0,,{\\an7\\pos(0,0)\\fad(%d,%d)\\1c&H000000&\\1a&H%02X&\\blur%d\\p1}"+
-		"m %d %d l %d %d l %d %d l %d %d{\\p0}\n", formatTime(0), formatTime(end), shadeStyleName, fade, fade, alpha,
-		shadeBlur, -shadeOverhang, top, FrameWidth+shadeOverhang, top, FrameWidth+shadeOverhang, low, -shadeOverhang,
-		low)
+		"m %d %d l %d %d l %d %d l %d %d{\\p0}\n", formatTime(start), formatTime(end), shadeStyleName, fade[0], fade[1],
+		alpha, shadeBlur, -shadeOverhang, top, FrameWidth+shadeOverhang, top, FrameWidth+shadeOverhang, low,
+		-shadeOverhang, low)
 }
 
 // shadeStyleLine is the style of the shade drawing: black, no outline or shadow (the text font only keeps libass from

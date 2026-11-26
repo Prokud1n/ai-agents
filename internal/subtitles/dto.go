@@ -21,6 +21,39 @@ type CreateSubtitlesData struct {
 	// second after the first phrase and the transcript's Duration); the subtitles of that time stand clear of it.
 	// Plain text, escaped like speech; empty: none.
 	Hook string
+	// Notes are the points and numbers of a talking head (a list title, its items, short callouts) on the timeline of
+	// the transcript, drawn in the Hook style at its place once the hook is gone. Plain text, escaped like speech.
+	Notes []Note
+	// Branding is the trainer's handle over the reel and the end card with it; nil or an empty handle: none.
+	Branding *Branding
+}
+
+// NoteKind is what a screen note is.
+type NoteKind string
+
+const (
+	// ListTitleNote starts a list: the items after it are shown under it.
+	ListTitleNote NoteKind = "list_title"
+	// ListItemNote is an item of the list: the items pile up line by line.
+	ListItemNote NoteKind = "list_item"
+	// CalloutNote is a short number or remark shown alone for a moment.
+	CalloutNote NoteKind = "callout"
+)
+
+// Note is a point or a number shown from Start; End 0: a list stays until the next note, a callout a moment.
+type Note struct {
+	Kind  NoteKind
+	Text  string
+	Start float64
+	End   float64
+}
+
+// Branding is the trainer's Instagram handle («@prokudina.ana»), drawn small at the right edge over the whole reel
+// with a simple Instagram icon (Icon) and large in the middle of the end card over the last seconds (EndCard).
+type Branding struct {
+	Handle  string
+	Icon    bool
+	EndCard bool
 }
 
 // Title is a caption shown from Start to End, in seconds.
