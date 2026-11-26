@@ -311,7 +311,7 @@ func TestPromptCleanup(t *testing.T) {
 
 	selected := selectionRequest(t, 1)
 	selected.Cleanup = true
-	assert.Contains(t, Prompt(selected), "Сначала выкинь неудачные дубли и подготовку к съёмке; из дублей оставляй "+
-		"последний полный.")
+	assert.Contains(t, Prompt(selected), "Сначала выкинь неудачные дубли, повторы подряд и подготовку к съёмке через "+
+		"cleanup_words")
 	assert.NotContains(t, Prompt(selected), "Ещё почисти ролик", "the selection is not the cleaning mode")
 }
