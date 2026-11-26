@@ -352,11 +352,14 @@ func LoadStyle(path string) (Style, error) {
 
 // ParseStyle decodes YAML over DefaultStyle strictly (unknown fields are errors) and validates the result.
 func ParseStyle(data []byte) (Style, error) {
-	return parseStyleOver(DefaultStyle(), data)
+	base := DefaultStyle()
+
+	return parseStyleOver(&base, data)
 }
 
-// parseStyleOver decodes YAML over the base style strictly and validates the result.
-func parseStyleOver(style Style, data []byte) (Style, error) {
+// parseStyleOver decodes YAML over a copy of the base style strictly and validates the result.
+func parseStyleOver(base *Style, data []byte) (Style, error) {
+	style := *base
 
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)

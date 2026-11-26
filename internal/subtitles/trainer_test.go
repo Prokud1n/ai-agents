@@ -72,7 +72,8 @@ func TestValidateTrainerStyle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := parseStyleOver(DefaultStyle(), []byte(tt.input))
+			base := DefaultStyle()
+			_, err := parseStyleOver(&base, []byte(tt.input))
 			if tt.expectedErr == "" {
 				require.NoError(t, err)
 
@@ -106,19 +107,6 @@ func TestCensor(t *testing.T) {
 		{name: "распиздяй", input: "распиздяй", expected: "расп*здяй"},
 		{name: "мудак", input: "мудак", expected: "м*дак"},
 		{name: "a phrase", input: "это просто пиздец какой-то", expected: "это просто п*здец какой-то"},
-		{name: "употреблять", input: "употреблять", expected: "употреблять"},
-		{name: "оскорблять", input: "оскорблять", expected: "оскорблять"},
-		{name: "ребята", input: "ребята", expected: "ребята"},
-		{name: "сукно", input: "сукно", expected: "сукно"},
-		{name: "хлеба", input: "хлеба", expected: "хлеба"},
-		{name: "себе", input: "себе", expected: "себе"},
-		{name: "плохую", input: "плохую", expected: "плохую"},
-		{name: "тихую", input: "тихую", expected: "тихую"},
-		{name: "бляшки", input: "бляшки", expected: "бляшки"},
-		{name: "мудрый", input: "мудрый", expected: "мудрый"},
-		{name: "страхуйте", input: "страхуйте", expected: "страхуйте"},
-		{name: "небо", input: "небо", expected: "небо"},
-		{name: "a number", input: "10", expected: "10"},
 	}
 
 	for _, tt := range tests {
@@ -126,6 +114,18 @@ func TestCensor(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.expected, censor(tt.input))
+		})
+	}
+
+	// Words with the letters of a root inside stay as they are.
+	for _, word := range []string{
+		"употреблять", "оскорблять", "ребята", "сукно", "хлеба", "себе", "плохую", "тихую", "бляшки", "мудрый",
+		"страхуйте", "небо", "10",
+	} {
+		t.Run(word, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, word, censor(word))
 		})
 	}
 }
@@ -239,7 +239,7 @@ func TestSectionBlocks(t *testing.T) {
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5}, {Kind: SectionNote, Text: fear2, Start: 5.2}},
 			expected: []noteBlock{block(5.2, 9.2, fear2Caps)},
 		},
-		{name: "an empty heading", notes: []Note{{Kind: SectionNote, Text: " ​ ", Start: 5}}, expected: []noteBlock{}},
+		{name: "an empty heading", notes: []Note{{Kind: SectionNote, Text: " \u200b ", Start: 5}}, expected: []noteBlock{}},
 	}
 
 	for _, tt := range tests {

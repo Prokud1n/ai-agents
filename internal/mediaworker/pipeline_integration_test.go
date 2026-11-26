@@ -192,7 +192,7 @@ func realPipelineStyled(t *testing.T, files store, speech transcriber, styleFile
 		Store: files, Prober: runner, Keys: fakeKeys{}, Transcriber: speech, Cutter: cutter, Burner: burner,
 		// The sound and the zoom as the worker has them by default: the duration and frame checks hold with them.
 		Config: &config.MediaWorker{
-			WorkDir: t.TempDir(), MaxSourceDuration: time.Minute, MaxSourceSize: 1 << 30, Fit: string(ffmpeg.PadFitMode),
+			WorkDir: t.TempDir(), MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 30, Fit: string(ffmpeg.PadFitMode),
 			Loudness: testLoudness, Denoise: true, Zoom: testZoom,
 		},
 		Log: log,

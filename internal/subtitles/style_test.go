@@ -132,7 +132,8 @@ func TestParseStyle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := parseStyleOver(WordsStyle(), []byte(tt.input))
+			base := WordsStyle()
+			got, err := parseStyleOver(&base, []byte(tt.input))
 			if tt.expectedErr != "" {
 				require.ErrorIs(t, err, ErrInvalidStyle)
 				assert.Contains(t, err.Error(), tt.expectedErr)

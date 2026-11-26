@@ -91,7 +91,7 @@ func TestCheckTopbar(t *testing.T) {
 		{name: "a backslash", text: "2x\\N", invalid: true},
 		{name: "angle brackets", text: "<b>2x</b>", invalid: true},
 		{name: "a line break", text: "2x\nREC", invalid: true},
-		{name: "an invisible character", text: "2​x", invalid: true},
+		{name: "an invisible character", text: "2\u200bx", invalid: true},
 	}
 
 	for _, tt := range tests {
