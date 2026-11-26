@@ -16,6 +16,9 @@ import (
 // mp4Extension is shared by two MIME types.
 const mp4Extension = ".mp4"
 
+// UnknownExtension is what Extension gives a file that is neither of a known video type nor named like one.
+const UnknownExtension = defaultExtension
+
 const (
 	defaultExtension   = ".bin"
 	defaultContentType = "application/octet-stream"

@@ -23,6 +23,7 @@ const tempFilePattern = TempFilePrefix + "*"
 type objectStorage interface {
 	PutObject(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 	GetObject(ctx context.Context, key string) (io.ReadCloser, error)
+	ObjectExists(ctx context.Context, key string) (bool, error)
 }
 
 // Store copies incoming files to S3 and gives them back as local files. Files made from them (the editor's results)
@@ -89,6 +90,11 @@ func (s *Store) Save(ctx context.Context, f *File, r io.ReadSeeker) (string, err
 	s.log.InfoContext(ctx, "media: file saved", "key", key, "size", size)
 
 	return key, nil
+}
+
+// Key is the key Save stores the file under (see Key): a caller can check the object before it writes it.
+func (s *Store) Key(f *File) (string, error) {
+	return Key(s.prefix, f)
 }
 
 // ResultKey is the key of a result file made from the stored source (see the package's ResultKey): the editor
@@ -242,6 +248,20 @@ func (s *Store) Read(ctx context.Context, key string, maxSize int64) ([]byte, er
 	}
 
 	return data, nil
+}
+
+// Exists reports whether a file of this store is stored under the key (a HEAD request: nothing is downloaded).
+func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
+	if _, err := s.parseOwnKey(key); err != nil {
+		return false, err
+	}
+
+	exists, err := s.storage.ObjectExists(ctx, key)
+	if err != nil {
+		return false, fmt.Errorf("failed to check media file: %w", err)
+	}
+
+	return exists, nil
 }
 
 // parseOwnKey parses the key and checks that it is under one of this store's prefixes.

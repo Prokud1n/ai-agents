@@ -100,6 +100,19 @@ func (c *Client) GetObject(ctx context.Context, key string) (io.ReadCloser, erro
 	return obj, nil
 }
 
+// ObjectExists reports whether there is an object under the key (a HEAD request, nothing is read).
+func (c *Client) ObjectExists(ctx context.Context, key string) (bool, error) {
+	if _, err := c.mc.StatObject(ctx, c.bucket, key, minio.StatObjectOptions{}); err != nil {
+		if minio.ToErrorResponse(err).Code == noSuchKeyCode {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("failed to stat s3 object: %w", err)
+	}
+
+	return true, nil
+}
+
 func (c *Client) Bucket() string {
 	return c.bucket
 }

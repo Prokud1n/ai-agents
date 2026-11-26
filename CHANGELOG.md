@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `make edit` — the editor without Telegram (T3.18). `make edit FILE=<video> [CAPTION=…] [OUT=./edits/<name>]` runs
+  the app's edit of a local video — the editor's model, its decisions, the running media worker — and puts the reel,
+  `plan.json`, `decisions.log`, the draft's description and the timings by stage into `OUT/v1/`; `make edit OUT=…
+  REVISION="…"` makes the next version as a reply to the draft would. Nothing goes to the group and no task is queued:
+  the task is synthetic (ID above 10^18 from a Redis counter), the state is `OUT/state.json`. The summary shows the
+  model's calls and their cost for the run (also recorded in `llm_usage`). New binary `cmd/edit-local` in the app image,
+  `scripts/edit.sh` (the video is mounted read-only, `OUT` belongs to the user). Ctrl+C takes the job off the worker's
+  board; `OUT/.lock` keeps two runs out of one directory (the lock of a killed container is removed by `make edit`); a version made but not downloaded is `pending` in
+  `state.json` and `make edit OUT=…` alone downloads it; the source gets a random S3 name and a taken key is never
+  overwritten; `~` in paths is expanded, `$` in texts is kept; an app image older than the code asks for `make up`
+  (the check is shared with `make kb-*`, `scripts/image-age.sh`).
 - Hook title of a reel (T3.15b). The editor's model proposes a hook (`hook_title` of `submit_edit`: an address to the
   audience or a personal fact or thesis from the speech, 1–14 words, at most 90 characters, quotes around it and a
   period at the end dropped, in the language of the reel, no promises the reel does not keep, no emoji, hashtags or
