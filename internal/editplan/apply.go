@@ -68,6 +68,12 @@ type Input struct {
 	// ScreenNotes are the points and numbers on the screen of a talking head: a list replaces the previous version's
 	// (empty removes them), nil keeps them.
 	ScreenNotes *[]NoteInput `json:"screen_notes"`
+	// Declined are the trainer's requests the editor does not do (music, color...), by kind: the trainer gets the
+	// prepared text of each, with the rest of the edit or with a refusal.
+	Declined []DeclinedKind `json:"declined"`
+	// CleanupWords are the failed takes, a phrase said again and the preparation for the shooting the cleaning of a
+	// first version cuts (Request.Cleaning): cut like Remove, counted in one line of the description.
+	CleanupWords []roughcut.WordRange `json:"cleanup_words"`
 }
 
 // FixInput corrects the subtitle word Index to Text; Word is the word the model means as it reads it in the
@@ -110,6 +116,8 @@ const (
 // Apply checks the model's input against the request and returns the decision: for an edit, the whole edit of the
 // new version (the previous edit with this change), checked by building the plan with it. A *CheckError is the
 // reason for the model; any other error is a broken request.
+//
+// A revision that changes nothing but declines a request (only «добавь музыку») is a refusal with the declined texts.
 func Apply(req *Request, in *Input) (*Outcome, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
@@ -117,16 +125,38 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 
 	reason := oneLine(in.Reason)
 
+	if err := checkDeclined(req, in.Declined); err != nil {
+		return nil, err
+	}
+
+	declined := declinedLines(in.Declined)
+
 	switch in.Decision {
 	case CannotDecision:
-		return &Outcome{Kind: CannotOutcome, Reason: reason}, nil
+		return &Outcome{Kind: CannotOutcome, Reason: reason, Declined: declined}, nil
 	case UnclearDecision:
-		return &Outcome{Kind: UnclearOutcome, Reason: reason}, nil
+		return &Outcome{Kind: UnclearOutcome, Reason: reason, Declined: declined}, nil
 	case EditDecision:
 	default:
 		return nil, checkFailedf("decision должен быть edit, cannot или unclear, а не %q", in.Decision)
 	}
 
+	outcome, err := applyEdit(req, in, reason)
+
+	switch {
+	case errors.Is(err, errNothingChanged) && len(declined) > 0:
+		return &Outcome{Kind: CannotOutcome, Reason: reason, Declined: declined}, nil
+	case err != nil:
+		return nil, err
+	}
+
+	outcome.Declined = declined
+
+	return outcome, nil
+}
+
+// applyEdit checks and builds the edit decision.
+func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 	if err := checkInput(req, in); err != nil {
 		return nil, err
 	}
@@ -150,6 +180,12 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	}
 
 	sel := newSelection(req, in, mode, &plan)
+	if sel.cleanup {
+		if sel.cleaned, err = cleanupOf(req, in, &trimmed, &edit, &plan); err != nil {
+			return nil, err
+		}
+	}
+
 	edit.Notes, edit.Details = notes(req, in, reason, &sel), details(req, in, &sel)
 
 	shown, err := checkTitlesShown(&edit, &plan)
@@ -173,7 +209,7 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 		Kind: EditOutcome, Edit: edit, Cut: cut, Kept: kept,
 		Changes:  describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}, &sel),
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
-		Selected: sel.on, Target: in.TargetSeconds,
+		Selected: sel.on, Target: in.TargetSeconds, Cleaned: sel.cleaned.fragments,
 	}, nil
 }
 
@@ -182,9 +218,9 @@ func checkInput(req *Request, in *Input) error {
 	words := len(req.Transcript.Words)
 
 	switch {
-	case len(in.Remove)+len(in.Restore)+len(in.Hide) > maxRanges:
-		return checkFailedf("слишком много отрезков: не больше %d в remove_words, restore_words и hide_words вместе",
-			maxRanges)
+	case len(in.Remove)+len(in.Restore)+len(in.Hide)+len(in.CleanupWords) > maxRanges:
+		return checkFailedf("слишком много отрезков: не больше %d в remove_words, restore_words, hide_words и "+
+			"cleanup_words вместе", maxRanges)
 	case len(in.FixWords) > maxFixes:
 		return checkFailedf("слишком много исправлений: не больше %d в fix_words", maxFixes)
 	case !validSeconds(in.TrimStart) || !validSeconds(in.TrimEnd):
@@ -194,7 +230,7 @@ func checkInput(req *Request, in *Input) error {
 			timelineDuration(req))
 	}
 
-	if err := checkRanges(words, in.Remove, in.Restore, in.Hide); err != nil {
+	if err := checkRanges(words, in.Remove, in.Restore, in.Hide, in.CleanupWords); err != nil {
 		return err
 	}
 
@@ -215,6 +251,10 @@ func checkInput(req *Request, in *Input) error {
 	}
 
 	if err := checkNotesInput(req, in); err != nil {
+		return err
+	}
+
+	if err := checkCleanup(req, in); err != nil {
 		return err
 	}
 
@@ -461,7 +501,7 @@ func mergeEdit(req *Request, in *Input, trimmed []roughcut.WordRange) (roughcut.
 	state := previousState(&previous, words)
 	changed := make([]wordState, words)
 
-	for _, r := range slices.Concat(trimmed, in.Remove) {
+	for _, r := range slices.Concat(trimmed, in.Remove, in.CleanupWords) {
 		mark(changed, r, removedWord)
 	}
 
@@ -582,6 +622,11 @@ func buildPlan(req *Request, edit *roughcut.Edit) (roughcut.Plan, error) {
 	return plan, nil
 }
 
+// errNothingChanged: the revision changes nothing in the reel; the model did not find what to change.
+var errNothingChanged = &CheckError{
+	Message: "правка ничего не меняет в ролике: проверь индексы слов, или ответь decision unclear",
+}
+
 // checkChanged refuses a revision that changes nothing in the reel: the model did not find what to change.
 func checkChanged(req *Request, edit *roughcut.Edit, plan *roughcut.Plan) error {
 	previous := previousEdit(req.Plan)
@@ -594,7 +639,7 @@ func checkChanged(req *Request, edit *roughcut.Edit, plan *roughcut.Plan) error 
 	if slices.Equal(before.Keep, plan.Keep) && slices.Equal(previous.Words, edit.Words) &&
 		slices.Equal(previous.Titles, edit.Titles) && previous.Mute == edit.Mute && slices.Equal(previous.Hide, edit.Hide) &&
 		previous.Hook == edit.Hook && slices.Equal(previous.ScreenNotes, edit.ScreenNotes) {
-		return checkFailedf("правка ничего не меняет в ролике: проверь индексы слов, или ответь decision unclear")
+		return errNothingChanged
 	}
 
 	return nil
@@ -624,6 +669,8 @@ func notes(req *Request, in *Input, reason string, sel *selection) []string {
 		out = append(out, "Подпись тренера к исходнику: "+orDash(reason))
 	case sel.on:
 		out = append(out, "Отбор под рилс: "+orDash(reason))
+	case sel.cleanup:
+		out = append(out, "Чистка первой версии: "+orDash(reason))
 	default:
 		out = append(out, "Решение по черновой склейке: "+orDash(reason))
 	}
@@ -644,7 +691,7 @@ func notes(req *Request, in *Input, reason string, sel *selection) []string {
 // phrase left out of it, and the disputed repeats of a first version the model left undecided while both phrases
 // stay in the reel.
 func details(req *Request, in *Input, sel *selection) []string {
-	out := selectionNotes(req, in, sel)
+	out := slices.Concat(selectionNotes(req, in, sel), cleanupNotes(req, in, sel))
 
 	if req.IsRevision() {
 		return out

@@ -538,7 +538,7 @@ func TestExecutorDecidesPlannedJob(t *testing.T) {
 	}{
 		{
 			name: "the caption applied", decider: &fakeDecider{outcome: editOutcome()}, edit: &editOutcome().Edit,
-			expected: &editjob.Summary{Changes: []string{
+			expected: &editjob.Summary{Cleaned: true, Changes: []string{
 				testChange, "Спорные повторы: вырезал 1, оставил 0.",
 			}},
 		},
@@ -637,6 +637,32 @@ func TestExecutorRevision(t *testing.T) {
 	assert.Len(t, decider.requests, 1, "a finished version is not decided again")
 }
 
+// TestExecutorRevisionDeclinedPart: a revision done in part carries the texts of the declined requests in its
+// description, right after the header.
+func TestExecutorRevisionDeclinedPart(t *testing.T) {
+	t.Parallel()
+
+	outcome := editOutcome()
+	outcome.Declined = []string{testMusicText}
+	b := &fakeBoard{}
+	deps := &testDeps{board: b, store: testStore{files: storedFiles(t)}, decider: &fakeDecider{outcome: outcome},
+		tech: &fakeTech{}}
+
+	_, err := newTestExecutorWith(deps).Execute(t.Context(), revisionData())
+
+	var deferred *tasks.DeferredError
+	require.ErrorAs(t, err, &deferred)
+	require.Len(t, b.submitted, 1)
+	assert.Equal(t, &editjob.Summary{Changes: outcome.Changes, PreviousDuration: 45, Note: testMusicText},
+		b.submitted[0].Summary)
+
+	b.result = &editjob.Result{JobID: testJob2ID, Status: editjob.DoneStatus, SourceDuration: 60, Duration: 42}
+
+	out, err := newTestExecutorWith(deps).Execute(t.Context(), revisionData())
+	require.NoError(t, err)
+	assert.Equal(t, "Новая версия рилс: было 0:45, стало 0:42.\n"+testMusicText+"\n"+testChange, out.Text)
+}
+
 // TestExecutorRevisionRefused: a revision the editor cannot do or did not understand gets the trainer's text and no
 // job; so does an empty revision (without a model call) and a revision of a version whose files are gone.
 func TestExecutorRevisionRefused(t *testing.T) {
@@ -651,6 +677,11 @@ func TestExecutorRevisionRefused(t *testing.T) {
 		noRequest bool
 	}{
 		{name: "cannot", outcome: &editplan.Outcome{Kind: editplan.CannotOutcome}, expected: cannotRevisionText},
+		{
+			name:     "declined: the prepared texts",
+			outcome:  &editplan.Outcome{Kind: editplan.CannotOutcome, Declined: []string{testMusicText, testSpeedText}},
+			expected: testMusicText + " " + testSpeedText,
+		},
 		{name: "unclear", outcome: &editplan.Outcome{Kind: editplan.UnclearOutcome}, expected: unclearRevisionText},
 		{
 			name: "invalid twice", outcome: &editplan.Outcome{Kind: editplan.InvalidOutcome, Reason: "нет слова 99"},
@@ -1038,7 +1069,7 @@ func TestExecutorSelectsLongTalk(t *testing.T) {
 		Kind: editplan.EditOutcome, Selected: true, Changes: []string{droppedHello},
 		Edit: roughcut.Edit{Remove: []roughcut.WordRange{{From: 0, To: 0}}, Notes: []string{"Отбор под рилс: —"}},
 	}
-	failedNote := fmt.Sprintf(longFailedNote, "20–40 с", "30 секунд")
+	failedNote := fmt.Sprintf(longFailedNote, "20–40 с", cutWithoutTakes, "30 секунд")
 
 	tests := []struct {
 		name     string
@@ -1061,7 +1092,7 @@ func TestExecutorSelectsLongTalk(t *testing.T) {
 			name:    "the model could not pick: the cleaned cut",
 			decider: &fakeDecider{outcome: &editplan.Outcome{Kind: editplan.InvalidOutcome, Reason: "длина"}},
 			expected: &editjob.Summary{
-				Changes: []string{leftOneRepeat}, Note: fmt.Sprintf(longUnchosenNote, "20–40 с", "30 секунд"),
+				Changes: []string{leftOneRepeat}, Note: fmt.Sprintf(longUnchosenNote, "20–40 с", cutWithoutTakes, "30 секунд"),
 			},
 		},
 		{

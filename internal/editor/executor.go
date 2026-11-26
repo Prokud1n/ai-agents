@@ -109,6 +109,9 @@ type Executor struct {
 	reelsTarget time.Duration
 	// hookTitle: the model proposes the hook title of every first version (EDITOR_HOOK_TITLE).
 	hookTitle bool
+	// cleanup: the model cleans the first version of a talking head of the failed takes and the preparation for the
+	// shooting (EDITOR_CLEANUP).
+	cleanup bool
 	// branding is the trainer's handle and the end card of every job (REELS_HANDLE*); nil: none.
 	branding *editjob.Branding
 	log      *slog.Logger
@@ -119,7 +122,8 @@ func NewExecutor(b board, s store, d decider, tech techReporter, cfg *config.Edi
 	return &Executor{
 		board: b, store: s, decider: d, tech: tech, jobTimeout: cfg.JobTimeout, queueTimeout: cfg.QueueTimeout,
 		workerWait: cfg.WorkerWait, pollInterval: cfg.PollInterval, reelsMax: cfg.ReelsMaxDuration,
-		reelsTarget: max(cfg.ReelsTargetDuration, 0), hookTitle: cfg.HookTitle, branding: brandingOf(cfg), log: log,
+		reelsTarget: max(cfg.ReelsTargetDuration, 0), hookTitle: cfg.HookTitle, cleanup: cfg.Cleanup,
+		branding: brandingOf(cfg), log: log,
 		now: time.Now,
 	}
 }
@@ -256,12 +260,13 @@ func (e *Executor) dropStaleRevision(ctx context.Context, data *tasks.ExecuteDat
 	return nil
 }
 
-// autoJob is the first edit: the worker stops after the plan when the caption is to be applied, a repeat decided,
-// a talking head longer than the target shortened or the hook title proposed.
+// autoJob is the first edit: the worker stops after the plan when the caption is to be applied, the reel cleaned by
+// the model (EDITOR_CLEANUP: every first version), a repeat decided, a talking head longer than the target shortened
+// or the hook title proposed.
 func (e *Executor) autoJob(data *tasks.ExecuteData) *editjob.Job {
 	job := e.newJob(data)
 	job.Stage = editjob.AutoStage
-	job.Decide = strings.TrimSpace(data.Input) != ""
+	job.Decide = strings.TrimSpace(data.Input) != "" || e.cleanup
 	job.TargetDuration = e.reelsTarget.Seconds()
 	job.Hook = e.hookTitle
 
@@ -291,12 +296,13 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	req.Caption = data.Input
 	req.TargetSeconds = e.reelsTarget.Seconds()
 	req.Hook = e.hookTitle
+	req.Cleanup = e.cleanup
 
 	outcome, err := e.decide(ctx, data, req)
 	if err != nil {
-		// A workout, a long talking head or a reel stopped only for the hook has a usable plan without the model:
-		// nothing cut, or the cleaning only (and no hook).
-		if (!isWorkout(req.Plan) && !req.Selecting() && !req.HookOnly()) || !e.fallBack(ctx, data, err) {
+		// A workout, a long talking head or a reel without a caption has a usable plan without the model: nothing cut,
+		// or the automatic cleaning only (and no hook).
+		if !usableWithoutModel(req) || !e.fallBack(ctx, data, err) {
 			return err
 		}
 
@@ -307,13 +313,7 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	job.Stage = editjob.RenderStage
 	job.Settings = new(req.Plan.Settings)
 	job.Summary = firstSummary(req, outcome)
-	// Without a decision the plan the worker made is rendered: for a source with little speech it is the safe workout
-	// one (nothing cut), not the talking-head cut.
-	job.Edit = req.Plan.Edit
-
-	if outcome.Kind == editplan.EditOutcome {
-		job.Edit = new(outcome.Edit)
-	}
+	job.Edit = renderedEdit(req, outcome)
 
 	replaced, err := e.board.Replace(ctx, job)
 	if err != nil {
@@ -327,6 +327,34 @@ func (e *Executor) decidePlanned(ctx context.Context, data *tasks.ExecuteData, r
 	}
 
 	return &tasks.DeferredError{After: e.pollInterval}
+}
+
+// usableWithoutModel: a workout, a long talking head or a reel without a caption has a usable plan without the
+// model.
+func usableWithoutModel(req *editplan.Request) bool {
+	return isWorkout(req.Plan) || req.Selecting() || req.CleanupOnly() || req.HookOnly()
+}
+
+// renderedEdit is the edit of the first version: the decision's, or without a decision the plan the worker made — for
+// a source with little speech the safe workout one (nothing cut), not the talking-head cut — with the hook title the
+// model proposed if it passed its checks.
+func renderedEdit(req *editplan.Request, outcome *editplan.Outcome) *roughcut.Edit {
+	if outcome.Kind == editplan.EditOutcome {
+		return new(outcome.Edit)
+	}
+
+	if outcome.Edit.Hook == "" {
+		return req.Plan.Edit
+	}
+
+	edit := roughcut.Edit{}
+	if req.Plan.Edit != nil {
+		edit = *req.Plan.Edit
+	}
+
+	edit.Hook = outcome.Edit.Hook
+
+	return &edit
 }
 
 // fallBack reports whether the first version of a workout, of a long talking head or of a reel stopped only for the
@@ -379,18 +407,39 @@ func (e *Executor) revise(ctx context.Context, data *tasks.ExecuteData) error {
 	switch outcome.Kind {
 	case editplan.EditOutcome:
 	case editplan.CannotOutcome:
-		return &tasks.PermanentError{Message: cannotRevisionText, Err: refusal(outcome)}
+		return &tasks.PermanentError{Message: cannotText(outcome), Err: refusal(outcome)}
 	default:
-		return &tasks.PermanentError{Message: unclearRevisionText, Err: refusal(outcome)}
+		return &tasks.PermanentError{Message: withDeclined(unclearRevisionText, outcome.Declined), Err: refusal(outcome)}
 	}
 
 	job := e.newJob(data)
 	job.Stage = editjob.RenderStage
 	job.Settings = new(req.Plan.Settings)
 	job.Edit = new(outcome.Edit)
-	job.Summary = &editjob.Summary{Changes: outcome.Changes, PreviousDuration: req.Plan.Duration}
+	job.Summary = &editjob.Summary{
+		Changes: outcome.Changes, PreviousDuration: req.Plan.Duration, Note: editplan.DeclinedText(outcome.Declined),
+	}
 
 	return e.submit(ctx, job)
+}
+
+// cannotText is the trainer's text of a revision the editor does not do: the prepared texts of the declined requests
+// («Музыку добавьте в Instagram…»), or the list of what the editor can do.
+func cannotText(outcome *editplan.Outcome) string {
+	if text := editplan.DeclinedText(outcome.Declined); text != "" {
+		return text
+	}
+
+	return cannotRevisionText
+}
+
+// withDeclined adds the prepared texts of the declined requests to the text.
+func withDeclined(text string, declined []string) string {
+	if len(declined) == 0 {
+		return text
+	}
+
+	return text + " " + editplan.DeclinedText(declined)
 }
 
 func refusal(outcome *editplan.Outcome) error {

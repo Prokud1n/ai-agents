@@ -40,6 +40,10 @@ type Editor struct {
 	// had nothing else to decide). false: no hook unless the trainer asks for one, and a short reel without a caption
 	// or disputed repeats is rendered at once, as before. Read by the app; the worker gets it in the job.
 	HookTitle bool `env:"EDITOR_HOOK_TITLE" envDefault:"true"`
+	// Cleanup: the editor's model cleans the first version of a talking head of the failed takes, a phrase said again
+	// in a row and the preparation for the shooting, with or without a caption, so every first version stops after the
+	// plan for the model's decision. false: only the automatic cut cleans it. Read by the app.
+	Cleanup bool `env:"EDITOR_CLEANUP" envDefault:"true"`
 	// ReelsHandle is the trainer's Instagram handle («@prokudina.ana»: «@» and 1–30 of a-z, 0-9, «.», «_»; anything
 	// else fails the start) drawn small at the right edge over every draft and large on its end card, in a subtitle
 	// style that draws it (style-words.yaml; the trainer's default style does not). Empty (the default): no handle and
@@ -74,8 +78,9 @@ type MediaWorker struct {
 	// MinSpeechShare: an auto job whose talking-head cut would keep less than this share of the source (the speech
 	// with its short pauses) stops for the editor's decision even without a caption or disputed repeats — it may be
 	// a workout, where cutting the silence cuts the exercises — and its plan is the safe workout one (nothing cut).
-	// 0 turns the check off: then only a source without words is decided. Why 0.6 — docs/SETUP.md.
-	MinSpeechShare float64 `env:"MEDIA_WORKER_MIN_SPEECH_SHARE" envDefault:"0.6"`
+	// 0 turns the check off: then only a source without words is decided. Why 0.35 — docs/SETUP.md (measured: talking
+	// heads 0.44–0.58, a workout 0.26, music 0.01).
+	MinSpeechShare float64 `env:"MEDIA_WORKER_MIN_SPEECH_SHARE" envDefault:"0.35"`
 	// Loudness the drafts are brought to: integrated loudness in LUFS (EBU R128; Instagram and other networks play
 	// at about -14), the true peaks at most -1.5 dBTP. "off" (or empty) keeps the level of the source.
 	Loudness string `env:"MEDIA_WORKER_LOUDNESS" envDefault:"-14"`

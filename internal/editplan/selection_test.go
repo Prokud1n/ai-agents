@@ -85,6 +85,9 @@ func TestApplySelection(t *testing.T) {
 	var check *CheckError
 	require.ErrorAs(t, err, &check, "12 s is longer than 4–8 s")
 	assert.Contains(t, check.Message, "рилс должен быть 4–8 с (допустимо 3.4–9.2 с)")
+	assert.Contains(t, check.Message, "вырежи ещё от", "the seconds to cut")
+	assert.Contains(t, check.Message, "ближе всего по длине: слова 0–4 (2,2 с) «привет сегодня расскажу про планку»",
+		"no phrase is that long: the closest are named")
 
 	outcome, err := Apply(req, &Input{
 		Decision: EditDecision, Reason: "ролик про планку: хук — польза, финал — призыв",
@@ -128,6 +131,22 @@ func TestApplyTargetLength(t *testing.T) {
 				Decision: EditDecision, TargetSeconds: 6, Remove: []roughcut.WordRange{introWords, plankWords},
 			},
 			expected: "длина по просьбе тренера — 6 с (допустимо 5.1–6.9 с)",
+		},
+		{
+			name: "too short for the length asked",
+			input: Input{
+				Decision: EditDecision, TargetSeconds: 6,
+				Remove: []roughcut.WordRange{introWords, plankWords, lowerWords, {From: 10, To: 13}},
+			},
+			expected: "ролик короче нужного: вырежи на ",
+		},
+		{
+			name: "too short: the ranges cut of that length",
+			input: Input{
+				Decision: EditDecision, TargetSeconds: 6,
+				Remove: []roughcut.WordRange{introWords, plankWords, lowerWords, {From: 10, To: 13}},
+			},
+			expected: "подходят по длине вырезанные тобой отрезки: слова 0–4 (2,2 с)",
 		},
 		{
 			name:     "shorter than a reel",

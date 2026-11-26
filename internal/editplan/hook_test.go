@@ -20,7 +20,7 @@ const (
 	hookWords    = "от 1 до 14 слов"
 	hookEmoji    = "без эмодзи и хештегов"
 	testHook     = "3 ошибки в планке"
-	oldHook      = "Спина ровно всегда"
+	oldHook      = "спина ровно всегда"
 	hookNoChange = "ничего не меняет"
 )
 
@@ -178,9 +178,17 @@ func TestPromptHook(t *testing.T) {
 			},
 		},
 		{
-			name:     "a short reel planned for the hook only",
+			name:     "a short reel planned for the hook only (the cleanup off)",
 			req:      hookOnlyRequest,
 			expected: []string{"Подписи нет — предложи только заголовок-хук; вырезать ничего не нужно."},
+		},
+		{
+			name: "a short reel cleaned, with the hook",
+			req:  cleanupRequest,
+			expected: []string{
+				"Подписи нет — почисти ролик (раздел «Чистка дублей и подготовки»)",
+				"содержательные фразы не сокращай. Предложи заголовок-хук.\n",
+			},
 		},
 		{
 			name: "a reel with disputed repeats and the hook",
@@ -242,6 +250,16 @@ func TestNormalizeHook(t *testing.T) {
 			assert.Equal(t, tt.expected, normalizeHook(tt.input))
 		})
 	}
+}
+
+// cleanupRequest is a short talking head without a caption, cleaned by the editor (with the hook): no disputed
+// repeats.
+func cleanupRequest() *Request {
+	req := testRequest(1, nil)
+	req.Hook, req.Cleanup = true, true
+	req.Plan.Candidates = nil
+
+	return req
 }
 
 // hookOnlyRequest is a short talking head stopped only for the hook title: no caption, no disputed repeats.
@@ -319,4 +337,58 @@ func TestApplyHookOnly(t *testing.T) {
 			assert.Equal(t, EditOutcome, outcome.Kind)
 		})
 	}
+}
+
+// TestHookOf: the model's hook title starts with a small letter unless its first word has another capital (an
+// abbreviation, a name written so); the hook the trainer dictated in her caption or revision stays as she wrote it.
+func TestHookOf(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		trainer  string
+		version  int
+		input    string
+		expected string
+	}{
+		{name: "a capital first", version: 1, input: "Спина болит?", expected: "спина болит?"},
+		{name: "one letter", version: 1, input: "Я тренируюсь 15 минут", expected: "я тренируюсь 15 минут"},
+		{name: "inside quotes", version: 1, input: "«Мой ребёнок билингв».", expected: "мой ребёнок билингв"},
+		{name: "an abbreviation", version: 1, input: "ЗОЖ без фанатизма", expected: "ЗОЖ без фанатизма"},
+		{name: "a hyphenated abbreviation", version: 1, input: "SMART-цели на месяц", expected: "SMART-цели на месяц"},
+		{name: "CamelCase", version: 1, input: "YouTube мне не нужен", expected: "YouTube мне не нужен"},
+		{name: "a name later", version: 1, input: "Как Анастасия тренируется", expected: "как Анастасия тренируется"},
+		{name: "a number first", version: 1, input: "5 Ошибок", expected: "5 Ошибок"},
+		{
+			name: "dictated in the revision", version: 2, trainer: "поменяй заголовок на «Мой путь в спорт»",
+			input: "Мой путь в спорт", expected: "Мой путь в спорт",
+		},
+		{
+			name: "dictated in the caption", version: 1, trainer: "заголовок: Планка за 5 минут",
+			input: "Планка за 5 минут", expected: "Планка за 5 минут",
+		},
+		{name: "proposed in a revision", version: 2, trainer: "придумай заголовок", input: "Мой путь", expected: "мой путь"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := &Request{Version: tt.version}
+			if tt.version > 1 {
+				req.Revision = tt.trainer
+			} else {
+				req.Caption = tt.trainer
+			}
+
+			assert.Equal(t, tt.expected, hookOf(req, tt.input))
+		})
+	}
+}
+
+// TestScreenNotesKeepCapitals: the screen notes are not lowered like the hook.
+func TestScreenNotesKeepCapitals(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "Москва за 2 дня", normalizeHook("Москва за 2 дня."))
 }

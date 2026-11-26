@@ -29,7 +29,7 @@ import (
 
 const (
 	// defaultSpeechShare is the default of MEDIA_WORKER_MIN_SPEECH_SHARE.
-	defaultSpeechShare = 0.6
+	defaultSpeechShare = 0.35
 	// workoutDuration of the synthetic workout: one spoken word, then the exercise shown in silence.
 	workoutDuration = 12
 	// noSpeechDuration of the synthetic workout to music: a tone all along, no words.

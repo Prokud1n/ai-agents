@@ -31,7 +31,7 @@ import (
 const (
 	// matroskaType of the synthetic sources saved to S3.
 	matroskaType = "video/x-matroska"
-	hookText     = "Планка без ошибок"
+	hookText     = "планка без ошибок"
 	proposeHook  = `{"decision": "edit", "reason": "ролик про планку", "hook_title": "` + hookText + `"}`
 	removeHook   = `{"decision": "edit", "reason": "убери заголовок", "hook_title": ""}`
 	hookRevision = "убери заголовок"
