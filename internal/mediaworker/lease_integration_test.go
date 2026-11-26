@@ -2,7 +2,10 @@ package mediaworker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,8 +14,11 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editjob"
+	"github.com/Prokud1n/ai-agents/internal/editlocal"
 	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
+	"github.com/Prokud1n/ai-agents/internal/providers/redis"
 	"github.com/Prokud1n/ai-agents/internal/redistest"
+	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
 const (
@@ -21,11 +27,13 @@ const (
 	leaseTTL = time.Second
 	// leaseCancelled: the lease expires (leaseTTL) and the worker sees it at its next check of the board.
 	leaseCancelled = leaseTTL + boardCheckInterval + 2*time.Second
+	// leaseDropEvery: how often the sleeping run's lease is deleted while the first transcription hangs.
+	leaseDropEvery = 50 * time.Millisecond
 )
 
 // TestIntegrationLeaseOfKilledRun is make edit killed (docker kill) while the worker transcribes its job: the job
 // carries a lease that nobody refreshes any more; the worker cancels it within the lease TTL and its board check —
-// Whisper gets a cancelled context, no result is stored, the entry is acked — instead of rendering it for nobody.
+// Whisper gets a cancelled context, the entry is acked with a temporary failure — instead of rendering it for nobody.
 func TestIntegrationLeaseOfKilledRun(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +112,73 @@ wait:
 	require.Eventually(t, func() bool { return queueEmpty(ctx, client, cfg.Stream) }, queueWait, queuePoll,
 		"the entry is acked")
 
-	_, found, err := board.Result(ctx, job.ID)
+	result, found, err := board.Result(ctx, job.ID)
 	require.NoError(t, err)
-	assert.False(t, found, "no result for nobody")
+	require.True(t, found, "a temporary failure: a run that only slept retries at once, a killed one's expires")
+	assert.Equal(t, editjob.FailedStatus, result.Status)
+	assert.Equal(t, editjob.TemporaryCode, result.Code)
+}
+
+// sleepyTranscriber is Whisper of a make edit run that slept past its lease TTL (a Mac asleep, a paused Docker VM): the
+// first call hangs while the lease is gone (drop deletes it again and again, as if nobody refreshed it), the next ones
+// answer with the speech of the clip.
+type sleepyTranscriber struct {
+	calls atomic.Int32
+	drop  func(ctx context.Context)
+}
+
+func (s *sleepyTranscriber) Transcribe(ctx context.Context, _ transcription.TranscribeData) (*transcription.Result, error) {
+	if s.calls.Add(1) > 1 {
+		return clipTranscript(), nil
+	}
+
+	ticker := time.NewTicker(leaseDropEvery)
+	defer ticker.Stop()
+
+	for {
+		s.drop(ctx)
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("failed to transcribe: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// dropLeases deletes every lease of the stream.
+func dropLeases(ctx context.Context, client *redis.Client, stream string) {
+	iter := client.Conn().Scan(ctx, 0, stream+":lease:*", 0).Iterator()
+
+	for iter.Next(ctx) {
+		_ = client.Conn().Del(ctx, iter.Val()).Err() // best effort: the next tick deletes it again
+	}
+}
+
+// TestIntegrationLeaseLostByLiveRun: the lease of a live make edit is lost (it slept past the TTL) while the worker
+// transcribes: the worker stores a temporary failure at once, and the run retries — a new job with its lease taken
+// again — and makes the version, instead of waiting for the job's timeout.
+func TestIntegrationLeaseLostByLiveRun(t *testing.T) {
+	t.Parallel()
+
+	client := redistest.Connect(t)
+	prefix := redistest.Prefix(t, client)
+	speech := &sleepyTranscriber{drop: func(ctx context.Context) { dropLeases(ctx, client, prefix+localStream) }}
+	runner := newLocalRunnerOn(t, client, prefix, speech, &scriptedDecider{}, false)
+
+	clip := filepath.Join(t.TempDir(), "source.mkv")
+	makeSpeechClip(t, clip, verticalSize, 30, false)
+
+	ctx, cancel := context.WithTimeout(t.Context(), editWait)
+	defer cancel()
+
+	out := t.TempDir()
+	began := time.Now()
+
+	report, err := runner.First(ctx, &editlocal.FirstData{Path: clip, OutDir: out})
+	require.NoError(t, err)
+	assert.True(t, report.Done)
+	assert.Equal(t, int32(2), speech.calls.Load(), "the job of the lost lease failed, the retry made the version")
+	assert.Less(t, time.Since(began), editWait/2, "retried at once, not after the job's timeout")
+	assert.FileExists(t, filepath.Join(out, editlocal.VersionDir(1), editlocal.ReelFile))
 }

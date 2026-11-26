@@ -67,10 +67,44 @@ type fakeBoard struct {
 	forgotten []string
 	// stored is the job on the board under its ID (a job of an earlier run); nil: none.
 	stored *editjob.Job
-	// lease is the token holding the lease now; leases counts the Lease calls, released the released tokens.
-	lease    string
-	leases   int
-	released []string
+	// result of the stored job; nil: none.
+	result *editjob.Result
+	// lease is the token holding the lease now; leases counts the Lease and RenewLease calls, released the released
+	// tokens. takeOverAfter: the lease is taken by another run at this renewal (0: never).
+	lease         string
+	leases        int
+	released      []string
+	takeOverAfter int
+}
+
+func (b *fakeBoard) RenewLease(_ context.Context, _, token string, _ time.Duration) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.leases++
+
+	if b.takeOverAfter > 0 && b.leases > b.takeOverAfter {
+		b.lease = "another-run"
+	}
+
+	if b.lease != "" && b.lease != token {
+		return false, nil
+	}
+
+	b.lease = token
+
+	return true, nil
+}
+
+func (b *fakeBoard) Result(_ context.Context, id string) (editjob.Result, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.result == nil || b.stored == nil || b.stored.ID != id || slices.Contains(b.forgotten, id) {
+		return editjob.Result{}, false, nil
+	}
+
+	return *b.result, true, nil
 }
 
 func (b *fakeBoard) Lease(_ context.Context, _, token string, _ time.Duration) error {
@@ -666,12 +700,30 @@ func TestRunnerDropsJobOfKilledRun(t *testing.T) {
 
 	id := editjob.JobID(testTaskID, 1)
 
+	doneResult := &editjob.Result{JobID: id, Status: editjob.DoneStatus}
+	failedResult := &editjob.Result{JobID: id, Status: editjob.FailedStatus}
+
 	tests := []struct {
 		name      string
 		stored    *editjob.Job
+		result    *editjob.Result
 		forgotten []string
 	}{
 		{name: "a job of a killed run", stored: &editjob.Job{ID: id, Lease: "killed-run"}, forgotten: []string{id}},
+		{
+			name: "a done job of a killed run for the same caption stays", result: doneResult,
+			stored: &editjob.Job{ID: id, Lease: "killed-run", RevisionHash: editjob.TextHash(testCaption)},
+		},
+		{
+			name: "a done job of a killed run for another caption is dropped", result: doneResult,
+			stored:    &editjob.Job{ID: id, Lease: "killed-run", RevisionHash: editjob.TextHash("другая подпись")},
+			forgotten: []string{id},
+		},
+		{
+			name: "a failed job of a killed run is dropped", result: failedResult,
+			stored:    &editjob.Job{ID: id, Lease: "killed-run", RevisionHash: editjob.TextHash(testCaption)},
+			forgotten: []string{id},
+		},
 		{name: "a job without a lease", stored: &editjob.Job{ID: id}},
 		{name: "no job", stored: nil},
 	}
@@ -681,9 +733,9 @@ func TestRunnerDropsJobOfKilledRun(t *testing.T) {
 			t.Parallel()
 
 			env := newRunnerEnv(t, true, done("Черновик 1"))
-			env.board.stored = tt.stored
+			env.board.stored, env.board.result = tt.stored, tt.result
 
-			_, err := env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+			_, err := env.runner.First(t.Context(), &FirstData{Path: env.source, Caption: testCaption, OutDir: env.out})
 			require.NoError(t, err)
 
 			_, _, _, forgotten := env.board.snapshot()
@@ -736,4 +788,26 @@ func TestLeasedJob(t *testing.T) {
 			assert.Equal(t, job.ID, got.ID)
 		})
 	}
+}
+
+// TestRunnerStopsWhenLeaseTaken: a refresh never takes the lease of another run over; when another run holds it, this
+// one stops with ErrLeaseTaken and does not take the job off the board (it is the other run's).
+func TestRunnerStopsWhenLeaseTaken(t *testing.T) {
+	t.Parallel()
+
+	steps := make([]step, 0, 100)
+	for range cap(steps) {
+		steps = append(steps, step{err: &tasks.DeferredError{After: time.Millisecond}, delay: 5 * time.Millisecond})
+	}
+
+	env := newRunnerEnv(t, true, steps...)
+	env.board.takeOverAfter = 3
+
+	report, err := env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+	require.ErrorIs(t, err, ErrLeaseTaken)
+	assert.False(t, report.Done)
+
+	lease, _, _, forgotten := env.board.snapshot()
+	assert.Equal(t, "another-run", lease, "the other run keeps its lease")
+	assert.Empty(t, forgotten, "the job is left to the other run")
 }

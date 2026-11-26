@@ -12,9 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Leases of local edits (T3.19c). A job of `make edit` carries the lease token of its run (`editjob.Job.Lease`,
   `omitempty`); the run holds the key `<stream>:lease:<job>` with a 20 s TTL and refreshes it every 5 s while it waits
   (`editlocal.LeaseBoard`, `Runner.holdLease`). The worker treats a leased job whose key is gone or holds another token
-  as forgotten: a killed run (`docker kill`) no longer leaves the worker rendering for minutes for nobody — its job is
-  skipped or cancelled within ~25 s. The next run of the same version takes the job of the killed run off the board
-  first. Jobs of the app have no lease and behave as before.
+  (the job on the board) as abandoned: it is not run or is cancelled, and a temporary failure is stored (atomic
+  `Board.Finish`), so a killed run (`docker kill`) no longer leaves the worker rendering for minutes for nobody (up to
+  25 s), and a live run that slept past the TTL retries at once (a render via `Retry`, without the model). A refresh
+  never takes over another run's lease (`Board.RenewLease`, Lua: own key or none); a run whose lease another run took
+  stops with «эту версию монтирует другой запуск make edit: дождитесь его». The next run of the same version takes the
+  job of the killed run off the board first, unless it is done for the same caption or revision. Jobs of the app have
+  no lease and behave as before.
 
 - Screen notes of a talking head (T3.17). The editor's model puts what the trainer lists or names on the screen
   (`screen_notes` of `submit_edit`: a list title «3 вещи», list items «1/ на русском», callouts «6 лет»; at most 12, 40

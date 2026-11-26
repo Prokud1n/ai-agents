@@ -227,6 +227,7 @@ var hints = []struct {
 	{err: editlocal.ErrPendingDownload, hint: "последняя версия не скачана — докачать: make edit OUT=<эта папка> " +
 		"(без FILE и REVISION)"},
 	{err: editlocal.ErrNothingPending, hint: "всё уже скачано: для правки передайте REVISION", complete: true},
+	{err: editlocal.ErrLeaseTaken, hint: "эту версию монтирует другой запуск make edit: дождитесь его", complete: true},
 	{err: context.Canceled, hint: "монтаж остановлен (Ctrl+C), задание снято с очереди воркера"},
 }
 

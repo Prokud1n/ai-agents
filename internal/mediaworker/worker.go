@@ -76,8 +76,8 @@ type jobRunner interface {
 // failure) or replaced (another stage, a new submit under the same ID) is acked and skipped, and a result is stored
 // only while its job is still on the board (Board.Finish checks it at once with the write).
 //
-// A job with a lease (editjob.Job.Lease: a local edit of make edit) counts as forgotten once its lease is gone: the run
-// that waits for it was killed, nobody would download the result.
+// A job with a lease (editjob.Job.Lease: a local edit of make edit) whose lease is gone is not run: it gets a temporary
+// failure (the run was killed — the result expires; or it slept past the TTL — it retries at once).
 //
 // The board is checked every boardCheckInterval while a job runs, so a forgotten job stops within seconds.
 //
@@ -283,7 +283,8 @@ const (
 	// replacedJob: the job on the board is another one than the delivered (a planned job replaced by its render, a
 	// render queued again after a failure, a job submitted anew after Forget): another stage or creation time.
 	replacedJob
-	// abandonedJob: the job of a local edit whose lease is gone (make edit was killed): nobody waits for it.
+	// abandonedJob: the job of a local edit is on the board, but its lease is gone: make edit was killed, or it slept
+	// (a Mac asleep, a paused Docker VM) past the lease TTL. It gets a temporary failure: a live run retries it.
 	abandonedJob
 )
 
@@ -299,11 +300,11 @@ func (w *Worker) state(ctx context.Context, job *editjob.Job) (jobState, error) 
 		return forgottenJob, nil
 	case !stored.Same(job):
 		return replacedJob, nil
-	case job.Lease == "":
+	case stored.Lease == "":
 		return currentJob, nil
 	}
 
-	held, err := w.board.LeaseHeld(ctx, job)
+	held, err := w.board.LeaseHeld(ctx, &stored)
 	if err != nil {
 		return currentJob, err
 	}
@@ -335,10 +336,10 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 
 		return true, nil
 	case abandonedJob:
-		w.log.InfoContext(ctx, "mediaworker: job lease expired, nobody waits for it, skipping", "job_id", job.ID,
-			"stage", job.EffectiveStage())
+		w.log.WarnContext(ctx, "mediaworker: job is on the board but its lease is lost, skipping with a temporary failure",
+			"job_id", job.ID, "stage", job.EffectiveStage())
 
-		return true, nil
+		return true, w.failAbandoned(ctx, job)
 	}
 
 	finished, err := w.board.HasResult(ctx, job.ID)
@@ -373,6 +374,18 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// failAbandoned stores a temporary failure of a job whose lease is lost: a run of make edit that only slept past the
+// lease TTL gets it at once and retries (a render is queued again without the model) instead of waiting for its
+// timeout; the result of a killed run expires with the record. Only while the job is on the board (Board.Finish).
+func (w *Worker) failAbandoned(ctx context.Context, job *editjob.Job) error {
+	err := w.board.Finish(ctx, job, editjob.Failed(job.ID, editjob.TemporaryCode, w.now()))
+	if err != nil && !errors.Is(err, editjob.ErrStale) { // stale: the job left the board meanwhile
+		return err
+	}
+
+	return nil
 }
 
 // start marks the job started (the first take counts) and runs it until start + timeout; a job whose time is already
@@ -436,6 +449,10 @@ func (w *Worker) run(ctx context.Context, job *editjob.Job, deadline time.Time) 
 		return nil, fmt.Errorf("job %s left the board while it ran: %w", job.ID, editjob.ErrStale)
 	}
 
+	if outcome == leaseGone { // a temporary failure, stored by the caller while the job is on the board
+		return editjob.Failed(job.ID, editjob.TemporaryCode, w.now()), nil
+	}
+
 	if outcome == lockLost || ctx.Err() != nil {
 		return nil, nil
 	}
@@ -483,9 +500,10 @@ func (w *Worker) runPipeline(ctx context.Context, job *editjob.Job) (result *edi
 type lockOutcome int32
 
 const (
-	lockKept lockOutcome = iota // the run ended by itself
-	lockLost                    // the lock expired and another worker took the job: its result counts
-	jobLeft                     // the job left the board (forgotten, replaced, lease gone): nobody would read the result
+	lockKept  lockOutcome = iota // the run ended by itself
+	lockLost                     // the lock expired and another worker took the job: its result counts
+	jobLeft                      // the job left the board (forgotten or replaced): nobody would read the result
+	leaseGone                    // the job is on the board, its lease is lost: it gets a temporary failure (abandonedJob)
 )
 
 // keepLock refreshes the job's lock until ctx is done and checks every checkInterval that the job is still on the
@@ -545,12 +563,18 @@ func (w *Worker) check(ctx context.Context, job *editjob.Job) lockOutcome {
 		return lockKept
 	}
 
-	if state == currentJob {
+	switch state {
+	case currentJob:
 		return lockKept
+	case abandonedJob:
+		w.log.WarnContext(ctx, "mediaworker: job is on the board but its lease was lost while running, cancelled "+
+			"with a temporary failure", "job_id", job.ID, "stage", job.EffectiveStage())
+
+		return leaseGone
 	}
 
 	w.log.WarnContext(ctx, "mediaworker: job was forgotten while running, cancelled", "job_id", job.ID,
-		"stage", job.EffectiveStage(), "replaced", state == replacedJob, "lease_expired", state == abandonedJob)
+		"stage", job.EffectiveStage(), "replaced", state == replacedJob)
 
 	return jobLeft
 }

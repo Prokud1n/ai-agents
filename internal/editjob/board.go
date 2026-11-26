@@ -75,6 +75,14 @@ if not current() then return false end
 redis.call('SET', KEYS[2], ARGV[3], 'NX', 'PX', ARGV[4])
 return redis.call('GET', KEYS[2])
 `)
+	// renewLeaseScript sets the lease for the token only if the key is the token's or there is none: a run never takes
+	// the lease of another run over by a refresh.
+	renewLeaseScript = goredis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if current and current ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
+`)
 	// refreshScript extends the lock only if it is still the caller's.
 	refreshScript = goredis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
@@ -357,8 +365,9 @@ func (b *Board) WorkerAlive(ctx context.Context) (bool, error) {
 	return n > 0, nil
 }
 
-// Lease holds the lease of the job for the token for ttl (a new token takes the lease over): the waiting side calls it
-// again before ttl runs out. A job with Job.Lease is current for the worker only while its token holds the lease.
+// Lease takes the lease of the job for the token for ttl, over any other token (a new run of make edit takes the lease of
+// a killed one; the lock of its output directory keeps a second live run out); RenewLease keeps it. A job with Job.Lease
+// is current for the worker only while its token holds the lease.
 func (b *Board) Lease(ctx context.Context, jobID, token string, ttl time.Duration) error {
 	if token == "" || ttl <= 0 {
 		return fmt.Errorf("lease of job %s needs a token and a positive ttl: %w", jobID, ErrInvalidJob)
@@ -369,6 +378,21 @@ func (b *Board) Lease(ctx context.Context, jobID, token string, ttl time.Duratio
 	}
 
 	return nil
+}
+
+// RenewLease extends the lease of the job for the token for ttl, or takes it if there is none (it expired while the run
+// slept); false when another token holds it: another run edits the version, the lease is not touched.
+func (b *Board) RenewLease(ctx context.Context, jobID, token string, ttl time.Duration) (bool, error) {
+	if token == "" || ttl <= 0 {
+		return false, fmt.Errorf("lease of job %s needs a token and a positive ttl: %w", jobID, ErrInvalidJob)
+	}
+
+	n, err := renewLeaseScript.Run(ctx, b.rdb, []string{b.leaseKey(jobID)}, token, ttl.Milliseconds()).Int()
+	if err != nil {
+		return false, fmt.Errorf("failed to renew the lease of job %s: %w", jobID, err)
+	}
+
+	return n == 1, nil
 }
 
 // ReleaseLease deletes the lease of the job if the token still holds it.

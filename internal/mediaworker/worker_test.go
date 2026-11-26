@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 var testNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
 const (
+	testLease = "lease-token"
 	testJobID = "task-17-v1"
 	// Stream entry IDs of the deliveries.
 	firstEntry  = "1-0"
@@ -44,7 +46,9 @@ type fakeBoard struct {
 	forgetOnLock bool
 	// jobErr fails reading the job from the board (Redis is down).
 	jobErr error
-	// leaseLost: the lease of a job with Job.Lease is gone (make edit was killed).
+	// leased: the job on the board (stored nil) has a lease, testLease; leaseLost: its lease is gone (make edit was
+	// killed or slept past the TTL).
+	leased    bool
 	leaseLost bool
 	// lockTTL of the board; 0 is 30 ms (the board is checked at each refresh too).
 	lockTTL time.Duration
@@ -130,6 +134,8 @@ func (b *fakeBoard) job(id string) (editjob.Job, bool) {
 	switch {
 	case b.forgotten:
 		return editjob.Job{}, false
+	case b.stored == nil && b.leased:
+		return editjob.Job{ID: id, Lease: testLease}, true
 	case b.stored == nil:
 		return editjob.Job{ID: id}, true
 	default:
@@ -260,10 +266,10 @@ func newTestWorker(board *fakeBoard, runner *fakeRunner) *Worker {
 	return w
 }
 
-// leased is the delivery of a local edit's job: it holds a lease.
+// leased is the delivery of a local edit's job with the lease in its entry: the worker goes by the job on the board.
 func leased(d *editjob.Delivery) *editjob.Delivery {
 	job := *d.Job
-	job.Lease = "lease-token"
+	job.Lease = testLease
 
 	return &editjob.Delivery{MessageID: d.MessageID, Job: &job}
 }
@@ -370,17 +376,24 @@ func TestWorkerHandle(t *testing.T) {
 			expectedAcks: 1,
 		},
 		{
-			name:  "a job whose lease is gone (make edit was killed) is skipped without a run or a result",
-			board: &fakeBoard{leaseLost: true}, runner: &fakeRunner{result: done}, delivery: leased(delivery(later)),
-			expectedAcks: 1,
+			name:  "a job whose lease is lost is not run: a temporary failure, so a live make edit retries at once",
+			board: &fakeBoard{leased: true, leaseLost: true}, runner: &fakeRunner{result: done},
+			delivery: leased(delivery(later)), expectedAcks: 1, expectedStatus: editjob.FailedStatus,
+			expectedCode: editjob.TemporaryCode,
 		},
 		{
-			name: "a job with a held lease is run", board: &fakeBoard{}, runner: &fakeRunner{result: done},
-			delivery: leased(delivery(later)), expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
+			name:  "a job with a held lease is run",
+			board: &fakeBoard{leased: true}, runner: &fakeRunner{result: done}, delivery: leased(delivery(later)),
+			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
 		},
 		{
 			name:  "a job without a lease does not depend on leases",
 			board: &fakeBoard{leaseLost: true}, runner: &fakeRunner{result: done}, delivery: delivery(later),
+			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
+		},
+		{
+			name:  "the lease of the job on the board counts, not the one in the stream entry",
+			board: &fakeBoard{leaseLost: true}, runner: &fakeRunner{result: done}, delivery: leased(delivery(later)),
 			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
 		},
 		{
@@ -448,8 +461,9 @@ func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
 		name         string
 		change       func(b *fakeBoard)
 		expectedCode editjob.FailureCode // empty: no result
+		cancelled    bool                // cancelled at the next check, not run to its timeout
 	}{
-		{name: "forgotten", change: (*fakeBoard).forget},
+		{name: "forgotten", change: (*fakeBoard).forget, cancelled: true},
 		{
 			name: "replaced",
 			change: func(b *fakeBoard) {
@@ -458,8 +472,12 @@ func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
 
 				b.stored = &replaced
 			},
+			cancelled: true,
 		},
-		{name: "the lease is gone", change: (*fakeBoard).loseLease},
+		{
+			name:   "the lease is lost while the job is on the board: a temporary failure, so make edit retries",
+			change: (*fakeBoard).loseLease, expectedCode: editjob.TemporaryCode, cancelled: true,
+		},
 		{name: "the board cannot be read", change: (*fakeBoard).failJobReads, expectedCode: editjob.TimeoutCode},
 	}
 
@@ -467,7 +485,7 @@ func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			board := &fakeBoard{}
+			board := &fakeBoard{leased: true}
 			runner := &fakeRunner{block: true, onRun: func() { tt.change(board) }}
 			w := newTestWorker(board, runner)
 			w.now = time.Now
@@ -479,15 +497,18 @@ func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
 			assert.Equal(t, 1, runner.calls)
 			assert.Equal(t, 1, board.unlocked)
 
+			if tt.cancelled {
+				assert.Less(t, time.Since(began), time.Second, "cancelled at the next check of the board")
+			}
+
 			if tt.expectedCode == "" {
-				assert.Less(t, time.Since(began), time.Second, "cancelled at the next heartbeat")
 				assert.Empty(t, board.finished)
 				assert.Len(t, board.acked, 1, "acked without a result")
 
 				return
 			}
 
-			require.Len(t, board.finished, 1, "the run goes on to its timeout")
+			require.Len(t, board.finished, 1)
 			assert.Equal(t, tt.expectedCode, board.finished[0].Code)
 			assert.Len(t, board.acked, 1)
 		})
@@ -537,7 +558,8 @@ func TestWorkerCancelsForgottenJobInSeconds(t *testing.T) {
 	require.NoError(t, err)
 
 	board := &fakeBoard{lockTTL: time.Minute}
-	w := NewWorker(board, pipeline, &config.MediaWorker{}, slog.New(slog.DiscardHandler))
+	logs := &logBuffer{}
+	w := NewWorker(board, pipeline, &config.MediaWorker{}, slog.New(slog.NewTextHandler(logs, nil)))
 	require.Equal(t, boardCheckInterval, w.checkInterval)
 
 	forgetAfter := time.AfterFunc(time.Second, board.forget)
@@ -558,6 +580,28 @@ func TestWorkerCancelsForgottenJobInSeconds(t *testing.T) {
 	assert.Empty(t, board.finished)
 	assert.Len(t, board.acked, 1, "acked without a result")
 	assert.Equal(t, 1, board.unlocked)
+	assert.Contains(t, logs.String(), `msg="mediaworker: job was forgotten while running, cancelled"`)
+	assert.NotContains(t, logs.String(), "result is dropped")
+}
+
+// logBuffer collects the log of a test; the worker writes it from its goroutines.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
 }
 
 // TestWorkerRunsResubmittedJobOnce: after Forget the app submits the job again under the same ID with a new creation

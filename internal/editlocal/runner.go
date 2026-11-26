@@ -79,7 +79,9 @@ type board interface {
 	WorkerAlive(ctx context.Context) (bool, error)
 	ListenDone(ctx context.Context, handle func(ctx context.Context, taskID int64)) error
 	Forget(ctx context.Context, id string) error
+	Result(ctx context.Context, id string) (editjob.Result, bool, error)
 	Lease(ctx context.Context, jobID, token string, ttl time.Duration) error
+	RenewLease(ctx context.Context, jobID, token string, ttl time.Duration) (bool, error)
 	ReleaseLease(ctx context.Context, jobID, token string) error
 }
 

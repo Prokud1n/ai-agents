@@ -546,5 +546,18 @@ func TestIntegrationBoardLease(t *testing.T) {
 		return err == nil && !held
 	}, waitFor, tick, "a lease that is not refreshed expires")
 
+	renewed, err := board.RenewLease(ctx, job.ID, "first", integrationTTL)
+	require.NoError(t, err)
+	assert.True(t, renewed, "an expired lease is taken again by its run")
+
+	require.NoError(t, board.Lease(ctx, job.ID, "second", integrationTTL))
+	renewed, err = board.RenewLease(ctx, job.ID, "first", integrationTTL)
+	require.NoError(t, err)
+	assert.False(t, renewed, "a refresh does not take the lease of another run over")
+
+	held, err = board.LeaseHeld(ctx, &Job{ID: job.ID, Lease: "second"})
+	require.NoError(t, err)
+	assert.True(t, held, "the other run keeps its lease")
+
 	require.ErrorIs(t, board.Lease(ctx, job.ID, "", integrationTTL), ErrInvalidJob)
 }

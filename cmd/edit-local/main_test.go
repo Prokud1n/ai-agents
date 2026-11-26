@@ -161,11 +161,18 @@ func TestPrintFailureCompleteHint(t *testing.T) {
 	tests := []struct {
 		name        string
 		err         error
+		expected    string
 		expectCause bool
 	}{
 		{
-			name: "nothing to download",
-			err:  fmt.Errorf("failed to download the version: version 2: %w", editlocal.ErrNothingPending),
+			name:     "nothing to download",
+			err:      fmt.Errorf("failed to download the version: version 2: %w", editlocal.ErrNothingPending),
+			expected: "всё уже скачано: для правки передайте REVISION\n",
+		},
+		{
+			name:     "another run took the lease",
+			err:      fmt.Errorf("failed to make the revision: %w", editlocal.ErrLeaseTaken),
+			expected: "эту версию монтирует другой запуск make edit: дождитесь его\n",
 		},
 		{name: "no worker", err: editlocal.ErrWorkerNotRunning, expectCause: true},
 	}
@@ -184,7 +191,7 @@ func TestPrintFailureCompleteHint(t *testing.T) {
 				return
 			}
 
-			assert.Equal(t, "всё уже скачано: для правки передайте REVISION\n", out.String())
+			assert.Equal(t, tt.expected, out.String())
 		})
 	}
 }

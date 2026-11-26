@@ -20,6 +20,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/llmusage"
 	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/providers/redis"
 	"github.com/Prokud1n/ai-agents/internal/redistest"
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 	"github.com/Prokud1n/ai-agents/internal/s3test"
@@ -57,11 +58,25 @@ func startLocalEdit(t *testing.T) *localEdit {
 func newLocalRunner(t *testing.T, speech transcriber, decider localDecider, hook bool) *editlocal.Runner {
 	t.Helper()
 
+	client := redistest.Connect(t)
+
+	return newLocalRunnerOn(t, client, redistest.Prefix(t, client), speech, decider, hook)
+}
+
+// newLocalRunnerOn is newLocalRunner on the given Redis and key prefix (the stream is prefix + localStream).
+func newLocalRunnerOn(
+	t *testing.T,
+	client *redis.Client,
+	prefix string,
+	speech transcriber,
+	decider localDecider,
+	hook bool,
+) *editlocal.Runner {
+	t.Helper()
+
 	requireIntegrationFFmpeg(t)
 
 	log := slog.New(slog.DiscardHandler)
-	client := redistest.Connect(t)
-	prefix := redistest.Prefix(t, client)
 
 	files, err := media.NewStore(s3test.Connect(t),
 		&config.Media{KeyPrefix: testKeyPrefix, ResultPrefix: testResultPrefix, UploadTimeout: time.Minute}, log)

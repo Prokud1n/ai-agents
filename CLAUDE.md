@@ -226,8 +226,10 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `editjob.ErrStale`); задание, исчезнувшее с доски во время работы, отменяется на ближайшей проверке доски —
   отдельный тикер `boardCheckInterval` (3 с) в `keepLock`, продление блокировки — по-прежнему раз в TTL/3; ошибка Redis
   не отменяет (T3.19c). Аренда: задание с `Job.Lease` (только `make edit`) текущее, пока ключ `<stream>:lease:<id>`
-  хранит этот токен (`Board.Lease`/`LeaseHeld`/`ReleaseLease`); нет ключа или другой токен — воркер считает задание
-  забытым (`abandonedJob`: пропуск доставки или отмена). Задания app аренду не используют. `EDITOR_QUEUE_TIMEOUT` + `EDITOR_JOB_TIMEOUT` < 3,5 суток (TTL записей — 7). Проверка —
+  хранит этот токен (`Board.Lease`/`RenewLease`/`LeaseHeld`/`ReleaseLease`; токен берётся из задания **на доске**); нет
+  ключа или другой токен — `abandonedJob`: доставка не запускается, идущее задание отменяется, и через атомарный
+  `Board.Finish` пишется `TemporaryCode` — живой запуск (проспал TTL) сразу повторяет (render — `Retry` без модели),
+  у убитого результат истекает. Задания app аренду не используют. `EDITOR_QUEUE_TIMEOUT` + `EDITOR_JOB_TIMEOUT` < 3,5 суток (TTL записей — 7). Проверка —
   `mediaworker.TestIntegrationForgottenJobIsSkipped`. У правок технические тексты свои — без
   «пришлите исходник». Остановку app ничего не держит.
 - `internal/mediaworker`: `Worker` берёт задания по одному, под блокировкой; ack — только после записи результата;
@@ -280,9 +282,11 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   перезаписывается — следующий ID), `editor.Executor` в цикле как воркеры задач (`DeferredError` — ожидание ≤ 5 с или
   канал `done`, остальное кроме `PermanentError` — ретраи с бэкоффом `TASKS_*`, `LastAttempt`, прогон ≤ `TASKS_TIMEOUT`;
   отмена контекста — `Board.Forget` задания, воркер его отменяет; аренда — `editlocal.LeaseBoard` кладёт токен прогона
-  из контекста в `Job.Lease`, `Runner.holdLease` держит ключ с TTL `DefaultLeaseTTL` 20 с и продлевает раз в 5 с, после
-  `docker kill` воркер бросает задание ≤ 20 с + 3 с; задание версии с чужим токеном (убитый прогон) `dropStale` снимает с
-  доски перед прогоном), файлы версии из S3 → `OUT/v<N>/`, `OUT/state.json`
+  из контекста в `Job.Lease`, `Runner.holdLease` берёт ключ (TTL `DefaultLeaseTTL` 20 с) и продлевает раз в 5 с и перед каждым
+  прогоном исполнителя только Lua «свой или нет ключа» (`RenewLease`): чужой токен — прогон останавливается с
+  `editlocal.ErrLeaseTaken` («эту версию монтирует другой запуск»), задание не трогает; после `docker kill` воркер бросает
+  задание до 25 с; задание версии с чужим токеном (убитый прогон) `dropStale` снимает с доски перед прогоном, кроме
+  `done` с тем же `RevisionHash`), файлы версии из S3 → `OUT/v<N>/`, `OUT/state.json`
   (`format` 1, `pending` — сделанная, но не скачанная версия; без FILE/REVISION — докачка) и `OUT/.lock`.
   Расход модели — `editlocal.UsageMeter` поверх `agents.Runtime` (decider собирается в модуле, не из `editplan.Module`).
   Makefile экспортирует `FILE`/`CAPTION`/`OUT`/`REVISION` через `$(value …)` (без раскрытия `$`); «образ старше кода» —
