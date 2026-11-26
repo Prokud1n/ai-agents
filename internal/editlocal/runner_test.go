@@ -1,12 +1,14 @@
 package editlocal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,28 +28,34 @@ const (
 	testContent = "video"
 )
 
-// step is one run of the fake executor: its output or error.
+// step is one run of the fake executor: its output or error, after delay.
 type step struct {
 	output tasks.Output
 	err    error
+	delay  time.Duration
 }
 
 type fakeExecutor struct {
 	mu    sync.Mutex
 	steps []step
 	runs  []tasks.ExecuteData
+	// tokens are the lease tokens of the runs' contexts.
+	tokens []string
 }
 
-func (e *fakeExecutor) Execute(_ context.Context, data *tasks.ExecuteData) (tasks.Output, error) {
+func (e *fakeExecutor) Execute(ctx context.Context, data *tasks.ExecuteData) (tasks.Output, error) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	e.runs = append(e.runs, *data)
-	if len(e.runs) > len(e.steps) {
+	e.tokens = append(e.tokens, leaseToken(ctx))
+	n := len(e.runs)
+	e.mu.Unlock()
+
+	if n > len(e.steps) {
 		return tasks.Output{}, errors.New("unexpected run")
 	}
 
-	s := e.steps[len(e.runs)-1]
+	s := e.steps[n-1]
+	time.Sleep(s.delay)
 
 	return s.output, s.err
 }
@@ -57,6 +65,76 @@ type fakeBoard struct {
 
 	mu        sync.Mutex
 	forgotten []string
+	// stored is the job on the board under its ID (a job of an earlier run); nil: none.
+	stored *editjob.Job
+	// result of the stored job; nil: none.
+	result *editjob.Result
+	// lease is the token holding the lease now; leases counts the Lease and RenewLease calls, released the released
+	// tokens. takeOverAfter: the lease is taken by another run at this renewal (0: never).
+	lease         string
+	leases        int
+	released      []string
+	takeOverAfter int
+}
+
+func (b *fakeBoard) RenewLease(_ context.Context, _, token string, _ time.Duration) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.leases++
+
+	if b.takeOverAfter > 0 && b.leases > b.takeOverAfter {
+		b.lease = "another-run"
+	}
+
+	if b.lease != "" && b.lease != token {
+		return false, nil
+	}
+
+	b.lease = token
+
+	return true, nil
+}
+
+func (b *fakeBoard) Result(_ context.Context, id string) (editjob.Result, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.result == nil || b.stored == nil || b.stored.ID != id || slices.Contains(b.forgotten, id) {
+		return editjob.Result{}, false, nil
+	}
+
+	return *b.result, true, nil
+}
+
+func (b *fakeBoard) Lease(_ context.Context, _, token string, _ time.Duration) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.lease = token
+	b.leases++
+
+	return nil
+}
+
+func (b *fakeBoard) ReleaseLease(_ context.Context, _, token string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.lease == token {
+		b.lease = ""
+	}
+
+	b.released = append(b.released, token)
+
+	return nil
+}
+
+func (b *fakeBoard) snapshot() (lease string, leases int, released, forgotten []string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.lease, b.leases, slices.Clone(b.released), slices.Clone(b.forgotten)
 }
 
 func (b *fakeBoard) Forget(_ context.Context, id string) error {
@@ -68,8 +146,15 @@ func (b *fakeBoard) Forget(_ context.Context, id string) error {
 	return nil
 }
 
-func (*fakeBoard) Job(context.Context, string) (editjob.Job, bool, error) {
-	return editjob.Job{}, false, nil
+func (b *fakeBoard) Job(_ context.Context, id string) (editjob.Job, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.stored == nil || b.stored.ID != id || slices.Contains(b.forgotten, id) {
+		return editjob.Job{}, false, nil
+	}
+
+	return *b.stored, true, nil
 }
 
 func (b *fakeBoard) WorkerAlive(context.Context) (bool, error) { return b.alive, nil }
@@ -182,6 +267,7 @@ type runnerEnv struct {
 	store    *fakeStore
 	out      string
 	source   string
+	progress *bytes.Buffer
 }
 
 func newRunnerEnv(t *testing.T, alive bool, steps ...step) *runnerEnv {
@@ -189,7 +275,7 @@ func newRunnerEnv(t *testing.T, alive bool, steps ...step) *runnerEnv {
 
 	env := &runnerEnv{
 		executor: &fakeExecutor{steps: steps}, board: &fakeBoard{alive: alive}, store: &fakeStore{keys: map[string]bool{}},
-		out: t.TempDir(),
+		out: t.TempDir(), progress: &bytes.Buffer{},
 	}
 	env.source = filepath.Join(t.TempDir(), "Clip.MOV")
 	require.NoError(t, os.WriteFile(env.source, []byte(testContent), 0o600))
@@ -197,8 +283,9 @@ func newRunnerEnv(t *testing.T, alive bool, steps ...step) *runnerEnv {
 	env.runner = NewRunner(&Params{
 		Executor: env.executor, Board: env.board, Store: env.store, Sequence: &fakeSequence{},
 		Settings: Settings{MaxFileSize: 1 << 20, MaxAttempts: 3, RetryBaseDelay: time.Millisecond,
-			RetryMaxDelay: time.Millisecond, PollInterval: time.Millisecond, LockStaleAfter: time.Hour},
-		Log: slog.New(slog.DiscardHandler),
+			RetryMaxDelay: time.Millisecond, PollInterval: time.Millisecond, LockStaleAfter: time.Hour,
+			LeaseRenew: time.Millisecond},
+		Log: slog.New(slog.DiscardHandler), Progress: env.progress,
 	})
 
 	return env
@@ -581,4 +668,148 @@ func TestUsageSummary(t *testing.T) {
 
 	assert.Equal(t, "вызовов API 2, $0.012000000", Usage{Calls: 2, CostNano: 12_000_000}.Summary())
 	assert.Equal(t, "вызовов API 1, $0.000000000 (ещё 1 без цены в LLM_PRICES)", Usage{Calls: 1, UnpricedCalls: 1}.Summary())
+}
+
+// TestRunnerLeasesJob: every run of the executor gets the lease token of the edit in its context (LeaseBoard puts it
+// into the job); the lease is taken before the first run, refreshed while the edit waits and released after it.
+func TestRunnerLeasesJob(t *testing.T) {
+	t.Parallel()
+
+	env := newRunnerEnv(t, true, step{err: &tasks.DeferredError{After: time.Millisecond}, delay: 20 * time.Millisecond},
+		done("Черновик 1"))
+
+	_, err := env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+	require.NoError(t, err)
+
+	tokens := env.executor.tokens
+	require.Len(t, tokens, 2)
+	assert.NotEmpty(t, tokens[0])
+	assert.Equal(t, tokens[0], tokens[1], "one lease for the whole edit of the version")
+
+	lease, leases, released, forgotten := env.board.snapshot()
+	assert.Empty(t, lease, "released after the edit")
+	assert.Equal(t, []string{tokens[0]}, released)
+	assert.Greater(t, leases, 1, "refreshed while the edit waited")
+	assert.Empty(t, forgotten)
+}
+
+// TestRunnerDropsJobOfKilledRun: a job of the version left by a killed run (another lease token) is taken off the
+// board before the edit, so the executor submits it anew instead of waiting for it; a job without a lease is kept.
+func TestRunnerDropsJobOfKilledRun(t *testing.T) {
+	t.Parallel()
+
+	const killedRun = "killed-run"
+
+	id := editjob.JobID(testTaskID, 1)
+
+	doneResult := &editjob.Result{JobID: id, Status: editjob.DoneStatus}
+	failedResult := &editjob.Result{JobID: id, Status: editjob.FailedStatus}
+
+	tests := []struct {
+		name      string
+		stored    *editjob.Job
+		result    *editjob.Result
+		forgotten []string
+	}{
+		{name: "a job of a killed run", stored: &editjob.Job{ID: id, Lease: killedRun}, forgotten: []string{id}},
+		{
+			name: "a done job of a killed run for the same caption stays", result: doneResult,
+			stored: &editjob.Job{ID: id, Lease: killedRun, RevisionHash: editjob.TextHash(testCaption)},
+		},
+		{
+			name: "a done job of a killed run for another caption is dropped", result: doneResult,
+			stored:    &editjob.Job{ID: id, Lease: killedRun, RevisionHash: editjob.TextHash("другая подпись")},
+			forgotten: []string{id},
+		},
+		{
+			name: "a failed job of a killed run is dropped", result: failedResult,
+			stored:    &editjob.Job{ID: id, Lease: killedRun, RevisionHash: editjob.TextHash(testCaption)},
+			forgotten: []string{id},
+		},
+		{name: "a job without a lease", stored: &editjob.Job{ID: id}},
+		{name: "no job", stored: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := newRunnerEnv(t, true, done("Черновик 1"))
+			env.board.stored, env.board.result = tt.stored, tt.result
+
+			_, err := env.runner.First(t.Context(), &FirstData{Path: env.source, Caption: testCaption, OutDir: env.out})
+			require.NoError(t, err)
+
+			_, _, _, forgotten := env.board.snapshot()
+			assert.Equal(t, tt.forgotten, forgotten)
+		})
+	}
+}
+
+// TestRunnerRevisionStageAsItIs: a revision is decided by the model before anything is rendered: a refused revision
+// never says the worker renders; an applied one says so only once its render is on the board.
+func TestRunnerRevisionStageAsItIs(t *testing.T) {
+	t.Parallel()
+
+	refusal := &tasks.PermanentError{Message: "Не понял, что именно поменять.", Err: errors.New("unclear")}
+	env := newRunnerEnv(t, true, done("Черновик 1"), step{err: refusal})
+
+	_, err := env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+	require.NoError(t, err)
+
+	env.progress.Reset()
+
+	_, err = env.runner.Revise(t.Context(), &ReviseData{OutDir: env.out, Revision: "сделай красиво"})
+	require.Error(t, err)
+
+	assert.Contains(t, env.progress.String(), "Монтажёр решает правку")
+	assert.NotContains(t, env.progress.String(), "воркер рендерит")
+}
+
+func TestLeasedJob(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		ctx      context.Context
+		expected string
+	}{
+		{name: "a run of make edit", ctx: withLease(context.Background(), "token"), expected: "token"},
+		{name: "outside a run", ctx: context.Background()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			job := &editjob.Job{ID: "task-1-v1"}
+			got := leasedJob(tt.ctx, job)
+
+			assert.Equal(t, tt.expected, got.Lease)
+			assert.Empty(t, job.Lease, "the executor's job is not changed")
+			assert.Equal(t, job.ID, got.ID)
+		})
+	}
+}
+
+// TestRunnerStopsWhenLeaseTaken: a refresh never takes the lease of another run over; when another run holds it, this
+// one stops with ErrLeaseTaken and does not take the job off the board (it is the other run's).
+func TestRunnerStopsWhenLeaseTaken(t *testing.T) {
+	t.Parallel()
+
+	steps := make([]step, 0, 100)
+	for range cap(steps) {
+		steps = append(steps, step{err: &tasks.DeferredError{After: time.Millisecond}, delay: 5 * time.Millisecond})
+	}
+
+	env := newRunnerEnv(t, true, steps...)
+	env.board.takeOverAfter = 3
+
+	report, err := env.runner.First(t.Context(), &FirstData{Path: env.source, OutDir: env.out})
+	require.ErrorIs(t, err, ErrLeaseTaken)
+	assert.False(t, report.Done)
+
+	lease, _, _, forgotten := env.board.snapshot()
+	assert.Equal(t, "another-run", lease, "the other run keeps its lease")
+	assert.Empty(t, forgotten, "the job is left to the other run")
 }

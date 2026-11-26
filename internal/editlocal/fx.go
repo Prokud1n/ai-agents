@@ -46,7 +46,7 @@ func newExecutor(
 		return nil, fmt.Errorf("failed to configure the editor: %w", err)
 	}
 
-	return editor.NewExecutor(board, store, editplan.NewDecider(meter, log), techLog{log: log}, cfg, log), nil
+	return editor.NewExecutor(NewLeaseBoard(board), store, editplan.NewDecider(meter, log), techLog{log: log}, cfg, log), nil
 }
 
 type runnerParams struct {
