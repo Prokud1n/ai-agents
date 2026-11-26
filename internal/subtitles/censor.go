@@ -16,6 +16,8 @@ type obsceneRoot struct {
 	anywhere bool
 	prefixed bool
 	forms    []string
+	// maskFirst masks the first letter of the root, not the second («ёб» → «*б», «долбоёб» → «долбо*б»).
+	maskFirst bool
 }
 
 // obscenePrefixes may stand before a root that is masked only at the start of a word: «нахуй», «заебал», «охуел».
@@ -23,8 +25,11 @@ type obsceneRoot struct {
 // («съебал» is: the hard sign).
 var obscenePrefixes = []string{
 	"", "а", "о", "у", "вы", "на", "по", "ни", "за", "до", "от", "об", "из", "раз", "рас", "под", "при", "про",
-	"пере", "недо", "долбо", "отъ", "съ", "разъ", "объ", "подъ", "изъ",
+	"пере", "недо", "долбо", "отъ", "съ", "разъ", "объ", "подъ", "изъ", "въ", "взъ",
 }
+
+// obsceneExceptions start words that only look obscene: «Эбола» written «Ебола», «ебонит», «Ебург».
+var obsceneExceptions = []string{"ебол", "ебонит", "ебург"}
 
 // obsceneRoots are the roots masked on the screen. A root inside common words («употреблять», «оскорблять», «хлеба»,
 // «тихую», «сукно», «мудрый») is not masked: such roots count only at the start of a word or after a prefix, and
@@ -34,10 +39,10 @@ var obsceneRoots = []obsceneRoot{
 	{root: "залуп", anywhere: true},
 	{root: "хуй", prefixed: true}, {root: "хуе", prefixed: true}, {root: "хуя", prefixed: true},
 	{root: "хую", prefixed: true}, {root: "хуи", prefixed: true}, {root: "хуев", prefixed: true},
-	{root: "бляд"}, {root: "блят"}, {root: "бля", forms: []string{"бля"}},
+	{root: "бляд", prefixed: true}, {root: "блят", prefixed: true}, {root: "бля", forms: []string{"бля"}},
 	{root: "еба", prefixed: true}, {root: "ебу", prefixed: true}, {root: "ебл", prefixed: true},
 	{root: "ебн", prefixed: true}, {root: "еби", prefixed: true}, {root: "ебе", prefixed: true},
-	{root: "ебо", prefixed: true}, {root: "долбоеб", anywhere: true},
+	{root: "ебо", prefixed: true}, {root: "еб", prefixed: true, maskFirst: true},
 	{root: "мудак"}, {root: "мудач"}, {root: "мудил"}, {root: "мудозвон"},
 	{root: "пидор"}, {root: "пидар"}, {root: "пидр"}, {root: "гандон"},
 	{root: "сук", forms: []string{
@@ -91,8 +96,16 @@ func obsceneAt(word []rune) (int, bool) {
 
 	lower := string(norm)
 
+	for _, e := range obsceneExceptions {
+		if strings.HasPrefix(lower, e) {
+			return 0, false
+		}
+	}
+
 	for _, r := range obsceneRoots {
-		if at, ok := r.find(lower); ok {
+		if at, ok := r.find(lower); ok && r.maskFirst {
+			return at, true
+		} else if ok {
 			return at + 1, true
 		}
 	}

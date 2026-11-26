@@ -217,7 +217,8 @@ const (
 // PhraseStyle (style-phrase.yaml).
 //
 // Sizes are ASS font sizes, the height of a line (for Manrope it is 1.37 of the em, for Fira 1.2): 60 is the 44 px
-// letters of her subtitles, 116 the 97 px ones of her hook.
+// letters of her subtitles, 122 the 102 px ones of her hook. While the hook is shown the speech is not (her hook stands
+// alone), and the phrase that reads a section heading out («страх номер один») is not shown under it.
 func DefaultStyle() Style {
 	style := PhraseStyle()
 	style.Text = TextStyle{Font: regularFont, Size: 60, Color: white}
@@ -237,19 +238,20 @@ func DefaultStyle() Style {
 		LowercaseSentences: true,
 	}
 	style.Hook = HookStyle{
-		TextStyle:   TextStyle{Font: defaultAccentFont, Size: 116, Uppercase: true, Color: peach},
-		MinDuration: 2.5,
-		MaxDuration: 4,
-		Fade:        150,
-		Gap:         24,
-		CharWidth:   0.44,
-		BoxPadding:  12,
-		Shadow:      Border{Color: softShadow, Size: 2},
-		Margin:      420,
-		MarginSide:  70,
-		MaxLines:    3,
-		Until:       SectionHookUntil,
-		Animation:   SelectHookAnimation,
+		TextStyle:     TextStyle{Font: defaultAccentFont, Size: 122, Uppercase: true, Color: peach},
+		MinDuration:   1.8,
+		MaxDuration:   2.5,
+		Fade:          150,
+		Gap:           24,
+		CharWidth:     0.41,
+		BoxPadding:    12,
+		Shadow:        Border{Color: softShadow, Size: 2},
+		Margin:        410,
+		MarginSide:    60,
+		MaxLines:      3,
+		Until:         SectionHookUntil,
+		Animation:     SelectHookAnimation,
+		HideSubtitles: true,
 	}
 	style.Handle.Enabled = false
 	style.Section = SectionStyle{
@@ -257,7 +259,7 @@ func DefaultStyle() Style {
 		Enabled:     true,
 		Margin:      372,
 		MinDuration: 2.5,
-		MaxDuration: 4,
+		MaxDuration: 6,
 		Fade:        150,
 	}
 	style.Topbar = defaultTopbar()
@@ -350,24 +352,64 @@ func LoadStyle(path string) (Style, error) {
 	return style, nil
 }
 
-// ParseStyle decodes YAML over DefaultStyle strictly (unknown fields are errors) and validates the result.
+// StyleBase names the built-in style a style file starts from (its field base).
+type StyleBase string
+
+const (
+	// TrainerBase is DefaultStyle, the trainer's own look (assets/subtitles/style.yaml).
+	TrainerBase StyleBase = "trainer"
+	// WordsBase is WordsStyle, the reference reels of T3.17 (style-words.yaml).
+	WordsBase StyleBase = "words"
+	// PhraseBase is PhraseStyle (style-phrase.yaml); a file without base starts from it, so a style file written
+	// before T3.20 keeps its look when the built-in default changes.
+	PhraseBase StyleBase = "phrase"
+)
+
+// styleFile is a style file: the base it starts from and the fields it changes.
+type styleFile struct {
+	Base  StyleBase `yaml:"base"`
+	Style `yaml:",inline"`
+}
+
+// ParseStyle decodes YAML strictly (unknown fields are errors) over the built-in style its base names (base: trainer,
+// words or phrase; PhraseStyle without it) and validates the result.
 func ParseStyle(data []byte) (Style, error) {
-	base := DefaultStyle()
+	var head struct {
+		Base StyleBase `yaml:"base"`
+	}
+
+	if err := yaml.Unmarshal(data, &head); err != nil {
+		return Style{}, fmt.Errorf("failed to parse style: %w: %w", ErrInvalidStyle, err)
+	}
+
+	var base Style
+
+	switch head.Base {
+	case TrainerBase:
+		base = DefaultStyle()
+	case WordsBase:
+		base = WordsStyle()
+	case PhraseBase, "":
+		base = PhraseStyle()
+	default:
+		return Style{}, fmt.Errorf("base must be trainer, words or phrase, got %q: %w", head.Base, ErrInvalidStyle)
+	}
 
 	return parseStyleOver(&base, data)
 }
 
 // parseStyleOver decodes YAML over a copy of the base style strictly and validates the result.
 func parseStyleOver(base *Style, data []byte) (Style, error) {
-	style := *base
+	file := styleFile{Style: *base}
 
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 
-	if err := decoder.Decode(&style); err != nil && !errors.Is(err, io.EOF) {
+	if err := decoder.Decode(&file); err != nil && !errors.Is(err, io.EOF) {
 		return Style{}, fmt.Errorf("failed to parse style: %w: %w", ErrInvalidStyle, err)
 	}
 
+	style := file.Style
 	if err := style.Validate(); err != nil {
 		return Style{}, err
 	}

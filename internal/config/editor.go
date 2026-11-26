@@ -60,6 +60,9 @@ type Editor struct {
 	// subtitle style (the default). Read by the app; the worker gets them in the job and checks them again.
 	ReelsTopbarLeft  string `env:"REELS_TOPBAR_LEFT"`
 	ReelsTopbarRight string `env:"REELS_TOPBAR_RIGHT"`
+	// SubtitlesStyleFile is the subtitle style of the media worker (SUBTITLES_STYLE_FILE, config.Subtitles there): the
+	// app reads it only to warn at the start that the trainer's style does not draw REELS_HANDLE.
+	SubtitlesStyleFile string `env:"SUBTITLES_STYLE_FILE"`
 }
 
 // MediaWorker configures the media worker (cmd/media-worker): it edits videos with ffmpeg in a container of its

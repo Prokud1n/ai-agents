@@ -75,10 +75,10 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 	}
 
 	notes, sections := splitSections(data.Notes, style)
-	blocks := noteBlocks(notes, end, notesEnd, style)
+	blocks, headings := separateBlocks(noteBlocks(notes, end, notesEnd, style),
+		sectionBlocks(sections, end, notesEnd, result, style))
 	extras := titleEvents(data.Titles, style) + hookEvent(data.Hook, end, style) + noteEvents(blocks, style) +
-		sectionEvents(sectionBlocks(sections, end, notesEnd, result, style), style) +
-		brandEvents(data.Branding, result.Duration, style)
+		sectionEvents(headings, style) + brandEvents(data.Branding, result.Duration, style)
 
 	if style.wordMode() {
 		words := clipWords(wordCues(result, style), limit)
@@ -102,6 +102,12 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 	timed := clipCues(timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(data.Accents)) > 0)), limit)
 	layout := hookLayout{end: end, margin: style.hookSubtitlesMargin(style.hookLineCount(data.Hook)), notes: blocks}
 
+	if style.Hook.HideSubtitles {
+		timed, layout.margin = hideUnderHook(timed, end), 0
+	}
+
+	timed = hideReadings(timed, sections, style)
+
 	return renderASS(timed, style, data.Karaoke, layout) + extras, len(timed)
 }
 
@@ -111,7 +117,7 @@ func titleEvents(titles []Title, style *Style) string {
 	var b strings.Builder
 
 	for _, t := range titles {
-		text := strings.Join(strings.Fields(t.Text), " ")
+		text := censor(strings.Join(strings.Fields(t.Text), " "))
 		if style.Title.Uppercase {
 			text = strings.ToUpper(text)
 		}

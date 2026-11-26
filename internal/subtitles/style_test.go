@@ -37,6 +37,40 @@ func TestWordsStyleFile(t *testing.T) {
 	assert.False(t, style.Section.Enabled)
 }
 
+// TestStyleFileBase: a file starts from the built-in style its base names; a file without base (written before T3.20,
+// the full style.yaml of T3.17 here) starts from the phrase style, so it keeps its look; an unknown base is an error.
+func TestStyleFileBase(t *testing.T) {
+	t.Parallel()
+
+	old, err := LoadStyle("testdata/style-t3.17.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, WordsStyle(), old, "the style file of T3.17 keeps the words")
+
+	tests := []struct {
+		name     string
+		input    string
+		expected Style
+	}{
+		{name: "no base", input: "", expected: PhraseStyle()},
+		{name: "the trainer's", input: "base: trainer\n", expected: DefaultStyle()},
+		{name: "the words'", input: "base: words\n", expected: WordsStyle()},
+		{name: "the phrase", input: "base: phrase\n", expected: PhraseStyle()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseStyle([]byte(tt.input))
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+
+	_, err = ParseStyle([]byte("base: fancy\n"))
+	require.ErrorIs(t, err, ErrInvalidStyle)
+}
+
 // The phrase layout of before T3.17 is kept as a file: it must stay equal to PhraseStyle and be valid.
 func TestPhraseStyleFile(t *testing.T) {
 	t.Parallel()

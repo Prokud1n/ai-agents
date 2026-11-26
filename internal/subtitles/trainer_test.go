@@ -64,7 +64,7 @@ func TestValidateTrainerStyle(t *testing.T) {
 		{name: "unknown animation", input: "hook:\n  animation: zoom\n", expectedErr: "hook.animation"},
 		{name: "a hook that does not fit", input: "hook:\n  margin_side: 0\n", expectedErr: "does not fit 3 lines"},
 		{name: "a typo in the right size", input: "topbar:\n  right_size: 300\n", expectedErr: "topbar.right_size"},
-		{name: "a heading longer than allowed", input: "section:\n  min_duration: 5\n", expectedErr: "section.min_duration"},
+		{name: "a heading longer than allowed", input: "section:\n  min_duration: 7\n", expectedErr: "section.min_duration"},
 		{name: "a translucent top line", input: "topbar:\n  color: \"#FFFFFF40\"\n", expectedErr: "topbar.color"},
 	}
 
@@ -107,6 +107,12 @@ func TestCensor(t *testing.T) {
 		{name: "распиздяй", input: "распиздяй", expected: "расп*здяй"},
 		{name: "мудак", input: "мудак", expected: "м*дак"},
 		{name: "a phrase", input: "это просто пиздец какой-то", expected: "это просто п*здец какой-то"},
+		{name: "въебал", input: "въебал", expected: "въе*ал"},
+		{name: "взъебка", input: "взъебка", expected: "взъ*бка"},
+		{name: "выблядок", input: "выблядок", expected: "выб*ядок"},
+		{name: "ёб alone", input: "ёб", expected: "*б"},
+		{name: "долбоёб", input: "долбоёб", expected: "долбо*б"},
+		{name: "долбоёбы", input: "долбоёбы", expected: "долбо*бы"},
 	}
 
 	for _, tt := range tests {
@@ -120,7 +126,7 @@ func TestCensor(t *testing.T) {
 	// Words with the letters of a root inside stay as they are.
 	for _, word := range []string{
 		"употреблять", "оскорблять", "ребята", "сукно", "хлеба", "себе", "плохую", "тихую", "бляшки", "мудрый",
-		"страхуйте", "небо", "10",
+		"страхуйте", "небо", "10", "Ебола", "ебонит", "ребёнок", "небось",
 	} {
 		t.Run(word, func(t *testing.T) {
 			t.Parallel()
@@ -137,10 +143,13 @@ func TestTrainerSubtitles(t *testing.T) {
 
 	style := DefaultStyle()
 	ass, cues := buildDocument(&CreateSubtitlesData{
-		Transcript: speech("Первое: мои подопечные приходят к целям.", "В Москве и Тбилиси, блять, 10 человек."),
+		Transcript: speech("Первое: мои подопечные приходят к целям.", "В Москве и Тбилиси, блять, 10 человек.",
+			"МФЦ рядом.", "PDF пришлю."),
 	}, &style)
 
-	assert.Equal(t, 2, cues)
+	assert.Equal(t, 4, cues)
+	assert.Contains(t, ass, ",,МФЦ рядом", "an abbreviation keeps its capitals")
+	assert.Contains(t, ass, ",,PDF пришлю")
 	assert.Contains(t, ass, "первое: мои подопечные")
 	assert.NotContains(t, ass, "Первое")
 	assert.Contains(t, ass, "в Москве и Тбилиси")
@@ -166,14 +175,14 @@ func TestHookUntilSection(t *testing.T) {
 		notes    []Note
 		expected float64
 	}{
-		{name: "no headings", expected: 4},
-		{name: "a heading after min_duration", notes: []Note{{Kind: SectionNote, Text: fear1, Start: 3}}, expected: 3},
-		{name: "a heading too early", notes: []Note{{Kind: SectionNote, Text: fear1, Start: 1}}, expected: 2.5},
-		{name: "a heading late", notes: []Note{{Kind: SectionNote, Text: fear1, Start: 9}}, expected: 4},
+		{name: "no headings", expected: 2.5},
+		{name: "a heading after min_duration", notes: []Note{{Kind: SectionNote, Text: fear1, Start: 2.1}}, expected: 2.1},
+		{name: "a heading too early", notes: []Note{{Kind: SectionNote, Text: fear1, Start: 1}}, expected: 1.8},
+		{name: "a heading late", notes: []Note{{Kind: SectionNote, Text: fear1, Start: 9}}, expected: 2.5},
 		{
 			name:     "the first heading counts, not a callout",
-			notes:    []Note{{Kind: CalloutNote, Text: "6 лет", Start: 1}, {Kind: SectionNote, Text: "2", Start: 3.5}},
-			expected: 3.5,
+			notes:    []Note{{Kind: CalloutNote, Text: "6 лет", Start: 1}, {Kind: SectionNote, Text: "2", Start: 2.2}},
+			expected: 2.2,
 		},
 	}
 
@@ -210,16 +219,16 @@ func TestSectionBlocks(t *testing.T) {
 		expected []noteBlock
 	}{
 		{
-			name:     "the first phrase of the section, at most max_duration",
+			name:     "until the phrase after the one that reads the heading out",
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5}, {Kind: SectionNote, Text: fear2, Start: 12}},
 			reelEnd:  20,
-			expected: []noteBlock{block(5, 9, fear1Caps), block(12, 14.5, fear2Caps)},
+			expected: []noteBlock{block(5, 9.6, fear1Caps), block(12, 14.5, fear2Caps)},
 		},
 		{
 			name:     "after the hook",
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5}},
 			hookEnd:  6,
-			expected: []noteBlock{block(6, 10, fear1Caps)},
+			expected: []noteBlock{block(6, 9.6, fear1Caps)},
 		},
 		{
 			name: "the next one replaces it, the reel ends the last",
@@ -237,7 +246,7 @@ func TestSectionBlocks(t *testing.T) {
 		{
 			name:     "too short to be drawn",
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5}, {Kind: SectionNote, Text: fear2, Start: 5.2}},
-			expected: []noteBlock{block(5.2, 9.2, fear2Caps)},
+			expected: []noteBlock{block(5.2, 9.6, fear2Caps)},
 		},
 		{name: "an empty heading", notes: []Note{{Kind: SectionNote, Text: " \u200b ", Start: 5}}, expected: []noteBlock{}},
 	}
@@ -249,6 +258,10 @@ func TestSectionBlocks(t *testing.T) {
 			assert.Equal(t, tt.expected, sectionBlocks(tt.notes, tt.hookEnd, tt.reelEnd, result, &style))
 		})
 	}
+
+	long := &transcription.Result{Segments: []transcription.Segment{{Start: 3, End: 12, Text: "Долгий вопрос."}}}
+	assert.Equal(t, []noteBlock{block(3, 9, fear1Caps)},
+		sectionBlocks([]Note{{Kind: SectionNote, Text: fear1, Start: 3}}, 0, 0, long, &style), "at most max_duration")
 }
 
 // TestTrainerSectionsInDocument: the headings are drawn in the Section style one at a time, the other notes stay in the
@@ -264,7 +277,7 @@ func TestTrainerSectionsInDocument(t *testing.T) {
 
 	assert.Contains(t, ass, "Style: Section,Fira Sans Extra Condensed ExtraBold,78,&H0080A0E8,")
 	assert.Contains(t, ass, ",Section,,0,0,0,,{\\fad(150,150)}СТРАХ 1\n")
-	assert.Contains(t, ass, "Dialogue: 2,0:00:00.00,0:00:02.50,Hook,", "the hook goes at the heading")
+	assert.Contains(t, ass, "Dialogue: 2,0:00:01.23,0:00:02.50,Hook,", "the hook goes at the heading")
 
 	words := WordsStyle()
 	ass, _ = buildDocument(&CreateSubtitlesData{Transcript: result, Hook: trainerHook, Notes: notes}, &words)
@@ -273,34 +286,141 @@ func TestTrainerSectionsInDocument(t *testing.T) {
 	assert.Contains(t, ass, ",Hook,,0,0,0,,{\\fad(150,150)}страх 1\n", "a callout in the words' style")
 }
 
-// TestSelectEvents: the select animation is the text, the frame and the cursor moving and growing together from the
-// right; the frame and the cursor go after the growth, the text stays; a long hook is made smaller as a whole.
+// TestSelectEvents: the select animation is the text, the frame and the cursor at its corner, standing small at the
+// right for 0.95 s, then moving and growing together by straight pieces that slow down (the frame never leaves the
+// screen), then the frame goes 0.18 s after the growth and the cursor 0.2 s later; the text stays. The frame is measured
+// by the advances of the font: 16 px around the text.
 func TestSelectEvents(t *testing.T) {
 	t.Parallel()
 
 	style := DefaultStyle()
-	got := hookEvent(trainerHook, 4, &style)
-	events := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	events := strings.Split(strings.TrimSuffix(hookEvent(trainerHook, 4, &style), "\n"), "\n")
+	const lines = `РАЗВЕИВАЮ СТРАХИ ОБ\NОНЛАЙН-ТРЕНИРОВКАХ`
 
-	require.Len(t, events, 3)
-	assert.Equal(t, `Dialogue: 2,0:00:00.00,0:00:04.00,Hook,,0,0,0,,{\an5\move(802.1,529,540,529,250,750)`+
-		`\fscx37.6\fscy37.6\t(250,750,\fscx94\fscy94)\fad(150,150)}РАЗВЕИВАЮ СТРАХИ ОБ\NОНЛАЙН-ТРЕНИРОВКАХ`, events[0],
-		"two lines as in the trainer's reel, «об» at the end of the first rather than the hook made smaller")
-	assert.True(t, strings.HasPrefix(events[1], `Dialogue: 2,0:00:00.00,0:00:01.05,Hook,,0,0,0,,{\an5\move(802.1,529,`+
-		`540,529,250,750)\fscx40\fscy40\t(250,750,\fscx100\fscy100)\bord0\shad0\1c&HFFFFFF&\1a&H00&\fad(150,120)\p1}m `),
-		events[1])
-	assert.Equal(t, 6, strings.Count(events[1], "m "), "the ring (two contours) and four handles")
-	assert.True(t, strings.HasPrefix(events[2], `Dialogue: 2,0:00:00.00,0:00:01.05,Hook,,0,0,0,,{\an7\move(993,581.3,`+
-		`1012.8,655.1,250,750)\bord2\shad0\1c&HFFFFFF&\3c&H000000&`), events[2])
-	assert.True(t, strings.HasSuffix(events[2], `\p1}`+cursorPath+`{\p0}`))
+	require.Len(t, events, 3*(1+animSteps+1), "the text, the frame and the cursor: still, growing, still")
+	assert.Equal(t, `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an5\pos(794.9,532)\fscx40\fscy40\fad(150,0)}`+lines,
+		events[0], "two lines as in the trainer's reel at full size, «об» at the end of the first")
+	assert.Equal(t, `Dialogue: 2,0:00:00.95,0:00:00.99,Hook,,0,0,0,,{\an5\move(794.9,532,698.6,532,0,40)\fscx40\fscy40`+
+		`\t(0,40,\fscx62.7\fscy62.7)}`+lines, events[1], "fast at the start of the growth")
+	assert.Equal(t, `Dialogue: 2,0:00:01.23,0:00:04.00,Hook,,0,0,0,,{\an5\pos(540,532)\fscx100\fscy100\fad(0,150)}`+lines,
+		events[animSteps+1])
 
-	short := hookEvent(trainerHook, 0.6, &style)
-	assert.Contains(t, short, `\t(250,600,\fscx94\fscy94)\fad(150,150)}`, "a short hook grows within its time")
-	assert.Contains(t, short, "Dialogue: 2,0:00:00.00,0:00:00.60,Hook,,0,0,0,,{\\an5", "the frame goes with it")
+	frame := events[animSteps+2]
+	assert.True(t, strings.HasPrefix(frame, `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an5\pos(794.9,532)\fscx40\fscy40`+
+		`\bord0\shad0\1c&HFFFFFF&\1a&H00&\fad(150,0)\p1}m 6 6 l 981.4 6 `), frame)
+	assert.Equal(t, 6, strings.Count(frame, "m "), "the ring (two contours) and four handles")
+	assert.True(t, strings.HasPrefix(events[2*animSteps+3], `Dialogue: 2,0:00:01.23,0:00:01.41,Hook,`))
+	assert.Contains(t, events[2*animSteps+3], `\fad(0,120)\p1}`)
+
+	assert.True(t, strings.HasPrefix(events[2*animSteps+4], `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an7`+
+		`\pos(993,590.2)\bord2\shad0\1c&HFFFFFF&\3c&H000000&`))
+	last := events[len(events)-1]
+	assert.True(t, strings.HasPrefix(last, `Dialogue: 2,0:00:01.23,0:00:01.61,Hook,,0,0,0,,{\an7\pos(1030.7,673)`), last)
+	assert.True(t, strings.HasSuffix(last, `\fad(0,120)\p1}`+cursorPath+`{\p0}`))
+
+	for _, e := range events[2*animSteps+4:] {
+		assert.NotRegexp(t, `\\(move|pos)\((10[4-9]\d|1[1-9]\d\d)`, e, "the cursor stays on the screen")
+	}
+
+	short := strings.Split(strings.TrimSuffix(hookEvent(trainerHook, 0.6, &style), "\n"), "\n")
+	require.Len(t, short, 3, "a short hook: the text, the frame and the cursor standing small")
+	assert.Contains(t, short[0], `\fscx40\fscy40\fad(150,150)}`)
 
 	plain := style
 	plain.Hook.Animation = NoHookAnimation
 	assert.NotContains(t, hookEvent(trainerHook, 4, &plain), `\move`)
+}
+
+// TestHideUnderHook: while the hook is shown the trainer's subtitles are not: one under it goes, one that runs past it
+// starts at its end (if enough of it is left).
+func TestHideUnderHook(t *testing.T) {
+	t.Parallel()
+
+	cues := []cue{{Start: 0.2, End: 1.5}, {Start: 2.0, End: 3.2}, {Start: 2.0, End: 2.6}, {Start: 3.5, End: 5}}
+
+	assert.Equal(t, []cue{{Start: 2.5, End: 3.2}, {Start: 3.5, End: 5}}, hideUnderHook(cues, 2.5))
+	assert.Equal(t, cues, hideUnderHook(cues, 0), "no hook")
+}
+
+// TestHideReadings: the subtitle that reads a heading out (it starts within 0.3 s of it and ends before min_duration)
+// is not shown; the question after it, a long phrase starting at the heading and the rest are.
+func TestHideReadings(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+	sections := []Note{{Kind: SectionNote, Text: fear1, Start: 5}}
+	cues := []cue{
+		{Start: 4.9, End: 6}, {Start: 6.1, End: 9}, {Start: 5.1, End: 8}, {Start: 1, End: 2},
+	}
+
+	assert.Equal(t, []cue{{Start: 6.1, End: 9}, {Start: 5.1, End: 8}, {Start: 1, End: 2}},
+		hideReadings(cues, sections, &style))
+	assert.Equal(t, cues, hideReadings(cues, nil, &style))
+}
+
+// TestTrainerDocumentNoDoubles: in the trainer's document nothing of the speech stands under the hook or reads the
+// heading out: the first subtitle is the question, from the heading's start on.
+func TestTrainerDocumentNoDoubles(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+	result := speech(hookPhrase, fear1Phrase, "А что если онлайн-тренировка менее эффективна?")
+	notes := []Note{{Kind: SectionNote, Text: fear1, Start: 1.9}}
+
+	ass, cues := buildDocument(&CreateSubtitlesData{Transcript: result, Hook: trainerHook, Notes: notes}, &style)
+
+	assert.Equal(t, 1, cues)
+	assert.NotContains(t, ass, "развеиваю страхи об", "the hook's phrase is not doubled")
+	assert.NotContains(t, ass, "страх номер один", "the heading is not read out in the subtitles")
+	assert.Contains(t, ass, ",Main,,0,0,0,,а что если онлайн-тренировка")
+	assert.Contains(t, ass, "Dialogue: 2,0:00:01.90,0:00:05.65,Section,", "the heading stays to the end of the question")
+}
+
+// TestSeparateBlocks: a note that starts while a heading is shown replaces it; a note shown when a heading starts ends
+// there; what is left too short is not drawn.
+func TestSeparateBlocks(t *testing.T) {
+	t.Parallel()
+
+	heading := func(start, end float64) noteBlock {
+		return noteBlock{start: start, end: end, entries: []string{fear1Caps}, lines: 1, fadeIn: true, fadeOut: true}
+	}
+	note := func(start, end float64) noteBlock {
+		return noteBlock{start: start, end: end, entries: []string{"6 ЛЕТ"}, lines: 1, fadeIn: true, fadeOut: true}
+	}
+
+	tests := []struct {
+		name             string
+		notes, sections  []noteBlock
+		expectedNotes    []noteBlock
+		expectedSections []noteBlock
+	}{
+		{
+			name: "a callout replaces the heading", notes: []noteBlock{note(7, 9)}, sections: []noteBlock{heading(5, 10)},
+			expectedNotes: []noteBlock{note(7, 9)}, expectedSections: []noteBlock{heading(5, 7)},
+		},
+		{
+			name: "a callout ends at the heading", notes: []noteBlock{note(4, 6.5)}, sections: []noteBlock{heading(5, 9)},
+			expectedNotes: []noteBlock{note(4, 5)}, expectedSections: []noteBlock{heading(5, 9)},
+		},
+		{
+			name: "a heading left too short", notes: []noteBlock{note(5.2, 7)}, sections: []noteBlock{heading(5, 9)},
+			expectedNotes: []noteBlock{note(5.2, 7)}, expectedSections: []noteBlock{},
+		},
+		{
+			name: "apart in time", notes: []noteBlock{note(1, 3)}, sections: []noteBlock{heading(5, 9)},
+			expectedNotes: []noteBlock{note(1, 3)}, expectedSections: []noteBlock{heading(5, 9)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			notes, sections := separateBlocks(tt.notes, tt.sections)
+			assert.Equal(t, tt.expectedNotes, notes)
+			assert.Equal(t, tt.expectedSections, sections)
+		})
+	}
 }
 
 // TestTopbarEvents: the top line draws the texts that pass the check, the right one in its size, a long one squeezed,

@@ -1,6 +1,7 @@
 # Subtitle style: the built-in default, written out (subtitles.DefaultStyle) — the trainer's own look, measured on the
 # reel she edited and published herself (T3.20). Copy this file, change it and pass it as `-style file.yaml` or
-# SUBTITLES_STYLE_FILE. Fields left out keep these values; unknown fields are errors. The other looks are next to this
+# SUBTITLES_STYLE_FILE. base names the built-in style the file starts from: fields left out keep its values (a file
+# without base starts from the phrase style, so the files written before keep their look); unknown fields are errors. The other looks are next to this
 # file (in the media image: /app/subtitles-style-*.yaml): style-words.yaml — the reference reels of T3.17 (the speech one
 # word at a time on a plate, the Instagram handle and the end card), style-phrase.yaml — the phrases with accents and a
 # vignette of before.
@@ -9,6 +10,9 @@
 # A font is the family name libass matches: for a static weight other than Regular/Bold it is the legacy family with
 # the weight ("Manrope Medium"), see `fc-scan --format '%{family}\n' file.ttf` (the last name). The font file goes to
 # SUBTITLES_FONTS_DIR (assets/fonts, /app/fonts in the media image).
+
+# trainer | words | phrase.
+base: trainer
 
 # The speech: phrases of one or two lines, white Manrope Regular, centered at the top under the top line (its first
 # line about 470 px from the top, as in her reel), without accents, plates or a vignette — a light shadow only.
@@ -71,7 +75,7 @@ vignette:
 # a whole (down to 60 %). While it is shown the phrase subtitles stand under it (gap px lower).
 hook:
   font: Fira Sans Extra Condensed ExtraBold
-  size: 116
+  size: 122
   bold: false
   uppercase: true
   color: "#E8A080" # peach
@@ -80,15 +84,15 @@ hook:
   # until section: the hook stays until the first section heading, but at least min_duration and at most max_duration
   # seconds (max_duration without headings); until phrase: until half a second after the first phrase.
   until: section
-  min_duration: 2.5
-  max_duration: 4
+  min_duration: 1.8
+  max_duration: 2.5
   # Fade in and out, ms.
   fade: 150
-  # Between the hook and the phrase subtitles under it, px.
+  # Between the hook and the screen notes' subtitles under it, px.
   gap: 24
-  # Average character width in font sizes, for the line estimate (and the frame of the animation): 18 characters a
-  # line here.
-  char_width: 0.44
+  # Average character width in font sizes, for the line estimate of a font other than Fira Sans Extra Condensed
+  # ExtraBold (its capitals are measured by their advances, so the frame fits the text): 19 characters a line here.
+  char_width: 0.41
   box: ""
   box_padding: 12
   shadow:
@@ -96,19 +100,23 @@ hook:
     size: 2
   # The top of the hook (0: layout.margin_top) and its side margins (0: layout.margin_side: the hook stands above the
   # Instagram buttons, so it may be wider than the subtitles).
-  margin: 420
-  margin_side: 70
+  margin: 410
+  margin_side: 60
   max_lines: 3
+  # No speech subtitles while the hook is shown (her hook stands alone); a phrase that starts under it is shown from
+  # its end.
+  hide_subtitles: true
   # select: the hook appears small at the right in a thin white frame with square handles and an arrow cursor, as an
-  # object selected in an editor, grows to its place and size in half a second, then the frame and the cursor go;
-  # none: it fades in at its place.
+  # object selected in an editor, stands so for about a second, grows to its place and size in 0.28 s slowing down,
+  # then the frame and the cursor go; none: it fades in at its place.
   animation: select
 
 # The section headings of a talking head («страх 1», «страх 2»: the editor's model puts them where the trainer goes to
 # the next point): the peach capitals of the hook, smaller, one line centered above the subtitles (the top at margin;
-# her «СТРАХ 1» is centered at 410 px). A heading waits for the hook to go, is shown while the first phrase of its
-# section is said, min_duration..max_duration seconds, and the next one replaces it. enabled false: they are drawn as
-# callouts of the screen notes.
+# her «СТРАХ 1» is centered at 410 px). A heading waits for the hook to go and stays until the end of the first phrase
+# of its section (the question under it), min_duration..max_duration seconds; the phrase that reads it out («страх
+# номер один»: it starts within 0.3 s of the heading and ends before min_duration) is not shown in the subtitles; the
+# next heading replaces it, a callout replaces it too. enabled false: they are drawn as callouts of the screen notes.
 section:
   enabled: true
   font: Fira Sans Extra Condensed ExtraBold
@@ -118,7 +126,7 @@ section:
   color: "#E8A080"
   margin: 372
   min_duration: 2.5
-  max_duration: 4
+  max_duration: 6
   fade: 150
 
 # The top line over the whole reel, as the interface of a camera: REELS_TOPBAR_LEFT at the left edge («tg:

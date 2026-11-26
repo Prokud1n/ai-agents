@@ -93,6 +93,9 @@ type HookStyle struct {
 	Until HookUntil `yaml:"until"`
 	// Animation is how the hook appears: none (it fades in) or select (it grows from a selection frame).
 	Animation HookAnimation `yaml:"animation"`
+	// HideSubtitles: no speech subtitles while the hook is shown (the phrase layout); a subtitle that starts under
+	// the hook is shown from its end. false: they stand under the hook.
+	HideSubtitles bool `yaml:"hide_subtitles"`
 }
 
 // hookMaxLines is how many lines the hook (and a block of the screen notes) takes at most.

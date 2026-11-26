@@ -1,13 +1,16 @@
 # Subtitle style of the reference reels (subtitles.WordsStyle, T3.17): the speech one word at a time on a white plate,
 # the Instagram handle with its icon and the end card. Pass it as `-style style-words.yaml` or SUBTITLES_STYLE_FILE (in
 # the media image: /app/subtitles-style-words.yaml) to go back to it. Fields left out keep the values of the built-in
-# default (style.yaml, the trainer's style); unknown fields are errors. The look before T3.17 (phrases with accents and
+# style named by base (words: this file written out); unknown fields are errors. The look before T3.17 (phrases with accents and
 # a vignette) is style-phrase.yaml next to this file.
 # Colors: "#RRGGBB" or "#RRGGBBAA" (AA is opacity, FF is opaque). Sizes are pixels of the 1080×1920 frame:
 # it is about 390 pt wide on a phone, so 56 px is about 20 pt.
 # A font is the family name libass matches: for a static weight other than Regular/Bold it is the legacy family with
 # the weight ("Manrope Medium"), see `fc-scan --format '%{family}\n' file.ttf` (the last name). The font file goes to
 # SUBTITLES_FONTS_DIR (assets/fonts, /app/fonts in the media image).
+
+# The built-in style this file starts from (trainer | words | phrase): fields left out keep its values.
+base: words
 
 layout:
   # word: the speech one word at a time on a plate (word_box below), as the reference reels; phrase: phrases of a few
@@ -88,6 +91,8 @@ hook:
   # phrase: until half a second after the first phrase; none: it fades in at its place.
   until: phrase
   animation: none
+  # true: no speech subtitles while the hook is shown.
+  hide_subtitles: false
 
 # The trainer's handle (REELS_HANDLE, «@prokudina.ana»; none without it) over the whole reel: small white text
 # with a simple Instagram icon before it (REELS_HANDLE_ICON), right-aligned `right` px from the right edge, its top at
@@ -181,7 +186,7 @@ section:
   color: "#E8A080"
   margin: 372
   min_duration: 2.5
-  max_duration: 4
+  max_duration: 6
   fade: 150
 topbar:
   enabled: false

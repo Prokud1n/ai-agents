@@ -343,24 +343,33 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`handle.max_width` справа, выше кнопок Instagram — `rightButtonsTop` 1000) и фразовые субтитры не пересекаются.
   Проверка — `subtitles.TestBurnReferenceStyleWithFFmpeg` (пиксели; в media-image), `mediaworker.TestIntegrationScreenNotes`,
   скорость — `TestRenderSpeed` (референсный стиль против фразового).
-- Стиль тренера (T3.20) — `subtitles.DefaultStyle` (`assets/subtitles/style.yaml`; `ParseStyle` накладывает файл на
-  него, поэтому `style-words.yaml`/`style-phrase.yaml` выписывают все поля; `TestStyleFileIsDefault`,
-  `TestWordsStyleFile`, `TestPhraseStyleFile`): фразовая раскладка (Manrope Regular 60, белый, `margin_top` 455, ≤ 30
-  символов, без акцентов и виньетки), `layout.lowercase_sentences` (`lowerSentenceStarts`: первое слово после
-  `strongBreak` со строчной). Хук: `hook.margin`/`margin_side`/`max_lines` (свои отступы и строки, 0 — как раньше),
-  `hook.until: section` (`hookEnd` — до первого `SectionNote`, clamp min..max), `hook.animation: select`
-  (`selection.go`: `selectLines` — меньше строк при масштабе ≥ 93 %, предлог в конце строки допустим, если иначе хук
-  мельче; масштаб всего хука `\fscx\fscy` ≥ 60 % вместо построчного сжатия; три события слоя 2 с общим `\move` и `\t`:
-  текст, рамка `\p1` (кольцо + 4 маркера, `framePath`) и курсор `\an7`; рамка и курсор до 1,05 с). Разделы:
-  `roughcut.SectionNote` (`section` в `screen_notes`, ≤ 24 символов, `editplan.notesLine` — «N раздела») →
-  `subtitles.splitSections` (только при `section.enabled`; иначе — выноски) → `sectionBlocks` (ждёт хук, держится до
-  конца первой фразы ≥ min_duration после начала + 0,5 с в пределах 2,5–4 с, следующий заменяет) → стиль `Section`
-  (`\an8` на `section.margin`, высота строки = кегль). Верхняя строка: `REELS_TOPBAR_LEFT`/`_RIGHT` (`config.Editor`)
+- Стиль тренера (T3.20) — `subtitles.DefaultStyle` (`assets/subtitles/style.yaml`). Файл стиля: `base: trainer |
+  words | phrase` (`ParseStyle`: сначала читается только `base`, затем строгий разбор `styleFile` поверх него); без
+  `base` — `PhraseStyle`, поэтому старые файлы не меняют вид (`TestStyleFileBase`: `testdata/style-t3.17.yaml` →
+  `WordsStyle`); `TestStyleFileIsDefault`, `TestWordsStyleFile`, `TestPhraseStyleFile`. Фразовая раскладка (Manrope
+  Regular 60, белый, `margin_top` 455, ≤ 30 символов, без акцентов и виньетки), `layout.lowercase_sentences`
+  (`lowerSentenceStarts`: первое слово после `strongBreak` со строчной, слово с ≥ 2 заглавными — как есть). Хук:
+  `hook.margin`/`margin_side`/`max_lines` (свои отступы и строки, 0 — как раньше), `hook.until: section` (`hookEnd` —
+  до первого `SectionNote`, clamp min..max: 1,8–2,5 с), `hook.hide_subtitles` (`hideUnderHook`: субтитр под хуком
+  убирается, начатый под ним — с конца хука, остаток < 0,5 с — нет; сдвига под хук нет), `hook.animation: select`
+  (`selection.go`: ширина строки — `hookTextWidth` по таблице ширин заглавных Fira `firaAdvances`, иначе
+  `char_width`; `selectLines` — меньше строк при масштабе ≥ 93 %, предлог в конце строки допустим, если иначе хук
+  мельче; масштаб всего хука `\fscx\fscy` ≥ 60 %; текст и рамка `\p1` (кольцо + 4 маркера, отступ 16 px) — общий
+  `\move` и `\t(…,0.5,…)` (замедление); стоят маленькими 0,95 с, растут 0,28 с, рамка до +0,18 с; курсор `\an7`
+  догоняет угол рамки `cursorSteps` прямыми `\move` (центр линейный, масштаб — по степени 0,5), уходит ещё через
+  0,2 с). Разделы: `roughcut.SectionNote` (`section` в `screen_notes`, ≤ 24 символов, `editplan.notesLine` — «N
+  раздела») → `subtitles.splitSections` (только при `section.enabled`; иначе — выноски) → `sectionBlocks` (ждёт хук;
+  держится до конца первого сегмента после фразы-заголовка — `readsHeading`: начало ±0,3 с от раздела и конец раньше
+  `min_duration`; 2,5–6 с; следующий заменяет) → стиль `Section` (`\an8` на `section.margin`, высота строки = кегль);
+  `hideReadings` убирает субтитр фразы-заголовка; `separateBlocks`: выноска/пункт, начатые при разделе, заменяют его,
+  идущие при его начале — заканчиваются. Верхняя строка: `REELS_TOPBAR_LEFT`/`_RIGHT` (`config.Editor`)
   → `editjob.Branding.TopbarLeft/Right` (`editjob.CheckTopbar`: ≤ 40 печатных без `{}\<>`; `Branding.Validate` —
   ник необязателен, если есть строка) → `subtitles.topbarEvents` (`\an4`/`\an6` у `topbar.side` на `topbar.y`,
   правый — `\fs right_size`, слой 3, до карточки). `handle.enabled` (в стиле тренера false: ни ника, ни карточки —
-  `cardTimes`). Мат: `subtitles.censor` (корни с префиксами/целые слова, маска — вторая буква корня) в
-  `tokensFromTranscript` и `cleanWords` (хук, пункты, разделы); звук не трогается. Валидация: верхняя строка, хук,
+  `cardTimes`; `editor.WarnHiddenHandle` при старте app предупреждает, если `REELS_HANDLE` задан, а
+  `SUBTITLES_STYLE_FILE` (читается в `config.Editor`) пуст или файл тренера). Мат: `subtitles.censor` (корни с префиксами/целые слова, маска — вторая буква корня) в
+  `tokensFromTranscript`, `cleanWords` (хук, пункты, разделы) и `titleEvents`; исключения `obsceneExceptions`
+  («Ебола», «ебонит»); звук не трогается. Валидация: верхняя строка, хук,
   разделы, субтитры (и под хуком), подписи — врозь. Проверка — `subtitles.TestBurnTrainerStyleWithFFmpeg` (пиксели
   против замеров рилс тренера ± 12 px; в media-image), `mediaworker.TestIntegrationTrainerStyle` (умолчания
   `config.Editor`: отбор под 60 с, хук и 3 раздела, правка «убери разделы»).

@@ -72,6 +72,25 @@ func TestRequestSelecting(t *testing.T) {
 	}
 }
 
+// TestSelectionAndCleaning: with the cleanup on (EDITOR_CLEANUP) a first version longer than the target is selected
+// (the selection drops the failed takes itself, the task says so), one within it is cleaned; never both.
+func TestSelectionAndCleaning(t *testing.T) {
+	t.Parallel()
+
+	long := selectionRequest(t, 1)
+	long.Cleanup = true
+	assert.True(t, long.Selecting())
+	assert.False(t, long.Cleaning())
+	assert.False(t, long.CleanupOnly())
+	assert.Contains(t, Prompt(long), selectionCleaning)
+
+	short := selectionRequest(t, 1)
+	short.Cleanup, short.TargetSeconds = true, 20
+	assert.False(t, short.Selecting())
+	assert.True(t, short.Cleaning())
+	assert.True(t, short.CleanupOnly())
+}
+
 // TestApplySelection: a first version longer than the target must come out within the recommended range (±15 %); the
 // trainer is told how the reel starts and ends and what did not make it, the decisions log has the length and every
 // phrase left out.

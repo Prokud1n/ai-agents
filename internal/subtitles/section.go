@@ -3,6 +3,7 @@ package subtitles
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"unicode"
@@ -17,11 +18,15 @@ const (
 	// file.
 	minSectionDuration = 1.0
 	maxSectionDuration = 10.0
+	// readingWindow: a phrase that starts this close to a heading and ends before its min_duration reads the heading
+	// out («страх номер один»): it is not shown in the subtitles, and the heading stays for the phrase after it.
+	readingWindow = 0.3
 )
 
 // SectionStyle is the look and the place of the section headings of a talking head («СТРАХ 1», «СТРАХ 2»): one line
-// centered above the subtitles, shown from the start of a section while its first phrase (the question or the thesis)
-// is said, MinDuration..MaxDuration seconds; the next heading replaces it. Disabled: the headings are drawn as
+// centered above the subtitles, shown from the start of a section until the end of its first phrase (the question or
+// the thesis; the phrase that reads the heading out is skipped and not shown in the subtitles), MinDuration..MaxDuration
+// seconds; the next heading replaces it. Disabled: the headings are drawn as
 // callouts of the screen notes, in the hook's style at its place.
 type SectionStyle struct {
 	TextStyle `yaml:",inline"`
@@ -42,7 +47,7 @@ func defaultSection() SectionStyle {
 		TextStyle:   TextStyle{Font: defaultAccentFont, Size: 78, Uppercase: true, Color: peach},
 		Margin:      372,
 		MinDuration: 2.5,
-		MaxDuration: 4,
+		MaxDuration: 6,
 		Fade:        150,
 	}
 }
@@ -149,9 +154,9 @@ func firstSection(notes []Note, style *Style) (float64, bool) {
 	return first, found
 }
 
-// sectionBlocks lays the headings out in time: each waits for the hook to go, is shown while the first phrase of its
-// section is said (its end when set) within min_duration..max_duration, and ends at the next heading and at the end of
-// the reel (reelEnd 0: unknown). A heading left shorter than minNoteShown is not drawn.
+// sectionBlocks lays the headings out in time: each waits for the hook to go, is shown until the end of the first
+// phrase of its section (its end when set) within min_duration..max_duration, and ends at the next heading and at the
+// end of the reel (reelEnd 0: unknown). A heading left shorter than minNoteShown is not drawn.
 func sectionBlocks(sections []Note, hookEnd, reelEnd float64, result *transcription.Result, style *Style) []noteBlock {
 	sorted := make([]Note, 0, len(sections))
 
@@ -190,29 +195,49 @@ func sectionBlocks(sections []Note, hookEnd, reelEnd float64, result *transcript
 	return blocks
 }
 
-// sectionShown is how long a heading shown from start stays: its own length when it has an end, otherwise until
-// phraseTail after the first phrase that ends at least min_duration after the start; within min_duration..max_duration.
+// sectionShown is how long a heading shown from start stays: its own length when it has an end, otherwise until the
+// end of the first phrase of its section (sectionPhraseEnd); within min_duration..max_duration.
 func sectionShown(n Note, start float64, result *transcription.Result, c *SectionStyle) float64 {
 	shown := c.MinDuration
 
 	if n.End > n.Start {
 		shown = n.End - n.Start
-	} else if end, ok := phraseEndAfter(result, start+c.MinDuration-phraseTail); ok {
-		shown = end + phraseTail - start
+	} else if end, ok := sectionPhraseEnd(result, n.Start, start, c); ok {
+		// The subtitle of the phrase stays hold after it: the heading goes with it.
+		shown = end + hold - start
 	}
 
 	return min(max(shown, c.MinDuration), c.MaxDuration)
 }
 
-// phraseEndAfter is the end of the first phrase that ends at at or later: a segment of the transcript with words, or
-// without segments a word followed by a pause (or the last word); false when the speech ends before.
-func phraseEndAfter(result *transcription.Result, at float64) (float64, bool) {
-	for _, seg := range result.Segments {
-		if strings.TrimSpace(seg.Text) != "" && seg.End >= at {
-			return seg.End, true
-		}
+// readsHeading: a phrase from start to end reads out the heading that starts at heading (it starts within
+// readingWindow of it and ends before its min_duration is over).
+func readsHeading(start, end, heading float64, c *SectionStyle) bool {
+	return math.Abs(start-heading) <= readingWindow && end < heading+c.MinDuration
+}
+
+// sectionPhraseEnd is the end of the first phrase of the section whose heading starts at heading and is shown from
+// shown: the first segment that ends after shown and does not read the heading out; without segments the first phrase
+// that ends min_duration after shown (phraseEndAfter). false when the speech ends before.
+func sectionPhraseEnd(result *transcription.Result, heading, shown float64, c *SectionStyle) (float64, bool) {
+	if len(result.Segments) == 0 {
+		return phraseEndAfter(result, shown+c.MinDuration)
 	}
 
+	for _, seg := range result.Segments {
+		if strings.TrimSpace(seg.Text) == "" || seg.End <= shown || readsHeading(seg.Start, seg.End, heading, c) {
+			continue
+		}
+
+		return seg.End, true
+	}
+
+	return 0, false
+}
+
+// phraseEndAfter is the end of the first phrase that ends at at or later: a word followed by a pause (or the last
+// word); false when the speech ends before.
+func phraseEndAfter(result *transcription.Result, at float64) (float64, bool) {
 	words := result.Words
 	for i, w := range words {
 		if w.End >= at && (i+1 == len(words) || words[i+1].Start-w.End >= pauseBreak) {
@@ -254,12 +279,14 @@ func sectionStyleLine(style *Style) string {
 }
 
 // lowerSentenceStarts writes the first letter of every sentence (the first word, a word after the end of a sentence or
-// a segment) small, as the trainer writes her subtitles (layout.lowercase_sentences). tokens is not changed.
+// a segment) small, as the trainer writes her subtitles (layout.lowercase_sentences); a word with more capitals (МФЦ,
+// PDF, YouTube) stays as it is. A name at the start of a sentence becomes small too: Whisper does not tell it apart.
+// tokens is not changed.
 func lowerSentenceStarts(tokens []token) []token {
 	out := make([]token, 0, len(tokens))
 
 	for i, t := range tokens {
-		if i == 0 || tokens[i-1].Break == strongBreak {
+		if (i == 0 || tokens[i-1].Break == strongBreak) && capitals(t.Text) < 2 {
 			t.Text = lowerFirstLetter(t.Text)
 		}
 
@@ -267,6 +294,19 @@ func lowerSentenceStarts(tokens []token) []token {
 	}
 
 	return out
+}
+
+// capitals counts the capital letters of the text.
+func capitals(text string) int {
+	n := 0
+
+	for _, r := range text {
+		if unicode.IsUpper(r) {
+			n++
+		}
+	}
+
+	return n
 }
 
 // lowerFirstLetter makes the first letter of the text small.
@@ -278,4 +318,88 @@ func lowerFirstLetter(text string) string {
 	}
 
 	return text
+}
+
+// hideUnderHook keeps the subtitles off the screen while the hook is shown (hook.hide_subtitles): a subtitle that ends by
+// hookEnd is not shown, one that starts before it is shown from it (when minNoteShown of it is left). cues is not
+// changed.
+func hideUnderHook(cues []cue, hookEnd float64) []cue {
+	if hookEnd <= 0 {
+		return cues
+	}
+
+	out := make([]cue, 0, len(cues))
+
+	for _, c := range cues {
+		if c.Start < hookEnd {
+			c.Start = hookEnd
+		}
+
+		if c.End-c.Start >= minNoteShown {
+			out = append(out, c)
+		}
+	}
+
+	return out
+}
+
+// hideReadings drops the subtitles that read a section heading out («страх номер один» under «СТРАХ 1»): the heading
+// shows it. cues is not changed.
+func hideReadings(cues []cue, sections []Note, style *Style) []cue {
+	if len(sections) == 0 {
+		return cues
+	}
+
+	out := make([]cue, 0, len(cues))
+
+	for _, c := range cues {
+		reading := slices.ContainsFunc(sections, func(n Note) bool {
+			return readsHeading(c.Start, c.End, n.Start, &style.Section)
+		})
+
+		if !reading {
+			out = append(out, c)
+		}
+	}
+
+	return out
+}
+
+// separateBlocks keeps the section headings and the other screen notes apart in time (they stand at nearly the same
+// place): a note that starts while a heading is shown replaces it, a note shown when a heading starts ends there. A
+// block left shorter than minNoteShown is not drawn.
+func separateBlocks(notes, sections []noteBlock) (keptNotes, keptSections []noteBlock) {
+	if len(notes) == 0 || len(sections) == 0 {
+		return notes, sections
+	}
+
+	keptSections = make([]noteBlock, 0, len(sections))
+
+	for _, s := range sections {
+		for _, n := range notes {
+			if n.start >= s.start && n.start < s.end {
+				s.end = n.start
+			}
+		}
+
+		if s.end-s.start >= minNoteShown {
+			keptSections = append(keptSections, s)
+		}
+	}
+
+	keptNotes = make([]noteBlock, 0, len(notes))
+
+	for _, n := range notes {
+		for _, s := range keptSections {
+			if s.start > n.start && s.start < n.end {
+				n.end = s.start
+			}
+		}
+
+		if n.end-n.start >= minNoteShown {
+			keptNotes = append(keptNotes, n)
+		}
+	}
+
+	return withFades(keptNotes), keptSections
 }

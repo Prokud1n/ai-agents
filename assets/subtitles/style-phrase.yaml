@@ -1,9 +1,12 @@
 # Subtitle style of the phrase layout (subtitles.PhraseStyle): the look before T3.17 — phrases of a few words in lines
 # with key words accented and a vignette. Pass it as `-style style-phrase.yaml` or SUBTITLES_STYLE_FILE (in the media
-# image: /app/subtitles-style-phrase.yaml) to go back to it. Fields left out keep the values of the built-in default
-# (assets/subtitles/style.yaml, the trainer's style), so this file writes everything out; unknown fields are errors.
+# image: /app/subtitles-style-phrase.yaml) to go back to it. Fields left out keep the values of the built-in style
+# named by base (phrase: this file written out; a file without base starts from it too); unknown fields are errors.
 # Colors: "#RRGGBB" or "#RRGGBBAA" (AA is opacity, FF is opaque). Sizes are pixels of the 1080×1920 frame:
 # it is about 390 pt wide on a phone, so 56 px is about 20 pt.
+
+# The built-in style this file starts from (trainer | words | phrase): fields left out keep its values.
+base: phrase
 
 # Main text. font is the family name libass matches: for a static weight other than Regular/Bold it is the legacy
 # family with the weight ("Manrope Medium"), see `fc-scan --format '%{family}\n' file.ttf` (the last name).
@@ -127,6 +130,8 @@ hook:
   # phrase: until half a second after the first phrase; none: it fades in at its place.
   until: phrase
   animation: none
+  # true: no speech subtitles while the hook is shown.
+  hide_subtitles: false
 
 # The word layout (layout.mode word, see style.yaml): unused here, but validated.
 word_box:
@@ -186,7 +191,7 @@ section:
   color: "#E8A080"
   margin: 372
   min_duration: 2.5
-  max_duration: 4
+  max_duration: 6
   fade: 150
 topbar:
   enabled: false

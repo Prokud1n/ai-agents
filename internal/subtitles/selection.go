@@ -2,26 +2,30 @@ package subtitles
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
 // The select animation of the hook (hook.animation select), as in the trainer's reel: the hook appears small at the
 // right in a thin white frame with square handles at its corners and an arrow cursor at its bottom right corner, as an
-// object selected in an editor; after selectHold it grows to its place and size over selectGrow; selectAfter later the
-// frame and the cursor fade out, the hook stays.
+// object selected in an editor, stands so for selectHold, then grows to its place and size over selectGrow, slowing
+// down at the end; selectFrameAfter later the frame fades out, the cursor at selectCursorAfter; the hook stays.
 const (
 	// selectStartScale: the small hook is this share of its size.
 	selectStartScale = 0.4
-	selectHold       = 250 // ms
-	selectGrow       = 500 // ms
-	selectAfter      = 300 // ms
+	selectHold       = 950 // ms
+	selectGrow       = 280 // ms
+	// selectAccel is the \t acceleration of the growth: below 1 it slows down to the end.
+	selectAccel       = 0.5
+	selectFrameAfter  = 180 // ms
+	selectCursorAfter = 380 // ms
 	// selectFrameFade: the frame and the cursor fade out over it, ms.
 	selectFrameFade = 120
 	// selectRight: the small frame's right edge stands this far from the right edge of the frame, px.
 	selectRight = 90
 	// selectPad is the frame around the text, selectStroke its width, selectHandleSize the side of a handle, px (of
 	// the full size: the small frame is thinner).
-	selectPad        = 14.0
+	selectPad        = 16.0
 	selectStroke     = 2.5
 	selectHandleSize = 12.0
 	// cursorOffset: the tip of the cursor stands this far right and down of the frame's corner, px.
@@ -32,10 +36,9 @@ const (
 	cursorPath = "m 0 0 l 0 34 l 9 26 l 15 40 l 21 37 l 15 24 l 26 24"
 	// assWhite is opaque white for the \1c override.
 	assWhite = "&HFFFFFF&"
+	// selectFitScale: the hook takes the fewest lines that keep it at least this large (percent).
+	selectFitScale = 93
 )
-
-// selectFitScale: the hook of the select animation takes the fewest lines that keep it at least this large (percent).
-const selectFitScale = 93
 
 // selectLines wraps the hook of the select animation: the fewest lines (up to the hook's max_lines) that keep it at
 // least selectFitScale of its size — without a short word at the end of a line when that is as good, otherwise as the
@@ -72,22 +75,20 @@ type selection struct {
 	start, center point
 }
 
-// selectionOf lays the hook of the lines out: the widest line sets the scale (no smaller than minHookShrinkScale) and,
-// with the hook's character width, the frame's width; libass makes a line as tall as the font size.
+// selectionOf lays the hook of the lines out: the widest line (hookTextWidth) sets the scale against the width
+// between the hook's side margins (no smaller than minHookShrinkScale) and the frame's width; libass makes a line as
+// tall as the font size.
 func selectionOf(words []string, lines [][2]int, style *Style) selection {
-	h := &style.Hook
-	maxChars := style.hookLineChars()
-
-	widest := 1
+	widest := 1.0
 	for _, line := range lines {
-		widest = max(widest, lineRunes(words[line[0]:line[1]]))
+		widest = max(widest, style.hookTextWidth(strings.Join(words[line[0]:line[1]], " ")))
 	}
 
-	scale := max(percentBase*min(maxChars, widest)/widest, minHookShrinkScale)
+	room := float64(FrameWidth - 2*style.hookMarginSide())
+	scale := max(min(int(math.Floor(percentBase*room/widest)), fullScaleX), minHookShrinkScale)
 	share := float64(scale) / percentBase
-	width := float64(widest) * float64(h.Size) * h.CharWidth * share
-	height := float64(len(lines)*h.Size) * share
-	frame := point{x: width + 2*selectPad, y: height + 2*selectPad}
+	height := float64(len(lines)*style.Hook.Size) * share
+	frame := point{x: widest*share + 2*selectPad, y: height + 2*selectPad}
 
 	center := point{x: FrameWidth / 2, y: float64(style.hookMargin()) + height/2}
 	if style.hookPosition() == BottomPosition {
@@ -99,26 +100,36 @@ func selectionOf(words []string, lines [][2]int, style *Style) selection {
 	return selection{scale: scale, frame: frame, start: start, center: center}
 }
 
-// selectEvents are the hook of the select animation until end: the text, the frame with its handles and the cursor,
-// all moving and growing together (\move, \t of \fscx and \fscy, aligned by their middle), then the frame and the
-// cursor fade out and the text stays. The text is plain: it is escaped like speech.
+// selectTimes are the moments of the animation within the hook's time, ms: the growth starts and ends, the frame and
+// the cursor go, the hook's fade and its end.
+type selectTimes struct {
+	grow                [2]int
+	frameEnd, cursorEnd int
+	fade, total         int
+}
+
+func selectTimesOf(end float64, style *Style) selectTimes {
+	total := int(math.Round(end * millisPerSecond))
+
+	return selectTimes{
+		grow:      [2]int{min(selectHold, total), min(selectHold+selectGrow, total)},
+		frameEnd:  min(selectHold+selectGrow+selectFrameAfter, total),
+		cursorEnd: min(selectHold+selectGrow+selectCursorAfter, total),
+		fade:      min(style.Hook.Fade, total/2),
+		total:     total,
+	}
+}
+
+// selectEvents are the hook of the select animation until end: the text, the frame with its handles and the cursor at
+// its corner, small at the right while it stands, then moving and growing together to the hook's place (the move and
+// the scale slow down alike, so the frame never leaves the screen; animSteps pieces of straight moves and linear \t),
+// then the frame and the cursor fade out and the text stays. The text is plain: it is escaped like speech.
 func selectEvents(words []string, end float64, style *Style) string {
-	h := &style.Hook
 	lines := selectLines(words, style)
 	sel := selectionOf(words, lines, style)
-
-	endMs := int(end * millisPerSecond)
-	grown := [2]int{min(selectHold, endMs), min(selectHold+selectGrow, endMs)}
-	fade := min(h.Fade, endMs/2)
-	frameEnd := min(end, float64(selectHold+selectGrow+selectAfter)/millisPerSecond)
-	move := fmt.Sprintf(`\move(%s,%s,%s,%s,%d,%d)`, tenth(sel.start.x), tenth(sel.start.y), tenth(sel.center.x),
-		tenth(sel.center.y), grown[0], grown[1])
-	small := tenth(float64(sel.scale) * selectStartScale)
+	tm := selectTimesOf(end, style)
 
 	var text strings.Builder
-
-	fmt.Fprintf(&text, `{\an5%s\fscx%s\fscy%s\t(%d,%d,\fscx%d\fscy%d)\fad(%d,%d)}`, move, small, small, grown[0],
-		grown[1], sel.scale, sel.scale, fade, fade)
 
 	key := hookKey(words)
 	for i, line := range lines {
@@ -126,34 +137,132 @@ func selectEvents(words []string, end float64, style *Style) string {
 			text.WriteString(assLineBreak)
 		}
 
-		writeHookWords(&text, words, line, key, h)
+		writeHookWords(&text, words, line, key, &style.Hook)
 	}
 
-	frameScale := tenth(selectStartScale * percentBase)
-	frame := fmt.Sprintf(`{\an5%s\fscx%s\fscy%s\t(%d,%d,\fscx%d\fscy%d)\bord0\shad0\1c%s\1a&H00&\fad(%d,%d)\p1}%s{\p0}`,
-		move, frameScale, frameScale, grown[0], grown[1], percentBase, percentBase, assWhite, fade, selectFrameFade,
-		framePath(sel.frame))
+	scaled := func(full float64) func(from, to animState, dur int) string {
+		return func(from, to animState, dur int) string {
+			tags := `\an5` + placeTags(from.center, to.center, dur) + scaleTags(from.share*full)
+			if to.share != from.share {
+				tags += fmt.Sprintf(`\t(0,%d,%s)`, dur, scaleTags(to.share*full))
+			}
 
-	tipStart := point{
-		x: sel.start.x + selectStartScale*sel.frame.x/2 + cursorOffset,
-		y: sel.start.y + selectStartScale*sel.frame.y/2 + cursorOffset,
+			return tags
+		}
 	}
-	tipEnd := point{x: sel.center.x + sel.frame.x/2 + cursorOffset, y: sel.center.y + sel.frame.y/2 + cursorOffset}
-	cursor := fmt.Sprintf(`{\an7\move(%s,%s,%s,%s,%d,%d)\bord%d\shad0\1c%s\3c%s\1a&H00&\3a&H00&\fad(%d,%d)\p1}%s{\p0}`,
-		tenth(tipStart.x), tenth(tipStart.y), tenth(tipEnd.x), tenth(tipEnd.y), grown[0], grown[1], cursorBorder,
-		assWhite, assOverrideColor("#000000"), fade, selectFrameFade, cursorPath)
+
+	cursor := func(from, to animState, dur int) string {
+		return `\an7` + placeTags(sel.corner(from), sel.corner(to), dur)
+	}
+
+	frameLook := `\bord0\shad0\1c` + assWhite + `\1a&H00&`
+	cursorLook := fmt.Sprintf(`\bord%d\shad0\1c%s\3c%s\1a&H00&\3a&H00&`, cursorBorder, assWhite,
+		assOverrideColor("#000000"))
 
 	var b strings.Builder
 
-	for _, e := range []struct {
-		end  float64
-		text string
-	}{{end, text.String()}, {frameEnd, frame}, {frameEnd, cursor}} {
-		fmt.Fprintf(&b, "Dialogue: %d,%s,%s,%s,,0,0,0,,%s\n", hookLayer, formatTime(0), formatTime(e.end), hookStyleName,
-			e.text)
-	}
+	writeAnimated(&b, &sel, &tm, animPart{end: tm.total, fadeOut: tm.fade, place: scaled(float64(sel.scale)),
+		body: "}" + text.String()})
+	writeAnimated(&b, &sel, &tm, animPart{end: tm.frameEnd, fadeOut: selectFrameFade, place: scaled(percentBase),
+		look: frameLook, body: `\p1}` + framePath(sel.frame) + `{\p0}`})
+	writeAnimated(&b, &sel, &tm, animPart{end: tm.cursorEnd, fadeOut: selectFrameFade, place: cursor, look: cursorLook,
+		body: `\p1}` + cursorPath + `{\p0}`})
 
 	return b.String()
+}
+
+// animSteps: the growth is drawn by this many pieces of straight moves and linear scaling.
+const animSteps = 7
+
+// animState is where the hook stands at a moment of the animation: its middle and its share of the full size.
+type animState struct {
+	center point
+	share  float64
+}
+
+// stateAt is the state at the moment, ms: small at the start until the growth, then the middle and the size moving
+// together, slowing down (the progress to the power of selectAccel), full after it.
+func (sel *selection) stateAt(tm *selectTimes, ms int) animState {
+	progress := 0.0
+	if span := tm.grow[1] - tm.grow[0]; span > 0 {
+		progress = math.Pow(min(max(float64(ms-tm.grow[0])/float64(span), 0), 1), selectAccel)
+	}
+
+	return animState{
+		center: point{
+			x: sel.start.x + (sel.center.x-sel.start.x)*progress, y: sel.start.y + (sel.center.y-sel.start.y)*progress,
+		},
+		share: selectStartScale + (1-selectStartScale)*progress,
+	}
+}
+
+// corner is where the tip of the cursor stands in the state: at the bottom right corner of the frame.
+func (sel *selection) corner(st animState) point {
+	return point{
+		x: st.center.x + st.share*sel.frame.x/2 + cursorOffset, y: st.center.y + st.share*sel.frame.y/2 + cursorOffset,
+	}
+}
+
+// animPart is an element of the animation shown until end (ms), fading out over fadeOut: place gives its position and
+// scale tags from one state to another over dur ms, look and body follow them («}» closes the tags before the text).
+type animPart struct {
+	end, fadeOut int
+	place        func(from, to animState, dur int) string
+	look, body   string
+}
+
+// writeAnimated writes the element as events: still before the growth (fading in), the pieces of the growth, still
+// after it until its end (fading out); events past its end are cut there.
+func writeAnimated(b *strings.Builder, sel *selection, tm *selectTimes, part animPart) {
+	cuts := []int{0, tm.grow[0]}
+	for i := 1; i <= animSteps; i++ {
+		cuts = append(cuts, tm.grow[0]+(tm.grow[1]-tm.grow[0])*i/animSteps)
+	}
+
+	cuts = append(cuts, part.end)
+
+	for i := 0; i+1 < len(cuts); i++ {
+		from, to := cuts[i], min(cuts[i+1], part.end)
+		if to <= from {
+			continue
+		}
+
+		fadeIn, fadeOut := 0, 0
+		if from == 0 {
+			fadeIn = tm.fade
+		}
+
+		if to == part.end {
+			fadeOut = part.fadeOut
+		}
+
+		tags := part.place(sel.stateAt(tm, from), sel.stateAt(tm, to), to-from) + part.look + fadTag(fadeIn, fadeOut)
+		writeHookDialogue(b, from, to, "{"+tags+part.body)
+
+		if to == part.end {
+			return
+		}
+	}
+}
+
+// placeTags put an element at the point, or move it from one point to another over dur ms.
+func placeTags(from, to point, dur int) string {
+	if from == to {
+		return `\pos(` + tenth(from.x) + "," + tenth(from.y) + ")"
+	}
+
+	return fmt.Sprintf(`\move(%s,%s,%s,%s,0,%d)`, tenth(from.x), tenth(from.y), tenth(to.x), tenth(to.y), dur)
+}
+
+// scaleTags is \fscx and \fscy of the scale, percent.
+func scaleTags(scale float64) string {
+	return `\fscx` + tenth(scale) + `\fscy` + tenth(scale)
+}
+
+// writeHookDialogue writes an event of the hook from start to end, ms.
+func writeHookDialogue(b *strings.Builder, start, end int, text string) {
+	fmt.Fprintf(b, "Dialogue: %d,%s,%s,%s,,0,0,0,,%s\n", hookLayer, formatTime(float64(start)/millisPerSecond),
+		formatTime(float64(end)/millisPerSecond), hookStyleName, text)
 }
 
 // framePath is the selection frame of the size as an ASS drawing: the ring of the rectangle (an outer contour and an
