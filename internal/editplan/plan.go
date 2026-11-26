@@ -47,6 +47,9 @@ type Request struct {
 	// Hook: the editor proposes the hook title of the first version (EDITOR_HOOK_TITLE). Without it a first version
 	// gets one only when the trainer's caption asks; a revision changes it either way.
 	Hook bool
+	// Cleanup: the editor cleans the first version of a talking head (EDITOR_CLEANUP, Cleaning) of the failed takes,
+	// a phrase said again in a row and the preparation for the shooting.
+	Cleanup bool
 }
 
 // minTargetShare: the recommended reel is from this share of TargetSeconds up to it (30–60 s for 60 s).
@@ -60,11 +63,28 @@ func (r *Request) Selecting() bool {
 		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 
-// HookOnly reports whether the first version stopped only for the hook title: the hook is on, no caption, no disputed
-// repeats, a talking head within the recommended length. Then nothing is to be cut: the short reel is not cut on the
-// model's own initiative (Apply refuses it), and without the model its automatic cut is the draft.
+// Cleaning reports whether the editor cleans this version: the cleanup is on, the first version of a talking head
+// that is not shortened by the selection (the selection drops the failed takes itself), with or without a caption.
+// The description then counts the cleaning in one line (cleanup_words; without a caption remove_words and the trim
+// too).
+func (r *Request) Cleaning() bool {
+	return !r.IsRevision() && r.Cleanup && r.Plan != nil && !r.Selecting() &&
+		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
+}
+
+// CleanupOnly reports whether the first version is only cleaned: Cleaning without a caption. The model does not
+// shorten the reel, cut by time, add exercise titles or mute it, and keeps enough of it (Apply refuses it otherwise);
+// without the model the automatic cut is the draft.
+func (r *Request) CleanupOnly() bool {
+	return r.Cleaning() && strings.TrimSpace(r.Caption) == ""
+}
+
+// HookOnly reports whether the first version stopped only for the hook title with the cleanup off: the hook is on, no
+// caption, no disputed repeats, a talking head within the recommended length. Then nothing is to be cut: the short
+// reel is not cut on the model's own initiative (Apply refuses it), and without the model its automatic cut is the
+// draft.
 func (r *Request) HookOnly() bool {
-	return !r.IsRevision() && r.Hook && strings.TrimSpace(r.Caption) == "" && r.Plan != nil &&
+	return !r.IsRevision() && !r.Cleanup && r.Hook && strings.TrimSpace(r.Caption) == "" && r.Plan != nil &&
 		len(r.Plan.Candidates) == 0 && !r.Selecting() && previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 
@@ -129,4 +149,9 @@ type Outcome struct {
 	// length the trainer asked for) in a talking head; Target is that length, 0 for the recommended range.
 	Selected bool
 	Target   float64
+	// Cleaned is the number of fragments the cleaning of a first version cut (Request.Cleaning).
+	Cleaned int
+	// Declined are the texts for the trainer about what was asked and is not done (music, color...): with an edit
+	// (the rest is done) or with a refusal (CannotOutcome).
+	Declined []string
 }
