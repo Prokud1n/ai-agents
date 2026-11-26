@@ -344,7 +344,7 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   Проверка — `subtitles.TestBurnReferenceStyleWithFFmpeg` (пиксели; в media-image), `mediaworker.TestIntegrationScreenNotes`,
   скорость — `TestRenderSpeed` (референсный стиль против фразового).
 - Стиль тренера (T3.20) — `subtitles.DefaultStyle` (`assets/subtitles/style.yaml`). Файл стиля: `base: trainer |
-  words | phrase` (`ParseStyle`: сначала читается только `base`, затем строгий разбор `styleFile` поверх него); без
+  words | phrase` (`ParseStyle`: сначала читается только `base`, затем строгий разбор `styleDocument` поверх него); без
   `base` — `PhraseStyle`, поэтому старые файлы не меняют вид (`TestStyleFileBase`: `testdata/style-t3.17.yaml` →
   `WordsStyle`); `TestStyleFileIsDefault`, `TestWordsStyleFile`, `TestPhraseStyleFile`. Фразовая раскладка (Manrope
   Regular 60, белый, `margin_top` 455, ≤ 30 символов, без акцентов и виньетки), `layout.lowercase_sentences`

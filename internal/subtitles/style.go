@@ -365,8 +365,8 @@ const (
 	PhraseBase StyleBase = "phrase"
 )
 
-// styleFile is a style file: the base it starts from and the fields it changes.
-type styleFile struct {
+// styleDocument is a style file: the base it starts from and the fields it changes.
+type styleDocument struct {
 	Base  StyleBase `yaml:"base"`
 	Style `yaml:",inline"`
 }
@@ -400,7 +400,7 @@ func ParseStyle(data []byte) (Style, error) {
 
 // parseStyleOver decodes YAML over a copy of the base style strictly and validates the result.
 func parseStyleOver(base *Style, data []byte) (Style, error) {
-	file := styleFile{Style: *base}
+	file := styleDocument{Style: *base}
 
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
