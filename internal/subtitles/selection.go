@@ -16,8 +16,8 @@ const (
 	selectStartScale = 0.35
 	// selectDrop: the small hook stands this much lower than the hook in its place, px.
 	selectDrop = 30.0
-	selectHold       = 950 // ms
-	selectGrow       = 280 // ms
+	selectHold = 950 // ms
+	selectGrow = 280 // ms
 	// selectAccel is the \t acceleration of the growth: below 1 it slows down to the end.
 	selectAccel       = 0.5
 	selectFrameAfter  = 180 // ms
