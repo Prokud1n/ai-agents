@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
@@ -51,23 +52,18 @@ func TestWriteRepeats(t *testing.T) {
 	assert.Empty(t, revision.String(), "a revision gets no hints")
 }
 
+// testPhrase is the phrase of the words as normalizedPhrases makes it.
+func testPhrase(text string) *normPhrase {
+	p := &normPhrase{}
+	for _, w := range strings.Fields(text) {
+		p.add(normalizeWord(w))
+	}
+
+	return p
+}
+
 func TestSimilarity(t *testing.T) {
 	t.Parallel()
-
-	phrase := func(text string) *normPhrase {
-		p := &normPhrase{}
-
-		for _, w := range strings.Fields(text) {
-			word := normalizeWord(w)
-			p.all = append(p.all, word)
-
-			if isContent(word) {
-				p.stems = append(p.stems, string([]rune(word)[:min(len([]rune(word)), stemRunes)]))
-			}
-		}
-
-		return p
-	}
 
 	tests := []struct {
 		name     string
@@ -76,20 +72,59 @@ func TestSimilarity(t *testing.T) {
 	}{
 		{name: "the same words", a: "Ну, привет!", b: "ну привет", expected: 1},
 		{name: "one word is not a repeat", a: "так", b: "так"},
-		{name: "the same thought, other forms", a: straightBack, b: "держим ровную спину всегда", expected: 2.0 / 3},
+		{name: "the forms of the words", a: "держите спину ровно и ноги", b: "держите спина ровно и ногу", expected: 1},
 		{name: "a share of the shorter one", a: "сегодня расскажу про планку и пресс", b: "сегодня про планку", expected: 1},
 		{name: "different thoughts", a: straightBack, b: "дышите спокойно и не спешите"},
 		{name: "one content word in common", a: straightBack, b: "спину не сутульте никогда"},
 		{name: "«ё» is «е»", a: "всё ещё болит", b: "все еще болит", expected: 1},
+		{name: "the points of a list", a: "страх номер один", b: "страх номер два"},
+		{name: "ordinal points", a: "первая ошибка в планке", b: "вторая ошибка в планке"},
+		{name: "the same number said again", a: "страх номер один", b: "страх номер один это", expected: 1},
+		{name: "stop words only in common", a: "что это значит для вас", b: "как это работает для вас"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.InDelta(t, tt.expected, similarity(phrase(tt.a), phrase(tt.b)), 1e-9)
+			assert.InDelta(t, tt.expected, similarity(testPhrase(tt.a), testPhrase(tt.b)), 1e-9)
 		})
 	}
+}
+
+func TestStem(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		a, b string
+	}{
+		{a: "спину", b: "спина"},
+		{a: "ноги", b: "ногу"},
+		{a: "планку", b: "планка"},
+		{a: "колени", b: "колено"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.a+"/"+tt.b, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, stem(tt.a), stem(tt.b))
+		})
+	}
+}
+
+// TestSimilarPairsSkipsSeries: three similar phrases in a row are an enumeration or a refrain, not a failed take.
+func TestSimilarPairsSkipsSeries(t *testing.T) {
+	t.Parallel()
+
+	req := wholeRequest("держим спину ровно. | держим спину ровно. | держим спину ровно. || дышите спокойно.")
+	pairs := similarPairs(req.Transcript.Words, normalizedPhrases(req.Transcript, req.Plan))
+	assert.Empty(t, pairs)
+
+	req = wholeRequest("держим спину ровно. | дышите спокойно. | держим спину ровно.")
+	pairs = similarPairs(req.Transcript.Words, normalizedPhrases(req.Transcript, req.Plan))
+	require.Len(t, pairs, 1, "two of them apart are a repeat")
+	assert.Equal(t, 0, pairs[0][0].from)
 }
 
 func TestRepeatsInside(t *testing.T) {
@@ -127,6 +162,10 @@ func TestAboutShooting(t *testing.T) {
 		{name: "a slate", input: "это последний дубль", expected: true},
 		{name: "a restart", input: "стоп давай заново", expected: true},
 		{name: "the camera", input: "камера пишет", expected: true},
+		{name: "recording", input: "так я записываю", expected: true},
+		{name: "a question to the operator", input: "ты снимаешь", expected: true},
+		{name: "a countdown in digits", input: "1 2 3", expected: true},
+		{name: "a word that only starts so", input: "снимает нагрузку", expected: false},
 		{name: "the content", input: straightBack, expected: false},
 		{name: "one in a count is not a countdown", input: "раз и два", expected: false},
 	}

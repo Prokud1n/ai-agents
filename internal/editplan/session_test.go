@@ -172,3 +172,39 @@ func TestDeciderRejectsEmptyRequest(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidRequest)
 	assert.Nil(t, runner.got, "no model call")
 }
+
+// TestSubmitKeepsCheckedHook: when a first version fails the checks twice, the hook title that passed its own checks
+// is kept for the automatic cut (from a small letter); a revision keeps nothing.
+func TestSubmitKeepsCheckedHook(t *testing.T) {
+	t.Parallel()
+
+	const invalidWithHook = `{"decision": "edit", "reason": "x", "hook_title": "Мой путь в спорт", ` +
+		`"remove_words": [{"from": 40, "to": 41}]}`
+
+	tests := []struct {
+		name     string
+		req      *Request
+		expected string
+	}{
+		{name: "a first version", req: testRequest(1, nil), expected: "мой путь в спорт"},
+		{name: "a revision keeps nothing", req: testRequest(2, nil)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			session := NewSession(tt.req)
+			ctx := WithSession(t.Context(), session)
+
+			for range maxAttempts {
+				_, _ = NewSubmitTool().Execute(ctx, json.RawMessage(invalidWithHook))
+			}
+
+			outcome, ok := session.Outcome()
+			require.True(t, ok)
+			assert.Equal(t, InvalidOutcome, outcome.Kind)
+			assert.Equal(t, tt.expected, outcome.Edit.Hook)
+		})
+	}
+}

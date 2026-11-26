@@ -78,6 +78,11 @@ const (
 		"нужной длины, убрать или вернуть фрагмент, выбрать дубль, поправить слово в субтитрах, подписать упражнения, " +
 		"добавить, поменять или убрать заголовок, добавить или убрать пункты и цифры на экране, убрать звук — ответьте " +
 		"на черновик правкой."
+	// cleanupInvalidNote: the editor failed to clean a first version without a caption twice (formatted with what the
+	// automatic cut removed).
+	cleanupInvalidNote = "Неудачные дубли и подготовку к съёмке не убрал: не смог надёжно выбрать, что вырезать, " +
+		"поэтому вырезал только %s. Если остались лишние дубли, ответьте на черновик, например: „убери первый дубль " +
+		"вступления“."
 	// captionDeclinedNote goes before the texts of the requests the editor does not do (editplan.DeclinedText).
 	captionDeclinedNote = "Подпись как указание к монтажу не применил."
 	captionUnclearNote  = "Подпись как указание к монтажу не применил: не понял, что именно поменять. Если нужна " +
@@ -203,11 +208,16 @@ func Describe(r *editjob.Result, version int, caption string, summary *editjob.S
 	return fitDescription(head, tail)
 }
 
-// fitDescription joins the lines within maxDescriptionUnits: the head (the header and the notes) always, the tail
-// (changes, lists, the quoted caption) while it fits; what does not fit is replaced by shortenedNote.
+// fitDescription joins the lines within maxDescriptionUnits: the head (the header and the notes) while it fits — a
+// head line that does not fit is cut at a word with «…» —, the tail (changes, lists, the quoted caption) while it
+// fits; what does not fit is replaced by shortenedNote.
 func fitDescription(head, tail []string) string {
-	text := strings.Join(head, "\n")
 	reserve := utf16Len("\n" + shortenedNote)
+	text, cut := fitHead(head, maxDescriptionUnits-reserve)
+
+	if cut {
+		return text + "\n" + shortenedNote
+	}
 
 	for i, line := range tail {
 		room := maxDescriptionUnits
@@ -225,6 +235,52 @@ func fitDescription(head, tail []string) string {
 
 	return text
 }
+
+// fitHead joins the head lines within room units; true when a line was cut (the rest is dropped).
+func fitHead(head []string, room int) (string, bool) {
+	text := ""
+
+	for i, line := range head {
+		next := line
+		if i > 0 {
+			next = text + "\n" + line
+		}
+
+		if utf16Len(next) <= room {
+			text = next
+
+			continue
+		}
+
+		prefix := text
+		if i > 0 {
+			prefix += "\n"
+		}
+
+		return prefix + cutToUnits(line, room-utf16Len(prefix)), true
+	}
+
+	return text, false
+}
+
+// cutToUnits cuts the line at a word to at most units UTF-16 units with «…».
+func cutToUnits(line string, units int) string {
+	words := strings.Fields(line)
+	out := ""
+
+	for _, w := range words {
+		next := strings.TrimSpace(out + " " + w)
+		if utf16Len(next+ellipsis) > units {
+			break
+		}
+
+		out = next
+	}
+
+	return out + ellipsis
+}
+
+const ellipsis = "…"
 
 // utf16Len is the length of the text as Telegram counts it.
 func utf16Len(text string) int {
@@ -257,10 +313,17 @@ func cutKinds(takes bool) string {
 	return cutWithoutTakes
 }
 
-// cleaned: the editor's cleaning of the first version removed failed takes (its line is in the changes).
+// repeatsCutPrefix starts the line about the disputed repeats of a decided first version.
+const repeatsCutPrefix = "Спорные повторы: вырезал "
+
+// cleaned: the editor removed failed takes of the first version — its cleaning, or a disputed repeat cut (its earlier
+// phrase is a take; the worker's Result.Retakes does not count them) — by the lines in the changes.
+//
+// TODO: Summary.Cleaned in editjob instead of the lines (after T3.19c is merged).
 func cleaned(summary *editjob.Summary) bool {
 	return summary != nil && slices.ContainsFunc(summary.Changes, func(line string) bool {
-		return strings.HasPrefix(line, editplan.CleanupLinePrefix)
+		return strings.HasPrefix(line, editplan.CleanupLinePrefix) ||
+			(strings.HasPrefix(line, repeatsCutPrefix) && !strings.HasPrefix(line, repeatsCutPrefix+"0,"))
 	})
 }
 
@@ -337,8 +400,12 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 	}
 
 	if outcome.Kind != editplan.EditOutcome {
+		if outcome.Edit.Hook != "" {
+			summary.Changes = append(summary.Changes, editplan.HookLine(outcome.Edit.Hook))
+		}
+
 		if candidates > 0 {
-			summary.Changes = []string{fmt.Sprintf("Спорные повторы оставил в ролике: %d.", candidates)}
+			summary.Changes = append(summary.Changes, fmt.Sprintf("Спорные повторы оставил в ролике: %d.", candidates))
 		}
 
 		summary.Note = undecidedNote(req, outcome.Kind, outcome.Declined, workout)
@@ -355,7 +422,7 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 	summary.Note = editplan.DeclinedText(outcome.Declined)
 
 	if candidates > 0 {
-		summary.Changes = append(summary.Changes, fmt.Sprintf("Спорные повторы: вырезал %d, оставил %d.",
+		summary.Changes = append(summary.Changes, fmt.Sprintf(repeatsCutPrefix+"%d, оставил %d.",
 			outcome.Cut, candidates-outcome.Cut))
 	}
 
@@ -395,10 +462,14 @@ func undecidedNote(req *editplan.Request, kind editplan.OutcomeKind, declined []
 		case kind == editplan.CannotOutcome && len(declined) > 0:
 			note = captionDeclinedNote + " " + editplan.DeclinedText(declined)
 		case note == "":
-			note = captionUnclearNote
+			note = withDeclined(captionUnclearNote, declined)
 		}
 
 		notes = append(notes, note)
+	}
+
+	if req.CleanupOnly() && kind == editplan.InvalidOutcome {
+		notes = append(notes, fmt.Sprintf(cleanupInvalidNote, cutKinds(len(req.Plan.Takes) > 0)))
 	}
 
 	if req.Selecting() {

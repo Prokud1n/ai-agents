@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,38 +28,47 @@ import (
 )
 
 const (
-	// The synthetic talking head with the preparation for the shooting: a phrase of three words every 2.5 s.
-	cleanupStart    = 1.0
-	cleanupStep     = 2.5
-	cleanupWordLen  = 0.5
-	cleanupWordGap  = 0.1
-	cleanupDuration = 17
-	// The model's answers: the cleaning cuts the countdown and the slate (words 0–5); the caption «добавь музыку» is
-	// declined.
-	cleanupAnswer = `{"decision": "edit", "reason": "отсчёт и слова про дубль", "remove_words": [{"from": 0, "to": 5}]}`
-	musicAnswer   = `{"decision": "cannot", "reason": "музыка", "declined": ["music"]}`
-	musicCaption  = "добавь музыку"
-	musicText     = "Музыку добавьте в Instagram при публикации — я её не накладываю."
+	// The synthetic talking head with the preparation for the shooting and the intro said twice: words of 0.5 s with
+	// 0.1 s between them, 1 s between the phrases.
+	cleanupStart     = 1.0
+	cleanupWordLen   = 0.5
+	cleanupWordGap   = 0.1
+	cleanupPhraseGap = 1.0
+	cleanupDuration  = 23
+	// The model's answers: the cleaning cuts the countdown, the first intro and the slate (words 0–9); the caption
+	// «добавь музыку» is declined.
+	cleanupAnswer = `{"decision": "edit", "reason": "отсчёт, первое интро и слова про дубль", ` +
+		`"cleanup_words": [{"from": 0, "to": 9}]}`
+	musicAnswer  = `{"decision": "cannot", "reason": "музыка", "declined": ["music"]}`
+	musicCaption = "добавь музыку"
+	musicText    = "Музыку добавьте в Instagram при публикации — я её не накладываю."
 )
 
-// cleanupPhrases: a countdown and a slate before the content.
+// cleanupIntro is the intro the trainer says twice.
+var cleanupIntro = []string{"привет", "я", "настя", "тренер"}
+
+// cleanupPhrases: a countdown, a first intro and a slate before the intro said again and the content.
 var cleanupPhrases = [][]string{
-	{"раз", "два", "три"}, {"вот", "последний", "дубль"}, {"планка", "укрепляет", "спину"},
-	{"держите", "локти", "ровно"}, {"дышите", "очень", "спокойно"}, {"сохраняйте", "наше", "видео"},
+	{"раз", "два", "три"}, cleanupIntro, {"вот", "последний", "дубль"},
+	slices.Concat(cleanupIntro, []string{"по", "фитнесу"}), {"планка", "укрепляет", "спину"},
+	{"держите", "локти", "ровно"}, {"сохраняйте", "наше", "видео"},
 }
 
 // cleanupTranscript is the transcript of the synthetic talking head: a segment per phrase.
 func cleanupTranscript() *transcription.Result {
 	result := &transcription.Result{Language: testLanguage, Duration: cleanupDuration}
 
-	for p, phrase := range cleanupPhrases {
-		start := cleanupStart + float64(p)*cleanupStep
+	at := cleanupStart
+
+	for _, phrase := range cleanupPhrases {
 		words := make([]transcription.Word, 0, len(phrase))
 
-		for i, text := range phrase {
-			at := start + float64(i)*(cleanupWordLen+cleanupWordGap)
+		for _, text := range phrase {
 			words = append(words, transcription.Word{Word: text, Start: at, End: at + cleanupWordLen})
+			at += cleanupWordLen + cleanupWordGap
 		}
+
+		at += cleanupPhraseGap - cleanupWordGap
 
 		text := strings.Join(phrase, " ") + "."
 		result.Words = append(result.Words, words...)
@@ -120,7 +130,7 @@ func startCleanupEnv(t *testing.T, model *cleanupModel) *editEnv {
 
 	cfg := &config.Editor{
 		Stream: redistest.Prefix(t, client) + "editor:jobs", JobTimeout: editWait, PollInterval: time.Second,
-		QueueTimeout: time.Hour, WorkerWait: time.Minute, HookTitle: true,
+		QueueTimeout: time.Hour, WorkerWait: time.Minute, HookTitle: true, Cleanup: true,
 	}
 
 	board, err := editjob.NewBoard(client, cfg, log)
@@ -160,8 +170,9 @@ func startCleanupEnv(t *testing.T, model *cleanupModel) *editEnv {
 }
 
 // TestIntegrationCleanupFirstVersion: a talking head without a caption is given to the model with the hints about the
-// shooting; the model (through the real decider and its checks) cuts the countdown and the slate, the reel is shorter
-// by them, and the description says the failed takes and the preparation were removed, in one line.
+// intro said twice and the shooting; the model (through the real decider and its checks) cuts the countdown, the first
+// intro and the slate, the reel is shorter by them, and the description says the failed takes and the preparation
+// were removed, in one line.
 func TestIntegrationCleanupFirstVersion(t *testing.T) {
 	t.Parallel()
 
@@ -176,20 +187,21 @@ func TestIntegrationCleanupFirstVersion(t *testing.T) {
 	assert.Contains(t, prompts[0], "Похоже на слова про съёмку")
 	assert.Contains(t, prompts[0], "«раз два три»")
 	assert.Contains(t, prompts[0], "«вот последний дубль»")
+	assert.Contains(t, prompts[0], "«привет я настя тренер» ↔ слова 10–15", "the intro said twice is hinted")
 
 	assert.Contains(t, v1.Text, "(паузы, оговорки и неудачные дубли)")
 	assert.Contains(t, v1.Text, editplan.CleanupLinePrefix+": 1 фрагмент (")
 	assert.NotContains(t, v1.Text, "Вырезал фрагмент", "the cleaning is one line")
 
-	// Four phrases of 1.7 s with their margins are left of six.
-	assert.InDelta(t, 4*(3*cleanupWordLen+2*cleanupWordGap+0.2), env.reelDuration(t, v1.MediaKey), 0.6)
+	// The second intro (3.5 s) and three phrases of 1.7 s with their margins are left.
+	assert.InDelta(t, 3.7+3*(3*cleanupWordLen+2*cleanupWordGap+0.2), env.reelDuration(t, v1.MediaKey), 0.6)
 
 	files, err := editjob.Files(env.files, env.source, 1)
 	require.NoError(t, err)
 
 	decisions := string(env.read(t, files.Decisions))
-	assert.Contains(t, decisions, "Чистка первой версии: отсчёт и слова про дубль")
-	assert.Contains(t, decisions, "Чистка: вырезаны слова 0–5 «раз два три вот последний дубль»")
+	assert.Contains(t, decisions, "Чистка первой версии: отсчёт, первое интро и слова про дубль")
+	assert.Contains(t, decisions, "Чистка: вырезаны слова 0–9 «раз два три привет я настя тренер вот последний дубль»")
 }
 
 // TestIntegrationCaptionDeclined: the caption «добавь музыку» is declined by its kind: the automatic cut is rendered

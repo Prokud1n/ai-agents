@@ -198,7 +198,7 @@ func TestIntegrationHookTitle(t *testing.T) {
 
 	prompts := model.Prompts()
 	require.Len(t, prompts, 1, "the short talking head is given to the model for the hook")
-	assert.Contains(t, prompts[0], "почисти ролик (раздел «Чистка дублей и подготовки»)")
+	assert.Contains(t, prompts[0], "предложи только заголовок-хук; вырезать ничего не нужно")
 	assert.Contains(t, v1.Text, "Заголовок: «"+hookText+"».")
 
 	files1, err := editjob.Files(env.files, env.source, 1)

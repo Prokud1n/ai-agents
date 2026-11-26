@@ -65,8 +65,13 @@ func TestApplyDeclined(t *testing.T) {
 			kind:  EditOutcome, declined: []string{musicText},
 		},
 		{
+			name: "unclear keeps the declined", req: revision,
+			input: Input{Decision: UnclearDecision, Declined: []DeclinedKind{MusicDeclined}},
+			kind:  UnclearOutcome, declined: []string{musicText},
+		},
+		{
 			name: "a revision that changes nothing without a decline", req: revision,
-			input: Input{Decision: EditDecision}, err: "ничего не меняет",
+			input: Input{Decision: EditDecision}, err: hookNoChange,
 		},
 		{
 			name: "an unknown kind", req: withCaption("сделай красиво"),

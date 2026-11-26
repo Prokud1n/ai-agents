@@ -71,6 +71,9 @@ type Input struct {
 	// Declined are the trainer's requests the editor does not do (music, color...), by kind: the trainer gets the
 	// prepared text of each, with the rest of the edit or with a refusal.
 	Declined []DeclinedKind `json:"declined"`
+	// CleanupWords are the failed takes, a phrase said again and the preparation for the shooting the cleaning of a
+	// first version cuts (Request.Cleaning): cut like Remove, counted in one line of the description.
+	CleanupWords []roughcut.WordRange `json:"cleanup_words"`
 }
 
 // FixInput corrects the subtitle word Index to Text; Word is the word the model means as it reads it in the
@@ -132,7 +135,7 @@ func Apply(req *Request, in *Input) (*Outcome, error) {
 	case CannotDecision:
 		return &Outcome{Kind: CannotOutcome, Reason: reason, Declined: declined}, nil
 	case UnclearDecision:
-		return &Outcome{Kind: UnclearOutcome, Reason: reason}, nil
+		return &Outcome{Kind: UnclearOutcome, Reason: reason, Declined: declined}, nil
 	case EditDecision:
 	default:
 		return nil, checkFailedf("decision должен быть edit, cannot или unclear, а не %q", in.Decision)
@@ -215,9 +218,9 @@ func checkInput(req *Request, in *Input) error {
 	words := len(req.Transcript.Words)
 
 	switch {
-	case len(in.Remove)+len(in.Restore)+len(in.Hide) > maxRanges:
-		return checkFailedf("слишком много отрезков: не больше %d в remove_words, restore_words и hide_words вместе",
-			maxRanges)
+	case len(in.Remove)+len(in.Restore)+len(in.Hide)+len(in.CleanupWords) > maxRanges:
+		return checkFailedf("слишком много отрезков: не больше %d в remove_words, restore_words, hide_words и "+
+			"cleanup_words вместе", maxRanges)
 	case len(in.FixWords) > maxFixes:
 		return checkFailedf("слишком много исправлений: не больше %d в fix_words", maxFixes)
 	case !validSeconds(in.TrimStart) || !validSeconds(in.TrimEnd):
@@ -227,7 +230,7 @@ func checkInput(req *Request, in *Input) error {
 			timelineDuration(req))
 	}
 
-	if err := checkRanges(words, in.Remove, in.Restore, in.Hide); err != nil {
+	if err := checkRanges(words, in.Remove, in.Restore, in.Hide, in.CleanupWords); err != nil {
 		return err
 	}
 
@@ -251,7 +254,11 @@ func checkInput(req *Request, in *Input) error {
 		return err
 	}
 
-	if err := checkCleanupOnly(req, in); err != nil {
+	if err := checkCleanup(req, in); err != nil {
+		return err
+	}
+
+	if err := checkHookOnly(req, in); err != nil {
 		return err
 	}
 
@@ -494,7 +501,7 @@ func mergeEdit(req *Request, in *Input, trimmed []roughcut.WordRange) (roughcut.
 	state := previousState(&previous, words)
 	changed := make([]wordState, words)
 
-	for _, r := range slices.Concat(trimmed, in.Remove) {
+	for _, r := range slices.Concat(trimmed, in.Remove, in.CleanupWords) {
 		mark(changed, r, removedWord)
 	}
 

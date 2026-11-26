@@ -43,7 +43,7 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 	previous := previousEdit(req.Plan)
 
 	// The hook and the screen notes first: the description never folds them into «И ещё изменений».
-	lines = append(lines, hookLines(&previous, in)...)
+	lines = append(lines, hookLines(req, &previous, in)...)
 	lines = append(lines, screenNotesLines(req, in, &previous)...)
 
 	if sel.on {
@@ -89,17 +89,18 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 	return lines
 }
 
-// cutLines are the trim and the fragments cut and brought back; the cleaning of a first version is one line about
-// the failed takes instead of the trim and a line for every fragment cut.
+// cutLines are the cleaning (one line about the failed takes), the trim and the fragments cut and brought back; a
+// first version only cleaned has no lines for its trim and the fragments: the cleaning line counts them.
 func cutLines(words []transcription.Word, in *Input, trimmed *trim, sel *selection) []string {
 	var lines []string
 
-	switch {
-	case sel.cleanup:
+	if sel.cleanup {
 		if line := cleanupLine(sel.cleaned); line != "" {
 			lines = append(lines, line)
 		}
-	default:
+	}
+
+	if !sel.only {
 		if trimmed.start > 0 {
 			lines = append(lines, "Обрезал начало: убрал "+secondsText(trimmed.start, "первую секунду", "первые")+".")
 		}
@@ -109,7 +110,7 @@ func cutLines(words []transcription.Word, in *Input, trimmed *trim, sel *selecti
 		}
 	}
 
-	return append(lines, fragmentLines(words, in, sel.on || sel.cleanup)...)
+	return append(lines, fragmentLines(words, in, sel.on || sel.only)...)
 }
 
 // fragmentLines: «Вырезал фрагмент «…».» for every fragment cut (unless the selection or the cleaning counted them),

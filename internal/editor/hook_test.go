@@ -143,7 +143,7 @@ func TestExecutorDecidesHook(t *testing.T) {
 
 			require.Len(t, tt.decider.requests, 1)
 			assert.True(t, tt.decider.requests[0].Hook, "the model is asked for the hook")
-			assert.True(t, tt.decider.requests[0].CleanupOnly(), "no target: the 45 s reel is not shortened, only cleaned")
+			assert.True(t, tt.decider.requests[0].HookOnly(), "no target, the cleanup off: the 45 s reel gets only the hook")
 			assert.False(t, tt.decider.requests[0].Selecting())
 
 			if tt.retried {

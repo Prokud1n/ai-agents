@@ -61,7 +61,7 @@ func emojiRune(r rune) bool {
 var hookQuotes = [][2]string{{"«", "»"}, {`"`, `"`}, {"„", "“"}, {"“", "”"}}
 
 // normalizeHook is the hook as the reel shows it: spaces collapsed, without the quotes around it and a period at the
-// end (an ellipsis stays), from a small letter like the hooks of the reference reels (lowerFirst).
+// end (an ellipsis stays). The screen notes are normalized so too; only the model's hook title is lowered (hookOf).
 func normalizeHook(hook string) string {
 	text := trimHookPeriod(strings.Join(strings.Fields(hook), " "))
 
@@ -73,53 +73,55 @@ func normalizeHook(hook string) string {
 		}
 	}
 
-	return lowerFirst(trimHookPeriod(text))
+	return trimHookPeriod(text)
 }
 
-// lowerFirst puts the first letter of the first word in lower case unless the word is an abbreviation (its first two
-// letters are capitals: «ЗОЖ», «SMART-цели»). A proper name is not told from a word: the model writes the hook from a
-// small letter and keeps the capitals of names, the code only catches a sentence-like capital.
-func lowerFirst(text string) string {
-	first, _, _ := strings.Cut(text, " ")
-	if abbreviation(first) {
+// hookOf is the hook title of the decision as the reel shows it: normalized and, unless the trainer dictated it (her
+// caption or revision has the text as it is), from a small letter like the hooks of the reference reels.
+func hookOf(req *Request, raw string) string {
+	text := normalizeHook(raw)
+	if text == "" || strings.Contains(trainerText(req), text) {
 		return text
 	}
 
-	for i, r := range first {
-		if !unicode.IsLetter(r) {
-			continue
-		}
-
-		if !unicode.IsUpper(r) {
-			return text
-		}
-
-		return text[:i] + string(unicode.ToLower(r)) + text[i+utf8.RuneLen(r):]
-	}
-
-	return text
+	return lowerFirst(text)
 }
 
-// abbreviation: the first two letters of the word are capitals.
-func abbreviation(word string) bool {
-	capitals := 0
+// trainerText is the trainer's caption of the first version or her revision.
+func trainerText(req *Request) string {
+	if req.IsRevision() {
+		return req.Revision
+	}
 
-	for _, r := range word {
-		if !unicode.IsLetter(r) {
-			continue
-		}
+	return req.Caption
+}
 
-		if !unicode.IsUpper(r) {
-			return false
-		}
+// lowerFirst puts the first letter of the first word in lower case unless another letter of the word is a capital: an
+// abbreviation («ЗОЖ», «SMART-цели») or a name written so («YouTube»). A proper name is not told from a word: the
+// model is told to start the hook with another word.
+func lowerFirst(text string) string {
+	first, _, _ := strings.Cut(text, " ")
+	at := -1
 
-		capitals++
-		if capitals == 2 {
-			return true
+	for i, r := range first {
+		switch {
+		case !unicode.IsLetter(r):
+		case at < 0 && !unicode.IsUpper(r):
+			return text
+		case at < 0:
+			at = i
+		case unicode.IsUpper(r):
+			return text
 		}
 	}
 
-	return false
+	if at < 0 {
+		return text
+	}
+
+	r, size := utf8.DecodeRuneInString(text[at:])
+
+	return text[:at] + string(unicode.ToLower(r)) + text[at+size:]
 }
 
 // trimHookPeriod drops one period at the end; an ellipsis stays.
@@ -131,18 +133,37 @@ func trimHookPeriod(text string) string {
 	return text
 }
 
+// checkHookOnly refuses cuts, trims, the workout mode, exercise titles and muting in a first version stopped only for
+// the hook title (the cleanup off): there is no caption, the trainer asked for nothing, so the model does not change
+// the reel on its own initiative; the hook and the screen notes (they cut nothing) pass.
+func checkHookOnly(req *Request, in *Input) error {
+	if !req.HookOnly() {
+		return nil
+	}
+
+	cuts := in.TrimStart > 0 || in.TrimEnd > 0 || len(in.Remove) > 0 || len(in.CutSeconds) > 0 || in.TargetSeconds > 0
+	extras := in.Mode == roughcut.WorkoutMode || len(in.AddTitles) > 0 || (in.Mute != nil && *in.Mute)
+
+	if cuts || extras {
+		return checkFailedf("в этом ролике ничего не вырезай, не обрезай и не меняй режим, подписи упражнений и звук: " +
+			"подписи нет, тренер ни о чём не просила — укажи только hook_title и screen_notes (или не указывай их)")
+	}
+
+	return nil
+}
+
 // nextHook is the hook title of the new version: the decision's (checked), or the previous version's.
-func nextHook(previous *roughcut.Edit, in *Input) string {
+func nextHook(req *Request, previous *roughcut.Edit, in *Input) string {
 	if in.HookTitle == nil {
 		return previous.Hook
 	}
 
-	return normalizeHook(*in.HookTitle)
+	return hookOf(req, *in.HookTitle)
 }
 
 // hookLines: «Заголовок: «…».» when the decision sets a new hook title, «Убрал заголовок.» when it removes one.
-func hookLines(previous *roughcut.Edit, in *Input) []string {
-	hook := nextHook(previous, in)
+func hookLines(req *Request, previous *roughcut.Edit, in *Input) []string {
+	hook := nextHook(req, previous, in)
 
 	switch hook {
 	case previous.Hook:
@@ -150,8 +171,23 @@ func hookLines(previous *roughcut.Edit, in *Input) []string {
 	case "":
 		return []string{hookRemovedLine}
 	default:
-		return []string{"Заголовок: «" + hook + "»."}
+		return []string{HookLine(hook)}
 	}
+}
+
+// HookLine is the line of the description about a hook title set: «Заголовок: «…».».
+func HookLine(hook string) string {
+	return "Заголовок: «" + hook + "»."
+}
+
+// checkedHook is the hook title of an input that failed the checks, when the hook itself passed them: a first version
+// keeps it although the rest of the decision is not applied; "" otherwise.
+func checkedHook(req *Request, in *Input) string {
+	if req.IsRevision() || in.HookTitle == nil || checkHook(in.HookTitle) != nil {
+		return ""
+	}
+
+	return hookOf(req, *in.HookTitle)
 }
 
 // hookRemovedLine: the revision removed the hook title.

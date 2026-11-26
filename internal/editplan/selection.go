@@ -29,13 +29,15 @@ const (
 // selection is the editorial selection of a decision: whether phrases were picked for the length of a reel (and the
 // reel got shorter), the length asked for (0: the recommended range), and the reel built with the decision.
 //
-// cleanup is the cleaning of a first version without a caption (Request.CleanupOnly), cleaned what it removed.
+// cleanup is the cleaning of a first talking head (Request.Cleaning), only that it is the whole decision (no caption:
+// Request.CleanupOnly), cleaned what it removed.
 type selection struct {
 	on       bool
 	target   float64
 	duration float64
 	keep     []roughcut.Interval
 	cleanup  bool
+	only     bool
 	cleaned  cleaning
 }
 
@@ -43,7 +45,8 @@ type selection struct {
 func newSelection(req *Request, in *Input, mode roughcut.Mode, plan *roughcut.Plan) selection {
 	return selection{
 		on:     isSelected(req, in, mode) && plan.Duration < req.Plan.Duration-minShortenSeconds,
-		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep, cleanup: req.CleanupOnly(),
+		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep,
+		cleanup: req.Cleaning() && mode == roughcut.TalkMode, only: req.CleanupOnly() && mode == roughcut.TalkMode,
 	}
 }
 
@@ -133,10 +136,11 @@ func lengthHint(req *Request, in *Input, plan *roughcut.Plan, low, high float64)
 
 	return fmt.Sprintf("ролик короче нужного: вырежи на %.1f–%.1f с меньше — не вырезай часть фраз из remove_words "+
 		"(в правке — верни их через restore_words)%s", least, most,
-		sizedHint("подходят по длине вырезанные тобой отрезки", words, removedRanges(words, in.Remove), least, most))
+		sizedHint("подходят по длине вырезанные тобой отрезки", words, removedRanges(req, in.Remove), least, most))
 }
 
-// keptPhrases are the phrases of the transcript (as the prompt lists them) left in the reel by the plan.
+// keptPhrases are the phrases of the transcript (as the prompt lists them) left in the reel by the plan, with the
+// seconds of the reel they take.
 func keptPhrases(req *Request, plan *roughcut.Plan) []sized {
 	words := req.Transcript.Words
 	all := phrases(req.Transcript, plan)
@@ -144,21 +148,37 @@ func keptPhrases(req *Request, plan *roughcut.Plan) []sized {
 
 	for _, ph := range all {
 		if ph.key.interval >= 0 {
-			out = append(out, sized{from: ph.from, to: ph.to, seconds: words[ph.to].End - words[ph.from].Start})
+			seconds := overlap(plan.Keep, words[ph.from].Start, words[ph.to].End)
+			out = append(out, sized{from: ph.from, to: ph.to, seconds: seconds})
 		}
 	}
 
 	return out
 }
 
-// removedRanges are the ranges of words cut by the decision with their length.
-func removedRanges(words []transcription.Word, cut []roughcut.WordRange) []sized {
+// removedRanges are the ranges of words cut by the decision with the seconds they take in the reel the decision
+// starts from (bringing one back adds about that much).
+func removedRanges(req *Request, cut []roughcut.WordRange) []sized {
+	words := req.Transcript.Words
 	out := make([]sized, 0, len(cut))
+
 	for _, r := range cut {
-		out = append(out, sized{from: r.From, to: r.To, seconds: words[r.To].End - words[r.From].Start})
+		seconds := overlap(req.Plan.Keep, words[r.From].Start, words[r.To].End)
+		out = append(out, sized{from: r.From, to: r.To, seconds: seconds})
 	}
 
 	return out
+}
+
+// overlap is how much of start–end the kept intervals cover.
+func overlap(keep []roughcut.Interval, start, end float64) float64 {
+	total := 0.0
+
+	for _, iv := range keep {
+		total += max(min(end, iv.End)-max(start, iv.Start), 0)
+	}
+
+	return total
 }
 
 // sizedHint names up to maxSizedHints runs that last least–most seconds or, without such, the closest ones; "" when

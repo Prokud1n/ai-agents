@@ -246,7 +246,7 @@ func mergeExtras(req *Request, in *Input, mode roughcut.Mode, trimmed *trim, edi
 	edit.CutTime = roughcut.NormalizeIntervals(cuts, req.Plan.SourceDuration)
 	edit.Titles = titles
 	edit.Mute = previous.Mute
-	edit.Hook = nextHook(&previous, in)
+	edit.Hook = nextHook(req, &previous, in)
 	edit.ScreenNotes = notes
 
 	if in.Mute != nil {

@@ -285,8 +285,11 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (текст — поставить/поменять, `""` — убрать, нет поля — оставить; `editplan.checkHook`: 1–14 слов, ≤ 90 символов, без
   управляющих/Cf-символов, `{}\<>`, эмодзи и `#`; обрамляющие кавычки и точка в конце снимаются — `normalizeHook`). `EDITOR_HOOK_TITLE` (по умолчанию `true`) → `editjob.Job.Hook`:
   стадия `auto` всегда завершается `planned`, `editplan.Request.Hook` просит модель предложить хук.
-  Без подписи первая версия — чистка (`Request.CleanupOnly()`, ниже); без модели — `fallBack`, черновик без заголовка.
-  Хук — со строчной (`editplan.lowerFirst`, кроме аббревиатуры: две первые буквы заглавные). Модель не
+  Без подписи первая версия — чистка (`Request.CleanupOnly()`, ниже), при `EDITOR_CLEANUP=false` —
+  `Request.HookOnly()` (talk без подписи, спорных повторов и отбора: промпт «предложи только заголовок-хук», `Apply`
+  отклоняет вырезы и обрезку); без модели — `fallBack`, черновик без заголовка. Хук модели — со строчной
+  (`editplan.hookOf` → `lowerFirst`: не трогает первое слово с другими заглавными — аббревиатура, CamelCase — и текст,
+  который есть в подписи или правке тренера как есть; пункты на экране не трогает). Модель не
   поставила хук (без подписи) — последняя строка описания `editor.noHookHint`. Воркер передаёт
   `Plan.Edit.Hook` в `subtitles.CreateSubtitlesData.Hook`: событие стиля `hook` (Manrope Regular 60, белый, по центру; слой 2,
   `\fad`, ≤ 4 строк с переносом по словам и `\fscx`; ключевое слово `highlight` и плашка `box` — опции, выключены;
@@ -329,23 +332,30 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`handle.max_width` справа, выше кнопок Instagram — `rightButtonsTop` 1000) и фразовые субтитры не пересекаются.
   Проверка — `subtitles.TestBurnReferenceStyleWithFFmpeg` (пиксели; в media-image), `mediaworker.TestIntegrationScreenNotes`,
   скорость — `TestRenderSpeed` (референсный стиль против фразового).
-- Чистка первой версии и невыполнимые просьбы (T3.19a). `editor.Executor` ставит `editplan.Request.Cleanup`;
-  `Request.CleanupOnly()` — первая версия talk без подписи и отбора (спорные повторы можно): промпт «почисти ролик»
-  (`cleanupTask`) + подсказки `editplan.writeRepeats` (только первая версия talk: похожие оставленные фразы в пределах
-  90 с — общие основы ≥ 2 и ≥ 60 % короткой или те же слова; повтор группы ≤ 3 слов подряд внутри фразы; слова про
-  съёмку и отсчёт «раз два три»). `checkCleanupOnly`: нельзя `target_seconds`, `cut_seconds`, workout, подписи
-  упражнений, mute; `cleanupOf`: ролик ≥ 40 % (`minCleanupShare`) плана воркера, иначе ошибка проверки; считает
-  фрагменты (подряд идущие слова, вырезанные решением и бывшие в ролике без него) и секунды (длина без чистки − с ней)
-  → одна строка `cleanupLine` (`editplan.CleanupLinePrefix`) вместо строк обрезки и «Вырезал фрагмент»; в логе —
-  «Чистка первой версии: …» и «Чистка: вырезаны слова …». `editor.talkHeader` пишет «неудачные дубли» только при
-  `Result.Retakes > 0` или строке чистки, `longFailedNote`/`longUnchosenNote` — по `Plan.Takes` (`cutKinds`).
-  `declined` в `submit_edit` (`editplan.DeclinedKind`: music, color, effects, broll, speed, beauty, reorder) →
-  `Outcome.Declined` — заготовленные тексты (`declinedTexts`, порядок `declinedOrder`), только при подписи/правке;
-  `cannot` с ними, правка, которая кроме них ничего не меняет (`errNothingChanged`), — `CannotOutcome`. `editor`: у
-  edit — `Summary.Note` (голова описания), у первой версии `cannot` — `captionDeclinedNote` + тексты, у правки
-  `cannot` — тексты вместо `cannotRevisionText`. Ошибка длины (`buildSized`) называет, сколько секунд вырезать или
-  вернуть и фразы подходящей длины (`lengthHint`). Проверка — `mediaworker.TestIntegrationCleanupFirstVersion`,
-  `TestIntegrationCaptionDeclined`.
+- Чистка первой версии и невыполнимые просьбы (T3.19a). `EDITOR_CLEANUP` (по умолчанию `true`) →
+  `job.Decide = подпись || cleanup` (каждая первая версия ждёт модель) и `editplan.Request.Cleanup`.
+  `Request.Cleaning()` — первая версия talk без отбора (с подписью и без): поле `cleanup_words` (вырезается как
+  `remove_words`, вне чистки и в workout — ошибка проверки) и одна строка описания `cleanupLine`
+  (`editplan.CleanupLinePrefix`: фрагменты — подряд идущие слова чистки, бывшие в ролике без неё; секунды — длина без
+  чистки − с ней). `Request.CleanupOnly()` — `Cleaning()` без подписи: промпт «почисти ролик» (`cleanupTask`), чистка —
+  ещё и `remove_words` с trim (их строк нет), `checkCleanup` запрещает `target_seconds`, `cut_seconds`, подписи
+  упражнений, mute; workout можно, но без вырезов; `cleanupFloor`: ≥ 25 % плана без чистки (с принятыми повторами) и
+  ≥ 15 с (у ролика < 30 с — половина). Дважды не прошло проверку — автоматическая склейка, `editor.cleanupInvalidNote`
+  и хук, если он прошёл свою проверку (`Session` → `Outcome.Edit.Hook`, `editor.renderedEdit`). Отбор (`Selecting`)
+  — не чистка, но в задаче «сначала выкинь неудачные дубли…» (`selectionCleaning`). Подсказки `editplan.writeRepeats`
+  (первая версия talk): похожие оставленные фразы в пределах 90 с — общие основы (`stem`: без 1–2 последних букв,
+  без стоп-слов) ≥ 2 и ≥ 60 % короткой или те же слова; разные числительные — не пара; серия из ≥ 3 похожих подряд —
+  перечисление, не дубль; лучшие 12 по сходству; повтор группы ≤ 3 слов подряд внутри фразы; слова про съёмку (точные
+  формы) и отсчёт «раз два три»/«1 2 3». Описание: «неудачные дубли» в заголовке — при `Result.Retakes > 0`, строке
+  чистки или вырезанном спорном повторе (`editor.cleaned`, по строкам; TODO `Summary.Cleaned`), пометки длинного
+  ролика — по `Plan.Takes` (`cutKinds`); голова описания тоже режется по лимиту (`fitHead`). `declined` в
+  `submit_edit` (`editplan.DeclinedKind`: music, color, effects, broll, speed, beauty, reorder) → `Outcome.Declined`
+  — заготовленные тексты (`declinedTexts`, порядок `declinedOrder`), только при подписи/правке; с `cannot`, `unclear`
+  и edit; правка, которая кроме них ничего не меняет (`errNothingChanged`), — `CannotOutcome`. `editor`: у edit —
+  `Summary.Note`, у первой версии `cannot` — `captionDeclinedNote` + тексты, `unclear` — пометка + тексты, у правки
+  `cannot` — тексты вместо `cannotRevisionText`, `unclear` — `unclearRevisionText` + тексты. Ошибка длины
+  (`buildSized`) называет, сколько секунд вырезать или вернуть и фразы подходящей длины (секунды — пересечение с
+  `Keep`, `lengthHint`). Проверка — `mediaworker.TestIntegrationCleanupFirstVersion`, `TestIntegrationCaptionDeclined`.
 - Звук и зумы (T3.15a): `ffmpeg.Runner.ExtractAudioMeasured` меряет громкость исходника (`ebur128`) в том же проходе,
   что извлекает звук для Whisper, → `transcription.Result.Loudness` (хранится в транскрипте исходника, render и правки
   не меряют заново). `mediaworker.soundSettings.cut` (`MEDIA_WORKER_LOUDNESS`/`_DENOISE`/`_ZOOM`) добавляет к

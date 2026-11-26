@@ -43,8 +43,7 @@ func Prompt(req *Request) string {
 		fmt.Fprintf(&b, "Задача: правка тренера к версии %d черновика рилс. Сделай версию %d. Секунды в правке — "+
 			"по времени ролика, который видела тренер.\n", req.Version-1, req.Version)
 	case strings.TrimSpace(req.Caption) != "":
-		b.WriteString("Задача: первый монтаж рилс. Тренер подписала исходник — примени подпись, если это указание " +
-			"к монтажу, и реши спорные повторы. Секунды в подписи — по времени исходника.\n")
+		b.WriteString(captionTask(req))
 	case previousEdit(plan).Mode == roughcut.WorkoutMode:
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — выбери режим монтажа, подпиши упражнения, если " +
 			"тренер называет их в речи, и реши спорные повторы.\n")
@@ -53,6 +52,9 @@ func Prompt(req *Request) string {
 			"редакторский отбор (раздел «Редакторский отбор») и реши спорные повторы.\n")
 	case req.CleanupOnly():
 		b.WriteString(cleanupTask(req))
+	case req.HookOnly():
+		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи только заголовок-хук; вырезать ничего " +
+			"не нужно. Пункты и цифры на экране — можно.\n")
 	case req.Hook:
 		b.WriteString("Задача: первый монтаж рилс. Подписи нет — предложи заголовок-хук и реши спорные повторы.\n")
 	default:
@@ -133,6 +135,18 @@ func writeWords(b *strings.Builder, transcript *transcription.Result, plan *roug
 		fmt.Fprintf(b, "%s | %s | %.1f с | %s | %s\n", indices, roughcut.FormatTimecode(words[ph.from].Start),
 			words[ph.to].End-words[ph.from].Start, place, joinWords(words[ph.from:ph.to+1]))
 	}
+}
+
+// captionTask is the task of a first version with the trainer's caption, cleaned too when the cleanup is on.
+func captionTask(req *Request) string {
+	task := "Задача: первый монтаж рилс. Тренер подписала исходник — примени подпись, если это указание " +
+		"к монтажу, и реши спорные повторы. Секунды в подписи — по времени исходника."
+
+	if req.Cleaning() {
+		task += cleaningTask
+	}
+
+	return task + "\n"
 }
 
 // indexRange is «12–19» for the words 12 to 19, «12» for one word.
@@ -358,9 +372,9 @@ func writeLength(b *strings.Builder, req *Request) {
 	switch {
 	case req.Selecting():
 		fmt.Fprintf(b, "Длина: после чистки ролик %s — длиннее рилс. Сделай рилс %.0f–%.0f с: оставь лучшие фразы "+
-			"(хук → суть → финал), остальное вырежи целыми фразами через remove_words. Если тренер в подписи назвала "+
-			"длину или что оставить, её указания важнее; названную длину укажи в target_seconds. %s\n", now, low,
-			high, keepWhole(req))
+			"(хук → суть → финал), остальное вырежи целыми фразами через remove_words.%s Если тренер в подписи "+
+			"назвала длину или что оставить, её указания важнее; названную длину укажи в target_seconds. %s\n", now,
+			low, high, selectionCleaning, keepWhole(req))
 	case req.IsRevision():
 		fmt.Fprintf(b, "Длина: ролик сейчас %s, рекомендуемая длина рилс — %.0f–%.0f с. Если тренер просит длину "+
 			"(«сделай 40 секунд», «до 30 секунд», «оставь минуту»), сделай редакторский отбор под неё и укажи "+

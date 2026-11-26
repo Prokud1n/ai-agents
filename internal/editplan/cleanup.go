@@ -8,9 +8,14 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
-// minCleanupShare: a cleaned first version keeps at least this share of the automatic cut. The failed takes and the
-// preparation for the shooting are a part of the speech, not most of it: a reel cut shorter was shortened, not cleaned.
-const minCleanupShare = 0.4
+// A cleaned first version keeps at least minCleanupShare of the reel without the cleaning and at least
+// minCleanupSeconds (shortCleanupShare of a reel shorter than twice that): the failed takes and the preparation are a
+// part of the speech, not most of it; a reel cut shorter was shortened, not cleaned.
+const (
+	minCleanupShare   = 0.25
+	minCleanupSeconds = 15.0
+	shortCleanupShare = 0.5
+)
 
 // CleanupLinePrefix starts the line of the description about the cleaning of a first version (cleanupLine): the
 // editor's description of the draft names the failed takes only when they were cut.
@@ -22,10 +27,17 @@ type cleaning struct {
 	seconds   float64
 }
 
+// cleaningTask is said after the task of a first version with a caption that is cleaned too.
+const cleaningTask = " Ещё почисти ролик (раздел «Чистка дублей и подготовки»): неудачные дубли, повторы подряд и " +
+	"подготовку к съёмке вырежи через cleanup_words, а то, о чём просит подпись, — как обычно."
+
+// selectionCleaning is said in the task of the selection: the failed takes go first.
+const selectionCleaning = " Сначала выкинь неудачные дубли и подготовку к съёмке; из дублей оставляй последний полный."
+
 // cleanupTask is the task of a first version only cleaned by the editor.
 func cleanupTask(req *Request) string {
 	task := "Задача: первый монтаж рилс. Подписи нет — почисти ролик (раздел «Чистка дублей и подготовки»): убери " +
-		"неудачные дубли, повторы подряд и подготовку к съёмке; содержательные фразы не сокращай."
+		"через cleanup_words неудачные дубли, повторы подряд и подготовку к съёмке; содержательные фразы не сокращай."
 
 	if req.Hook {
 		task += " Предложи заголовок-хук."
@@ -38,38 +50,60 @@ func cleanupTask(req *Request) string {
 	return task + "\n"
 }
 
-// checkCleanupOnly refuses in a first version only cleaned (Request.CleanupOnly) what is not a cleaning: a length, cuts
-// by time, the workout mode, exercise titles and muting — the trainer asked for nothing. Cutting words, trimming, the
-// disputed repeats, the hook, the screen notes and the corrections of the subtitles pass.
-func checkCleanupOnly(req *Request, in *Input) error {
+// checkCleanup checks what a cleaning may do. cleanup_words are for a cleaning of a talking head only. A first
+// version only cleaned (Request.CleanupOnly) refuses what is not a cleaning — a length, cuts by time, exercise titles,
+// muting: the trainer asked for nothing; the workout mode passes, but then nothing is cut. Cutting words, trimming,
+// the disputed repeats, the hook, the screen notes and the corrections of the subtitles pass.
+func checkCleanup(req *Request, in *Input) error {
+	workout := in.Mode == roughcut.WorkoutMode
+
+	if len(in.CleanupWords) > 0 && (!req.Cleaning() || workout) {
+		return checkFailedf("cleanup_words — только для чистки первой версии разговорного ролика; иначе вырезай " +
+			"через remove_words")
+	}
+
 	if !req.CleanupOnly() {
 		return nil
 	}
 
-	if in.TargetSeconds > 0 || len(in.CutSeconds) > 0 || in.Mode == roughcut.WorkoutMode || len(in.AddTitles) > 0 ||
-		(in.Mute != nil && *in.Mute) {
+	if notCleaning(in) {
 		return checkFailedf("подписи нет, тренер ни о чём не просила: только чистка (раздел «Чистка дублей и " +
-			"подготовки») — remove_words, trim_start_seconds, trim_end_seconds, candidates, hook_title, screen_notes; " +
-			"без target_seconds, cut_seconds, смены режима, подписей упражнений и звука")
+			"подготовки») — remove_words или cleanup_words, trim_start_seconds, trim_end_seconds, candidates, " +
+			"hook_title, screen_notes; без target_seconds, cut_seconds, подписей упражнений и звука")
+	}
+
+	if workout && cutsWords(in) {
+		return checkFailedf("в тренировке без подписи ничего не вырезай и не обрезай: режим workout можно выбрать, " +
+			"но паузы и молчание — это упражнения")
 	}
 
 	return nil
 }
 
-// cleanupOf checks that the cleaning left at least minCleanupShare of the automatic cut and counts what it removed: the
-// runs of words cut by the decision (the trim included) that the reel had without it, and the seconds the reel lost.
+// notCleaning: the input asks for what a cleaning without a caption may not do.
+func notCleaning(in *Input) bool {
+	return in.TargetSeconds > 0 || len(in.CutSeconds) > 0 || len(in.AddTitles) > 0 || (in.Mute != nil && *in.Mute)
+}
+
+// cutsWords: the input cuts words or trims the reel.
+func cutsWords(in *Input) bool {
+	return len(in.Remove) > 0 || in.TrimStart > 0 || in.TrimEnd > 0
+}
+
+// cleanupOf counts what the cleaning removed: the runs of words it cut that the reel had without it, and the seconds
+// the reel lost. The cleaning is cleanup_words; a first version only cleaned counts remove_words and the trim too, and
+// must keep enough of the reel without the cleaning (the disputed repeats decided).
 func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan *roughcut.Plan) (cleaning, error) {
-	before := req.Plan.Duration
-	if plan.Duration < before*minCleanupShare {
-		return cleaning{}, checkFailedf("после чистки от ролика остаётся %.1f с из %.1f с — меньше %.0f%%: вырезай "+
-			"только неудачные дубли, повторы подряд и подготовку к съёмке, содержательные фразы оставь", plan.Duration,
-			before, minCleanupShare*percent)
+	only := req.CleanupOnly()
+	uncut, baseTrim, cut := *in, trimmed.ranges, in.CleanupWords
+
+	uncut.CleanupWords = nil
+
+	if only {
+		uncut.Remove, baseTrim, cut = nil, nil, slices.Concat(trimmed.ranges, in.Remove, in.CleanupWords)
 	}
 
-	uncut := *in
-	uncut.Remove = nil
-
-	base, err := mergeEdit(req, &uncut, nil)
+	base, err := mergeEdit(req, &uncut, baseTrim)
 	if err != nil {
 		return cleaning{}, err
 	}
@@ -81,10 +115,16 @@ func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan
 		return cleaning{}, fmt.Errorf("failed to build the plan without the cleaning: %w", err)
 	}
 
+	if floor := cleanupFloor(whole.Duration); only && plan.Duration < floor {
+		return cleaning{}, checkFailedf("после чистки от ролика остаётся %.1f с из %.1f с, а должно остаться хотя бы "+
+			"%.1f с: вырезай только неудачные дубли, повторы подряд и подготовку к съёмке, содержательные фразы оставь",
+			plan.Duration, whole.Duration, floor)
+	}
+
 	words := req.Transcript.Words
 	marked := make([]bool, len(words))
 
-	for _, r := range slices.Concat(trimmed.ranges, in.Remove) {
+	for _, r := range cut {
 		mark(marked, r, true)
 	}
 
@@ -107,6 +147,11 @@ func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan
 	return cleaning{fragments: fragments, seconds: max(whole.Duration-plan.Duration, 0)}, nil
 }
 
+// cleanupFloor is the shortest reel a cleaning may leave of a reel of the duration.
+func cleanupFloor(duration float64) float64 {
+	return max(duration*minCleanupShare, min(minCleanupSeconds, duration*shortCleanupShare))
+}
+
 // cleanupLine: «Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с).»; "" when nothing was removed.
 func cleanupLine(c cleaning) string {
 	if c.fragments == 0 {
@@ -123,8 +168,13 @@ func cleanupNotes(req *Request, in *Input, sel *selection) []string {
 		return nil
 	}
 
-	out := make([]string, 0, len(in.Remove))
-	for _, r := range in.Remove {
+	cut := in.CleanupWords
+	if req.CleanupOnly() {
+		cut = slices.Concat(in.Remove, in.CleanupWords)
+	}
+
+	out := make([]string, 0, len(cut))
+	for _, r := range cut {
 		out = append(out, fmt.Sprintf("Чистка: вырезаны слова %d–%d «%s»", r.From, r.To,
 			strings.TrimSpace(rangeText(req.Transcript.Words, r))))
 	}

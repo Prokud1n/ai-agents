@@ -40,6 +40,10 @@ type Editor struct {
 	// had nothing else to decide). false: no hook unless the trainer asks for one, and a short reel without a caption
 	// or disputed repeats is rendered at once, as before. Read by the app; the worker gets it in the job.
 	HookTitle bool `env:"EDITOR_HOOK_TITLE" envDefault:"true"`
+	// Cleanup: the editor's model cleans the first version of a talking head of the failed takes, a phrase said again
+	// in a row and the preparation for the shooting, with or without a caption, so every first version stops after the
+	// plan for the model's decision. false: only the automatic cut cleans it. Read by the app.
+	Cleanup bool `env:"EDITOR_CLEANUP" envDefault:"true"`
 	// ReelsHandle is the trainer's Instagram handle («@prokudina.ana»: «@» and 1–30 of a-z, 0-9, «.», «_»; anything
 	// else fails the start) drawn small at the right edge over every draft and large on its end card. Empty (the
 	// default): no handle and no card. Read by the app; the worker gets it in the job and checks it again.
