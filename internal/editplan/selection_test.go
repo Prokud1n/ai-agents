@@ -42,6 +42,39 @@ var (
 		"сохраняйте и пробуйте завтра»."
 )
 
+// TestNewSelectionBySoundPlan: the worker's plan (cut by the sound, T3.19b) is longer or shorter than the plan built here
+// by the margins; whether the reel got shorter is judged against the plan built here, not the worker's length.
+func TestNewSelectionBySoundPlan(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		shift    float64 // of the worker's length against the margins
+		remove   []roughcut.WordRange
+		expected bool
+	}{
+		{name: "nothing removed, the worker's reel 2 s longer", shift: 2},
+		{name: "nothing removed, the worker's reel 2 s shorter", shift: -2},
+		{name: "a phrase removed, the worker's reel 3 s shorter", shift: -3, remove: []roughcut.WordRange{plankWords}, expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := selectionRequest(t, 1)
+			req.Plan.Duration += tt.shift
+
+			plan, err := roughcut.BuildPlanEdited(req.Transcript, req.Plan.SourceDuration, req.Plan.Settings,
+				&roughcut.Edit{Remove: tt.remove})
+			require.NoError(t, err)
+
+			sel := newSelection(req, &Input{TargetSeconds: selectionTarget}, roughcut.TalkMode, &plan)
+			assert.Equal(t, tt.expected, sel.on)
+		})
+	}
+}
+
 func TestRequestSelecting(t *testing.T) {
 	t.Parallel()
 
@@ -85,6 +118,9 @@ func TestApplySelection(t *testing.T) {
 	var check *CheckError
 	require.ErrorAs(t, err, &check, "12 s is longer than 4–8 s")
 	assert.Contains(t, check.Message, "рилс должен быть 4–8 с (допустимо 3.4–9.2 с)")
+	assert.Contains(t, check.Message, "вырежи ещё от", "the seconds to cut")
+	assert.Contains(t, check.Message, "ближе всего по длине: слова 0–4 (2,2 с) «привет сегодня расскажу про планку»",
+		"no phrase is that long: the closest are named")
 
 	outcome, err := Apply(req, &Input{
 		Decision: EditDecision, Reason: "ролик про планку: хук — польза, финал — призыв",
@@ -128,6 +164,22 @@ func TestApplyTargetLength(t *testing.T) {
 				Decision: EditDecision, TargetSeconds: 6, Remove: []roughcut.WordRange{introWords, plankWords},
 			},
 			expected: "длина по просьбе тренера — 6 с (допустимо 5.1–6.9 с)",
+		},
+		{
+			name: "too short for the length asked",
+			input: Input{
+				Decision: EditDecision, TargetSeconds: 6,
+				Remove: []roughcut.WordRange{introWords, plankWords, lowerWords, {From: 10, To: 13}},
+			},
+			expected: "ролик короче нужного: вырежи на ",
+		},
+		{
+			name: "too short: the ranges cut of that length",
+			input: Input{
+				Decision: EditDecision, TargetSeconds: 6,
+				Remove: []roughcut.WordRange{introWords, plankWords, lowerWords, {From: 10, To: 13}},
+			},
+			expected: "подходят по длине вырезанные тобой отрезки: слова 0–4 (2,2 с)",
 		},
 		{
 			name:     "shorter than a reel",

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Prokud1n/ai-agents/internal/agents"
+	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
 // maxAttempts of the model to submit an edit that passes the checks: the first failure goes back to it with the
@@ -90,7 +91,8 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 	}
 
 	if s.attempts >= maxAttempts {
-		s.outcome = &Outcome{Kind: InvalidOutcome, Reason: check.Message}
+		// The hook title that passed its checks is kept: the first version gets it with the automatic cut.
+		s.outcome = &Outcome{Kind: InvalidOutcome, Reason: check.Message, Edit: roughcut.Edit{Hook: checkedHook(s.req, &in)}}
 
 		return "План не прошёл проверку: " + check.Message + "." + exhaustedHint, nil
 	}

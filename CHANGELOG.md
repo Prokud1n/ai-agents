@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The editor cleans the first version of a talking head (T3.19a, `EDITOR_CLEANUP`, default `true`: every first
+  version waits for the model): the model removes the failed takes (the same thought said again 5–90 s later: the
+  last full take stays), a phrase said again in a row («ну привет» ×3 → one) and the preparation for the shooting (a
+  countdown, «начинаем», «это последний дубль», talking to the operator) through `cleanup_words` — with a caption
+  too, the caption's own cuts are described as before (`editplan.Request.Cleaning`). Without a caption
+  (`CleanupOnly`) the trim and `remove_words` count as the cleaning; no length, cuts by time, exercise titles or
+  muting; the workout mode without cuts; a cleaning that keeps less than a quarter of the reel or less than 15 s (a guard against «cut almost
+  everything» only, not a limit of the cleaning) goes back to the model, a second failure renders the automatic cut with a note and the hook if it passed its checks.
+  With `EDITOR_CLEANUP=false` the hook-only first version works as before. The prompt lists the hints found by the
+  code: similar kept phrases (stems without stop words; a different numeral or a series of three is not a repeat; the
+  12 most similar), words said again in a row inside a phrase, phrases about the shooting. The draft says «Убрал
+  неудачные дубли и подготовку к съёмке: N фрагментов (M с).» in one line, the decisions log names every range. The
+  selection drops the failed takes first.
+- `declined` in `submit_edit` (T3.19a): requests the editor does not do — music, color, effects and transitions,
+  B-roll, speed, beauty filters, reordering — are marked by kind and the trainer gets a prepared text for each
+  («Музыку добавьте в Instagram при публикации — я её не накладываю.»): with the rest of a caption or a revision, with
+  a request not understood, or as the refusal; the model's own words are never shown. The head of a draft's
+  description is cut to the caption limit too.
 - Leases of local edits (T3.19c). A job of `make edit` carries the lease token of its run (`editjob.Job.Lease`,
   `omitempty`); the run holds the key `<stream>:lease:<job>` with a 20 s TTL and refreshes it every 5 s while it waits
   (`editlocal.LeaseBoard`, `Runner.holdLease`). The worker treats a leased job whose key is gone or holds another token
@@ -501,6 +519,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draft from a 4-minute 4K source, sparse layout: 96.5 s before, about 60 s after on the CI runner (2 CPUs,
   `subtitles.TestRenderSpeedLongSource`, which also measures a dense one-take layout and the memory of ffmpeg;
   `TestRenderSpeedMemoryHDR` — 4K 10-bit HEVC).
+- `MEDIA_WORKER_MIN_SPEECH_SHARE` defaults to 0.35 instead of 0.6 (T3.19a): the trainer's talking heads keep
+  0.44–0.58 of the source, a workout 0.26, music 0.01 — a usual talking head (0.583) was planned as a workout.
+- The draft names the failed takes in «вырезал … (паузы, оговорки и неудачные дубли)» only when some were cut (the
+  worker's retakes, the editor's cleaning or a disputed repeat cut), otherwise «(паузы и оговорки)»; so do the notes of
+  a long talking head.
+- The model's hook title starts with a small letter like the reference reels: unless its first word has another
+  capital (an abbreviation, CamelCase) or the trainer dictated the text, the first letter is lowered (T3.19a); the
+  screen notes keep their case.
+- A reel out of its length tells the model exactly how many seconds to cut or bring back and names phrases of about
+  that length, so the second attempt gets the length (T3.19a).
+
 - The default subtitle style follows the reference reels (T3.17): one word at a time (a number with its unit together,
   every quantity of its own — «3 подхода» | «10 повторений» —, «10 000 шагов» as one, a word shorter than 0.15 s with
   the next one, no blinking between words, a dash said apart not shown), in small letters without the punctuation of

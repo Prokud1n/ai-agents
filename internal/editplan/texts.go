@@ -43,7 +43,7 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 	previous := previousEdit(req.Plan)
 
 	// The hook and the screen notes first: the description never folds them into «И ещё изменений».
-	lines = append(lines, hookLines(&previous, in)...)
+	lines = append(lines, hookLines(req, &previous, in)...)
 	lines = append(lines, screenNotesLines(req, in, &previous)...)
 
 	if sel.on {
@@ -56,15 +56,7 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 		}[mode])
 	}
 
-	if trimmed.start > 0 {
-		lines = append(lines, "Обрезал начало: убрал "+secondsText(trimmed.start, "первую секунду", "первые")+".")
-	}
-
-	if trimmed.end > 0 {
-		lines = append(lines, "Обрезал конец: убрал "+secondsText(trimmed.end, "последнюю секунду", "последние")+".")
-	}
-
-	lines = append(lines, fragmentLines(words, in, sel.on)...)
+	lines = append(lines, cutLines(words, in, trimmed, sel)...)
 
 	if req.IsRevision() {
 		lines = append(lines, takeLines(req.Plan, in.Candidates)...)
@@ -97,12 +89,36 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 	return lines
 }
 
-// fragmentLines: «Вырезал фрагмент «…».» for every fragment cut (unless the selection named them), «Вернул фрагмент
-// «…».» for every one brought back.
-func fragmentLines(words []transcription.Word, in *Input, selected bool) []string {
+// cutLines are the cleaning (one line about the failed takes), the trim and the fragments cut and brought back; a
+// first version only cleaned has no lines for its trim and the fragments: the cleaning line counts them.
+func cutLines(words []transcription.Word, in *Input, trimmed *trim, sel *selection) []string {
+	var lines []string
+
+	if sel.cleanup {
+		if line := cleanupLine(sel.cleaned); line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	if !sel.only {
+		if trimmed.start > 0 {
+			lines = append(lines, "Обрезал начало: убрал "+secondsText(trimmed.start, "первую секунду", "первые")+".")
+		}
+
+		if trimmed.end > 0 {
+			lines = append(lines, "Обрезал конец: убрал "+secondsText(trimmed.end, "последнюю секунду", "последние")+".")
+		}
+	}
+
+	return append(lines, fragmentLines(words, in, sel.on || sel.only)...)
+}
+
+// fragmentLines: «Вырезал фрагмент «…».» for every fragment cut (unless the selection or the cleaning counted them),
+// «Вернул фрагмент «…».» for every one brought back.
+func fragmentLines(words []transcription.Word, in *Input, counted bool) []string {
 	lines := make([]string, 0, len(in.Remove)+len(in.Restore))
 
-	if !selected {
+	if !counted {
 		for _, r := range in.Remove {
 			lines = append(lines, "Вырезал фрагмент «"+quote(words, r)+"».")
 		}
