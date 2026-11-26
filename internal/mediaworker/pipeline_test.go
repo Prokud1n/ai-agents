@@ -584,7 +584,20 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 			measured: measured, loudness: true, noiseFloor: -64, zoom: true,
 			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP), цель -14.0 LUFS: усиление +14.9 dB " +
 				"(поправка +1.3 dB по предварительному замеру склейки, проходов: 2), лимитер пиков на -2.0 dBTP; " +
-				"итог -14.1 LUFS, пики -2.4 dBTP (замер готового звука)\n",
+				"итог -14.1 LUFS, true peak -2.4 dBTP (замер готового файла, после AAC)\n",
+		},
+		{
+			// The passes over the sound of the cut failed: the render went on with the gain by the measurement.
+			name: "the loudness not fitted",
+			change: func(f *pipelineFakes) {
+				f.burner.result.Sound = &ffmpeg.SoundReport{
+					Gain: 13.6, FitError: errors.New("measure failed"),
+					Output: &ffmpeg.Loudness{Integrated: -15.2, TruePeak: -2.1},
+				}
+			},
+			measured: measured, loudness: true, noiseFloor: -64, zoom: true,
+			decisions: "усиление +13.6 dB (без поправки: предварительный замер склейки не удался), лимитер пиков на " +
+				"-2.0 dBTP; итог -15.2 LUFS, true peak -2.1 dBTP (замер готового файла, после AAC)\n",
 		},
 		{
 			name:     "a transcript without a measurement: one pass",

@@ -144,9 +144,14 @@ func (s *soundSettings) loudnessNote(cut *ffmpeg.Cut, measured *ffmpeg.Loudness,
 	}
 
 	gain, correction := l.Gain(), ""
+
 	if report != nil {
 		gain = report.Gain
-		if report.Passes > 0 {
+
+		switch {
+		case report.FitError != nil:
+			correction = " (без поправки: предварительный замер склейки не удался)"
+		case report.Passes > 0:
 			correction = fmt.Sprintf(" (поправка %+.1f dB по предварительному замеру склейки, проходов: %d)",
 				report.Correction, report.Passes)
 		}
@@ -163,7 +168,7 @@ func loudnessResult(report *ffmpeg.SoundReport) string {
 		return "итог не измерен"
 	}
 
-	return fmt.Sprintf("итог %.1f LUFS, пики %.1f dBTP (замер готового звука)", report.Output.Integrated,
+	return fmt.Sprintf("итог %.1f LUFS, true peak %.1f dBTP (замер готового файла, после AAC)", report.Output.Integrated,
 		report.Output.TruePeak)
 }
 

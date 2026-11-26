@@ -109,7 +109,7 @@ func TestSoundGraph(t *testing.T) {
 		"afade=t=in:st=0:d=0.010000,afade=t=out:st=0.990000:d=0.010000[a0];"+
 		"[t1]atrim=start=30.000000:end=31.000000,asetpts=PTS-STARTPTS,"+
 		"afade=t=in:st=0:d=0.010000,afade=t=out:st=0.990000:d=0.010000[a1];"+
-		"[a0][a1]concat=n=2:v=0:a=1[j];[j]volume=11.5dB,"+
+		"[a0][a1]concat=n=2:v=0:a=1[j];[j]volume=11.5dB,aresample=192000,"+
 		"alimiter=limit=0.794328:attack=5:release=50:level=false:latency=1,aresample=48000,"+
 		"ebur128=peak=true:framelog=verbose[m]",
 		soundGraph([]Segment{{Start: 1, End: 2}, {Start: 30, End: 31}}, opts))

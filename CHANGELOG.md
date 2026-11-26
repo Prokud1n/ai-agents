@@ -475,25 +475,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The editor's cut sounds whole and dense (T3.19b). The cut points are placed by the level of the source sound (RMS
-  in 10 ms windows, `ffmpeg.Runner.AudioLevels`, about a second for a 4-minute source; `roughcut` levels.go): the
-  speech is found up to 0.3 s past Whisper's word edges (an eaten ending, a late start, the closure of a stop), a pause
-  heard longer than `ROUGHCUT_MAX_PAUSE` (now 300ms, was 400ms) is compressed to a breath of 0.12 s (0.12–0.19 s on the
-  frame grid) cut at its quietest frame, breaths and room noise between the phrases are cut, a removed word is cut at
-  the quietest points around it; without a usable level the margins around the words (now 0.12/0.18 s, were
-  0.08/0.12) are used. The 10 ms fades at every joint stay (no clicks, the length unchanged). `decisions.log` says how
-  the cut points were placed and how many pauses longer than 0.3 s are left in the reel (`plan.json`: `sound_cuts`,
-  `long_pauses`).
-- The loudness of a draft is −14 ± 0.5 LUFS (T3.19b): the limiter took the loudness 1–2 LU under the target, so before
-  the render the sound of the cut alone (no picture, seconds) runs through the same chain and is measured, and the
-  gain is corrected by the miss (up to 3 passes, ±12 dB at most); the render measures its processed sound, and
-  `decisions.log` has that measurement («итог … LUFS, пики … dBTP (замер готового звука)»), not the target.
+  in 10 ms windows, `ffmpeg.Runner.AudioLevels`, about a second for a 4-minute source, not read for a given plan or a
+  workout; `roughcut` levels.go): the speech is found up to 0.3 s past Whisper's word edges (an eaten ending, a late
+  start, the closure of a stop, a decay into digital silence), a pause heard longer than `ROUGHCUT_MAX_PAUSE` (now
+  300ms, was 400ms; a `.env` that still says 400ms keeps it) is compressed to a breath of 0.15 s (± half a frame): the
+  tail ends at the quietest frame 0.06–0.10 s after the sound (the latest of equals), the next phrase starts at least
+  0.04 s before its sound; breaths and room noise between the phrases are cut; around a removed word the tail is the
+  same, the next word starts at its quietest frame, and too little silence is made up to the breath. Without a usable
+  level the margins around the words (now 0.12/0.18 s, were 0.08/0.12) are used. The 10 ms fades at every joint stay
+  (no clicks, the length unchanged). `decisions.log` has the levels (noise p10, loud speech p95, the threshold of
+  speech, dBFS), how the cut points were placed and how many pauses longer than 0.3 s are left (`plan.json`:
+  `sound_levels`, `sound_cuts`, `long_pauses`).
+- The loudness of a draft is −14 ± 0.5 LUFS with the true peak at most −1.0 dBTP after AAC (T3.19b): the limiter took
+  the loudness 1–2 LU under the target, so before the render the sound of the cut alone (no picture, seconds) runs
+  through the same chain and is measured, and the gain is corrected by the miss (up to 3 passes, the secant after the
+  first, ±12 dB at most); the limiter works oversampled to 192 kHz (the review saw +1.5 dBTP after AAC at 48 kHz); the
+  rendered file is measured, and `decisions.log` has that measurement («итог … LUFS, true peak … dBTP»), not the
+  target. A failed measuring pass is logged, the draft is rendered with the gain by the measurement of the source.
 - An edit renders faster (T3.19b): a cut decodes only what it keeps. Neighbouring segments (gaps under 3 s) are a
-  group, each group is its own input of the source seeked to 0.5 s before it and read to 0.5 s after it, at most 8
-  inputs (decoders with two threads; more groups are merged where the gaps are the shortest); one group near the
-  start is the whole source as before. Frame accuracy, the sync, HDR and the sound are unchanged
-  (`TestRunnerRenderSeeksGroups`, the sync and zoom tests). A one-minute draft from a 4-minute 4K source: 96.5 s → see
-  `subtitles.TestRenderSpeedLongSource` (CI, 2 CPUs).
-
+  group, each group is its own input of the source seeked to 0.5 s before it and read to 0.5 s after it; the inputs
+  fit a memory budget of their decoders (~1.3 GiB: 7 for 4K 8-bit, 4 for 4K 10-bit, 8 for 1080p, two threads each; more
+  groups are merged where the gaps are the shortest); a group near the start is decoded from the start. Frame accuracy,
+  the sync, HDR and the sound are unchanged (`TestRunnerRenderSeeksGroups`, the sync and zoom tests). A one-minute
+  draft from a 4-minute 4K source, sparse layout: 96.5 s before, about 60 s after on the CI runner (2 CPUs,
+  `subtitles.TestRenderSpeedLongSource`, which also measures a dense one-take layout and the memory of ffmpeg;
+  `TestRenderSpeedMemoryHDR` — 4K 10-bit HEVC).
 - The default subtitle style follows the reference reels (T3.17): one word at a time (a number with its unit together,
   every quantity of its own — «3 подхода» | «10 повторений» —, «10 000 шагов» as one, a word shorter than 0.15 s with
   the next one, no blinking between words, a dash said apart not shown), in small letters without the punctuation of

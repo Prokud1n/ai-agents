@@ -149,7 +149,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	}
 
 	fps := rate.Float()
-	levels := s.levels(ctx, data.Source)
+	levels, soundLevels := s.levels(ctx, data)
 
 	plan, err := s.plan(data, sourceDuration(&info), &cutGrid{levels: levels, fps: fps})
 	if err != nil {
@@ -158,6 +158,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 
 	plan = SnapToFrames(&plan, fps)
 	plan.MinSpeechShare = data.MinSpeechShare
+	plan.SoundLevels = soundLevels
 	if err := checkSegments(&plan, fps); err != nil {
 		return nil, err
 	}
@@ -171,6 +172,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 		Plan: plan, Transcript: transcript, Log: DecisionsLog(&plan),
 		Render: ffmpeg.RenderOptions{
 			Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info), Mute: plan.Edit != nil && plan.Edit.Mute,
+			Source: info.Frame(),
 		},
 		Titles:      RemapTitles(editTitles(plan.Edit), plan.Keep),
 		ScreenNotes: RemapScreenNotes(editScreenNotes(plan.Edit), plan.Keep),
@@ -346,22 +348,28 @@ func validateCutData(data *CutData) error {
 	return nil
 }
 
-// levels reads the sound level of the source for the cut points; nil (the margins around the words) if it cannot be
-// read or tells speech from silence nothing: the cut is made without it.
-func (s *Service) levels(ctx context.Context, src string) *speechLevels {
-	levels, err := s.media.AudioLevels(ctx, src)
+// levels reads the sound level of the source for the cut points of a talking head, with its summary for the decisions
+// log. The speech levels are nil (the margins around the words) if they cannot be read or tell speech from silence
+// nothing; both are nil, and nothing is read, for a given plan (its cut points are set) or a workout (no pause is cut).
+func (s *Service) levels(ctx context.Context, data *CutData) (*speechLevels, *SoundLevels) {
+	if data.Plan != nil || (data.Edit != nil && data.Edit.Mode.Effective() == WorkoutMode) {
+		return nil, nil
+	}
+
+	levels, err := s.media.AudioLevels(ctx, data.Source)
 	if err != nil {
 		s.log.WarnContext(ctx, "roughcut: no sound levels, cutting by the margins around the words", "error", err)
 
-		return nil
+		return nil, nil
 	}
 
-	speech := newSpeechLevels(levels)
-	if speech == nil && levels != nil {
-		s.log.InfoContext(ctx, "roughcut: the sound level does not tell speech from silence, cutting by the margins")
+	summary := soundLevelsOf(levels)
+	if summary != nil {
+		s.log.InfoContext(ctx, "roughcut: sound levels", "noise_floor", summary.NoiseFloor, "speech", summary.Speech,
+			"threshold", summary.Threshold, "used", summary.Used)
 	}
 
-	return speech
+	return newSpeechLevels(levels), summary
 }
 
 // countLongPauses counts the pauses longer than longPause inside the reel: by the sound level, or by the gaps between

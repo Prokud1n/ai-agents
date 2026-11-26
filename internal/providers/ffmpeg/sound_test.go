@@ -84,7 +84,7 @@ func TestSoundChain(t *testing.T) {
 				Loudness: &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: measured},
 			},
 			expected: "apad=pad_dur=0.025,highpass=f=80,afftdn=nr=10:nf=-64.0,atrim=start=0.025,asetpts=PTS-STARTPTS," +
-				"volume=13.6dB,alimiter=limit=0.794328:attack=5:release=50:level=false:latency=1,aresample=48000",
+				"volume=13.6dB,aresample=192000,alimiter=limit=0.794328:attack=5:release=50:level=false:latency=1,aresample=48000",
 		},
 		{
 			name:     "no measurement (a transcript stored before it): loudnorm in one pass",
@@ -140,8 +140,7 @@ func TestSegmentsFilterSound(t *testing.T) {
 	got := segmentsFilter([]Segment{{Start: 1, End: 2}, {Start: 3, End: 4}}, opts)
 
 	assert.Contains(t, got, "concat=n=2:v=1:a=1[v][j];[j]apad=pad_dur=0.025,highpass=f=80,afftdn=nr=10:nf=-50.0,"+
-		"atrim=start=0.025,asetpts=PTS-STARTPTS,loudnorm=I=-14.0:TP=-2.0:LRA=11.0,aresample=48000,"+
-		measureFilter+"[a]")
+		"atrim=start=0.025,asetpts=PTS-STARTPTS,loudnorm=I=-14.0:TP=-2.0:LRA=11.0,aresample=48000[a]")
 	assert.Equal(t, 1, strings.Count(got, "afftdn="), "one noise reduction for the whole reel")
 }
 
@@ -418,4 +417,50 @@ func measureLoudness(ctx context.Context, t *testing.T, r *Runner, path string) 
 	require.NotNil(t, loudness, log.String())
 
 	return loudness
+}
+
+// TestRunnerTruePeakBright: quiet speech with bright bursts (sibilant-like tones at 7.35 and 11 kHz, whose peaks fall
+// between the samples) pushed into the limiter by the gain: the limiter works oversampled, so after the AAC encode the true peak of the reel is
+// at most -1.0 dBTP; the render reports the true peak of the file.
+func TestRunnerTruePeakBright(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	const maxTruePeak = -1.0
+
+	ctx := t.Context()
+	r := newTestRunner(2 * time.Minute)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "bright.mp4")
+
+	// Quiet speech (about -35 LUFS) with short bright bursts of 20 ms twice a second, 6 dB under full scale: the gain
+	// of about +20 dB drives the bursts far into the limiter.
+	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
+		lavfiInput("aevalsrc='0.12*(pow(abs(sin(2*PI*2*t)),3)*(0.35*sin(2*PI*150*t)+0.2*sin(2*PI*300*t)))+"+
+			"if(lt(mod(t,0.5),0.02),0.25*sin(2*PI*11025*t+1)+0.25*sin(2*PI*7350*t),0)':s=48000:d=6"),
+		lavfiInput("testsrc=duration=6:size=180x320:rate=30"),
+		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, "-b:a", "256k", shortestFlag, src}), nil)
+	require.NoError(t, err)
+
+	measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "bright"+AudioExtension))
+	require.NoError(t, err)
+	require.NotNil(t, measured)
+
+	reel, report := burnTestReelReport(ctx, t, r, dir, src, &Cut{
+		Segments: []Segment{{Start: 0.5, End: 5.5}},
+		Options: RenderOptions{
+			Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1},
+			Loudness: &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: measured},
+		},
+	})
+
+	out := measureLoudness(ctx, t, r, reel)
+	assert.LessOrEqual(t, out.TruePeak, maxTruePeak, "the true peak after AAC")
+	assert.InDelta(t, -14.0, out.Integrated, 0.5, "the gain is fitted through the limiter too")
+	require.NotNil(t, report.Sound)
+	require.NotNil(t, report.Sound.Output)
+	assert.InDelta(t, out.TruePeak, report.Sound.Output.TruePeak, 0.05, "the render reports the true peak of the file")
+	t.Logf("bright sound: source %.1f LUFS (peak %.1f dBTP) → reel %.1f LUFS, true peak %.1f dBTP; gain %+.1f dB "+
+		"(correction %+.1f dB, %d passes)", measured.Integrated, measured.TruePeak, out.Integrated, out.TruePeak,
+		report.Sound.Gain, report.Sound.Correction, report.Sound.Passes)
 }

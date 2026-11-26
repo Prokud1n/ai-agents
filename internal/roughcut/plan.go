@@ -96,6 +96,18 @@ type Plan struct {
 	// LongPauses counts the pauses longer than 0.3 s left inside the reel: by the sound level when it is known, by the
 	// gaps between the words otherwise (Service.Cut).
 	LongPauses int `json:"long_pauses"`
+	// SoundLevels are the levels of the source sound the cut points were placed by; nil when they were not read.
+	SoundLevels *SoundLevels `json:"sound_levels,omitempty"`
+}
+
+// SoundLevels are the levels of the source sound (dBFS): the noise floor (the 10th percentile of the 10 ms windows),
+// the loud speech (the 95th) and the threshold of speech between them. Used is false when the two are too close to
+// tell speech from silence: the margins around the words were used. They calibrate the cut on real recordings.
+type SoundLevels struct {
+	NoiseFloor float64 `json:"noise_floor"`
+	Speech     float64 `json:"speech"`
+	Threshold  float64 `json:"threshold"`
+	Used       bool    `json:"used"`
 }
 
 // Edit is what the editor (the editing agent, by the trainer's caption or revision) changed on top of the

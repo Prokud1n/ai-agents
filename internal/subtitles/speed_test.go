@@ -254,9 +254,16 @@ func benchSourceCodec(ctx context.Context, t *testing.T) string {
 func makeBenchSource(ctx context.Context, t *testing.T, path, codec string) {
 	t.Helper()
 
-	d := strconv.Itoa(benchDuration)
+	makeHLGSource(ctx, t, path, codec, benchRate, benchDuration)
+}
+
+// makeHLGSource encodes a vertical 4K 10-bit HLG source of the given frame rate and seconds (makeBenchSource).
+func makeHLGSource(ctx context.Context, t *testing.T, path, codec string, rate, duration int) {
+	t.Helper()
+
+	d := strconv.Itoa(duration)
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y",
-		"-f", "lavfi", "-i", "testsrc2=size=" + benchSize + ":rate=" + strconv.Itoa(benchRate) + ":duration=" + d,
+		"-f", "lavfi", "-i", "testsrc2=size=" + benchSize + ":rate=" + strconv.Itoa(rate) + ":duration=" + d,
 		"-f", "lavfi", "-i", "sine=frequency=220:sample_rate=48000:duration=" + d,
 		"-vf", "noise=alls=6:allf=t,format=yuv420p10le," +
 			"setparams=color_primaries=bt2020:color_trc=" + benchHLG + ":colorspace=bt2020nc",

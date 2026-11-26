@@ -115,18 +115,18 @@ func TestCutGridPause(t *testing.T) {
 		next  float64
 	}{
 		{
-			// The pause heard is 1.0–2.4: the first phrase keeps its tail to the quietest frame of the first breath, the
-			// next starts so that a breath of silence is left.
+			// The pause heard is 1.0–2.4: the tail of the first phrase ends at the latest of the equally quiet frames
+			// 0.06–0.10 s after its sound, the next starts so that a breath of 0.15 s (± half a frame) is left.
 			name:  "a long pause becomes a breath",
 			input: soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{2.4, 3, testSpeech}),
-			cut:   true, end: 1.0 + 1.0/testFPS, next: 69.0 / testFPS,
+			cut:   true, end: 33.0 / testFPS, next: 70.0 / testFPS,
 		},
 		{
 			// A breath before the next phrase is not speech: it is cut with the pause.
 			name: "the breath in the pause is cut",
 			input: soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{2.0, 2.3, testBreath},
 				[3]float64{2.4, 3, testSpeech}),
-			cut: true, end: 1.0 + 1.0/testFPS, next: 69.0 / testFPS,
+			cut: true, end: 33.0 / testFPS, next: 70.0 / testFPS,
 		},
 		{
 			// Whisper says 1.0–1.5, but the word goes on to 1.3: the silence heard (0.2 s) is short, nothing is cut.
@@ -156,9 +156,9 @@ func TestCutGridPause(t *testing.T) {
 
 			assert.InDelta(t, tt.end, end, 1e-6)
 			assert.InDelta(t, tt.next, next, 1e-6)
-			left := (end - 1.0) + (2.4 - next)
-			assert.GreaterOrEqual(t, left, breathPause-1e-6, "a breath of silence is left")
-			assert.LessOrEqual(t, left, breathPause+2/testFPS+1e-6, "the grid adds at most two frames")
+			assert.InDelta(t, breathPause, (end-1.0)+(2.4-next), 0.5/testFPS+1e-6, "a breath of silence is left")
+			assert.GreaterOrEqual(t, end-1.0, tailMin-1e-6, "the tail of the phrase")
+			assert.GreaterOrEqual(t, 2.4-next, leadMin-1e-6, "the lead of the next one")
 		})
 	}
 }
@@ -199,9 +199,83 @@ func TestBuildPlanBySound(t *testing.T) {
 	assert.Greater(t, plan.Keep[1].End, 3.2, "the eaten ending of «три» is kept")
 
 	silence := (plan.Keep[1].End - 3.2) + (4.42 - plan.Keep[2].Start)
-	assert.InDelta(t, breathPause, silence, 2/testFPS+1e-3, "the pause of 1.2 s is a breath")
+	assert.InDelta(t, breathPause, silence, 0.5/testFPS+1e-3, "the pause of 1.2 s is a breath")
+	assert.GreaterOrEqual(t, plan.Keep[1].End-3.2, tailMin-1e-3, "the tail of «три»")
+
+	// Around the filler: at least a breath of silence is left, «два» to its cut and from the cut to «три».
+	around := (plan.Keep[0].End - 2.05) + (2.6 - plan.Keep[1].Start)
+	assert.GreaterOrEqual(t, around, breathPause-1e-3, "a breath around the removed filler")
 	assert.Less(t, plan.Keep[2].Start, 4.42, "the early start of «четыре» is kept")
 	assert.InDelta(t, 5.15, plan.Keep[2].End, 1/testFPS+1e-3, "edgeTail after the last sound")
+}
+
+// TestCutGridAroundBreath: the quietest frame before the next word is right at it (a breath before it is louder), so
+// the silence left around the removed word would be short: the next word starts earlier, not before the removed one.
+func TestCutGridAroundBreath(t *testing.T) {
+	t.Parallel()
+
+	levels := soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{1.12, 1.38, testSpeech},
+		[3]float64{1.38, 1.455, testBreath}, [3]float64{1.51, 2, testSpeech})
+	grid := &cutGrid{levels: newSpeechLevels(levels), fps: testFPS}
+	require.NotNil(t, grid.levels)
+	require.InDelta(t, 44.0/testFPS, grid.quietest(1.4, 1.47, false), 1e-6, "the quietest frame, 0.043 s before the word")
+
+	settings := testSettings()
+	settings.PadBefore, settings.PadAfter = defaultPadBefore, defaultPadAfter
+
+	end, next := grid.around(1.0, 1.51, 1.12, 1.38, settings)
+
+	assert.InDelta(t, 33.0/testFPS, end, 1e-6, "the tail: the latest quiet frame 0.06–0.10 s after the sound")
+	assert.InDelta(t, 43.0/testFPS, next, 1e-6, "one frame earlier than the quietest, into the breath")
+	assert.GreaterOrEqual(t, next, 1.38, "never into the removed word")
+	assert.GreaterOrEqual(t, (end-1.0)+(1.51-next), breathPause-1e-6, "at least a breath of silence")
+}
+
+// TestTailKeepsTheDecay: a phrase that dies away into digital silence (a quiet room, a gate on the phone) keeps its
+// decay: the threshold is measured from the silence, so the fading sound is still speech, and the tail is cut after it.
+func TestTailKeepsTheDecay(t *testing.T) {
+	t.Parallel()
+
+	const (
+		decayFrom = 1.0
+		decayTo   = 1.2
+		digital   = -120.0
+	)
+
+	levels := soundOf(4, [3]float64{0.2, decayFrom, testSpeech}, [3]float64{2.4, 3, testSpeech})
+	for i := range levels.DB {
+		mid := (float64(i) + 0.5) * levels.Window
+
+		switch {
+		case mid >= decayFrom && mid < decayTo:
+			levels.DB[i] = testSpeech + (digital-testSpeech)*(mid-decayFrom)/(decayTo-decayFrom)
+		case levels.DB[i] == testFloor:
+			levels.DB[i] = digital
+		}
+	}
+
+	grid := &cutGrid{levels: newSpeechLevels(levels), fps: testFPS}
+	require.NotNil(t, grid.levels)
+
+	// Whisper ends the word before its sound does.
+	end, _, ok := grid.pause(0.95, 2.5, 0.3)
+	require.True(t, ok)
+
+	audible := decayFrom + (decayTo-decayFrom)*(grid.levels.threshold-testSpeech)/(digital-testSpeech)
+	assert.GreaterOrEqual(t, end, audible+tailMin-1e-6, "the decay down to the threshold (%.1f dB) is kept, with a tail",
+		grid.levels.threshold)
+}
+
+func TestSoundLevelsOf(t *testing.T) {
+	t.Parallel()
+
+	got := soundLevelsOf(soundOf(10, [3]float64{1, 4, testSpeech}, [3]float64{5, 8, testSpeech}))
+	assert.Equal(t, &SoundLevels{NoiseFloor: testFloor, Speech: testSpeech, Threshold: -44, Used: true}, got)
+
+	flat := soundLevelsOf(soundOf(5, [3]float64{0, 5, testSpeech}))
+	require.NotNil(t, flat)
+	assert.False(t, flat.Used)
+	assert.Nil(t, soundLevelsOf(nil))
 }
 
 func TestLongPauses(t *testing.T) {

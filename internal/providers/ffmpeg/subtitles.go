@@ -144,13 +144,21 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 	major := unknownMajor
 	burn, passes := data, 0
 
+	var fitErr error
+
 	if data.Cut != nil {
 		if major, err = r.majorVersion(ctx); err != nil {
 			return nil, err
 		}
 
-		if burn, passes, err = r.fitCutLoudness(ctx, in, data); err != nil {
-			return nil, err
+		burn, passes, fitErr = r.fitCutLoudness(ctx, in, data)
+		if fitErr != nil {
+			if ctx.Err() != nil {
+				return nil, fitErr
+			}
+
+			// The render goes on with the gain by the measurement of the source; the report tells why.
+			burn, passes = data, 0
 		}
 	}
 
@@ -168,9 +176,7 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 
 	fonts := &lineCollector{marker: fontSelectMarker, maxLines: maxFontLines, maxLine: maxLogLine}
 	glyphs := &lineCollector{marker: glyphMarker, maxLines: maxFontLines, maxLine: maxLogLine}
-	tail := newTailBuffer(measureLogTail)
-
-	if _, err := r.runIn(ctx, data.Dir, r.ffmpegPath, args, io.MultiWriter(fonts, glyphs, tail)); err != nil {
+	if _, err := r.runIn(ctx, data.Dir, r.ffmpegPath, args, io.MultiWriter(fonts, glyphs)); err != nil {
 		return nil, fmt.Errorf("failed to burn subtitles: %w", err)
 	}
 
@@ -181,9 +187,12 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 		}
 	}
 
-	return &BurnReport{
-		Fonts: parseFontSelections(fonts.String()), MissingGlyphs: missing, Sound: soundReport(burn.Cut, passes, tail.String()),
-	}, nil
+	report := &BurnReport{Fonts: parseFontSelections(fonts.String()), MissingGlyphs: missing}
+	if report.Sound = soundReport(burn.Cut, passes, fitErr); report.Sound != nil {
+		report.Sound.Output = r.measureFile(ctx, out)
+	}
+
+	return report, nil
 }
 
 // fitCutLoudness is the data with the gain of the cut corrected (Runner.fitLoudness) and the number of passes it took.
@@ -201,15 +210,15 @@ func (r *Runner) fitCutLoudness(ctx context.Context, in string, data *BurnSubtit
 	return &out, passes, nil
 }
 
-// soundReport is the loudness the render of the cut applied and measured; nil without a cut or a loudness target.
-func soundReport(cut *Cut, passes int, log string) *SoundReport {
+// soundReport is the loudness the render of the cut applied; nil without a cut or a loudness target.
+func soundReport(cut *Cut, passes int, fitErr error) *SoundReport {
 	if cut == nil || cut.Options.Mute || cut.Options.Loudness == nil {
 		return nil
 	}
 
 	l := cut.Options.Loudness
 
-	return &SoundReport{Gain: l.Gain(), Correction: l.Correction, Passes: passes, Output: parseLoudness(log)}
+	return &SoundReport{Gain: l.Gain(), Correction: l.Correction, Passes: passes, FitError: fitErr}
 }
 
 // burnSubtitlesArgs returns the arguments and the filter graph. Without a cut the graph is an argument; with one

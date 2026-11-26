@@ -15,9 +15,17 @@ const (
 	// groupGap: segments closer than this are decoded together. A seek decodes from the keyframe before it (a phone
 	// puts one about every 1–2 s) and opens a decoder, so a shorter gap is cheaper to decode through.
 	groupGap = 3.0
-	// maxCutInputs: every input keeps its decoder (and its frames) open until the end of the render, about 75 MB at
-	// 4K with two threads: more groups are merged where the gaps are the shortest.
-	maxCutInputs = 8
+	// Every input keeps its decoder and its frames open until the end of the render: the review measured 1.4 GB of
+	// RSS for 8 inputs of 4K 8-bit H.264 and 2.2 GB for 8 inputs of 4K 10-bit HEVC. So the number of inputs comes from
+	// a memory budget: decodeMemoryBudget / (width × height × bytes per sample × 1.5 (4:2:0) × decodeFrames),
+	// rounded, within minCutInputs..maxCutInputs — 7 inputs for 4K 8-bit, 4 for 4K 10-bit, 8 for 1080p. More groups are
+	// merged where the gaps are the shortest. Without the frame size (not probed) the limit is maxCutInputs.
+	maxCutInputs       = 8
+	minCutInputs       = 2
+	decodeMemoryBudget = 1331 << 20 // about 1.3 GiB of decoders, under the 3 GB of the media worker's container
+	// decodeFrames: frames a decoder with two threads holds (its references, the frame threads, the queue to the graph).
+	decodeFrames = 16
+	chromaFactor = 1.5 // 4:2:0: the two chroma planes add half a luma plane
 	// groupThreads of the decoder of each input when there are several: one of them decodes at a time, and two
 	// threads keep its frames few (a decoder with as many threads as CPUs holds a frame per thread).
 	groupThreads = "2"
@@ -67,7 +75,7 @@ func groupSegments(segments []Segment, opts RenderOptions) []inputGroup {
 		groups = append(groups, inputGroup{first: i, last: i})
 	}
 
-	groups = mergeGroups(groups, segments)
+	groups = mergeGroups(groups, segments, inputLimit(opts.Source))
 
 	out := make([]inputGroup, 0, len(groups))
 	for _, g := range groups {
@@ -77,11 +85,23 @@ func groupSegments(segments []Segment, opts RenderOptions) []inputGroup {
 	return out
 }
 
-// mergeGroups joins the groups separated by the shortest gaps until at most maxCutInputs are left.
-func mergeGroups(groups []inputGroup, segments []Segment) []inputGroup {
+// inputLimit is the number of inputs whose decoders fit decodeMemoryBudget (see maxCutInputs).
+func inputLimit(frame SourceFrame) int {
+	bytes := float64(frame.Width) * float64(frame.Height) * float64(frame.BytesPerSample)
+	if bytes <= 0 {
+		return maxCutInputs
+	}
+
+	limit := math.Round(decodeMemoryBudget / (bytes * chromaFactor * decodeFrames))
+
+	return int(min(max(limit, minCutInputs), maxCutInputs))
+}
+
+// mergeGroups joins the groups separated by the shortest gaps until at most limit are left.
+func mergeGroups(groups []inputGroup, segments []Segment, limit int) []inputGroup {
 	out := append([]inputGroup(nil), groups...)
 
-	for len(out) > maxCutInputs {
+	for len(out) > limit {
 		shortest := 1
 
 		for i := 2; i < len(out); i++ {
@@ -103,8 +123,9 @@ func groupGapBefore(g inputGroup, segments []Segment) float64 {
 }
 
 // placeGroup sets where the input of a group starts and ends. A seek starts seekPreroll (in whole frames) before the
-// first segment; the first group of a single-input cut and a group near the start of the source are not seeked.
-// bounded: the input is read only to just after the group (several inputs: each stops where its group ends).
+// first segment; a group whose seek would land within the first minSeek seconds of the source is decoded from the start
+// (any group, a single one too: a single group further in is seeked). bounded: the input is read only to just after
+// the group (several inputs: each stops where its group ends; a seeked single group too).
 func placeGroup(g inputGroup, segments []Segment, opts RenderOptions, bounded bool) inputGroup {
 	out := g
 	start, end := segments[g.first].Start, segments[g.last].End

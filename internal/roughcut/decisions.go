@@ -257,6 +257,16 @@ func writeDensity(b *strings.Builder, p *Plan) {
 		b.WriteString("Точки разреза: по полям вокруг слов (уровень звука не помог отличить речь от тишины)\n")
 	}
 
+	if l := p.SoundLevels; l != nil {
+		used := "по нему ставились точки разреза"
+		if !l.Used {
+			used = fmt.Sprintf("разница меньше %.0f dB — порог не применён", minLevelContrast)
+		}
+
+		fmt.Fprintf(b, "Уровни звука: шум (p10) %.1f dBFS, громкая речь (p95) %.1f dBFS, порог речи %.1f dBFS — %s\n",
+			l.NoiseFloor, l.Speech, l.Threshold, used)
+	}
+
 	fmt.Fprintf(b, "Пауз длиннее %.1f с в ролике: %d\n", longPause, p.LongPauses)
 }
 

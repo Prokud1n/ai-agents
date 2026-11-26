@@ -518,6 +518,11 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		return err
 	}
 
+	if burn.Sound != nil && burn.Sound.FitError != nil {
+		p.log.ErrorContext(ctx, "mediaworker: the loudness was not fitted by the sound of the cut, rendered with the gain "+
+			"by the measurement of the source", "job_id", w.job.ID, "error", burn.Sound.FitError)
+	}
+
 	notes := p.sound.notes(cut, w.transcript.Loudness, w.cut.Plan.Mode, burn.Sound)
 	p.log.InfoContext(ctx, "mediaworker: sound and framing", "job_id", w.job.ID, "notes", notes)
 

@@ -107,6 +107,47 @@ func TestGroupSegmentsLimit(t *testing.T) {
 	assert.Equal(t, [2]int{4, 5}, [2]int{got[2].first, got[2].last}, "the shortest gap is decoded through")
 }
 
+// TestInputLimit: the number of inputs comes from the memory of their decoders (the review measured 2.2 GB of RSS for
+// 8 inputs of 4K 10-bit HEVC, 1.4 GB for 8 of 4K 8-bit H.264).
+func TestInputLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    MediaInfo
+		expected int
+	}{
+		{name: "not probed", input: MediaInfo{}, expected: maxCutInputs},
+		{name: "4K 8-bit H.264", input: MediaInfo{Width: 3840, Height: 2160, PixelFormat: "yuv420p"}, expected: 7},
+		{name: "4K 10-bit HEVC (iPhone HDR)", input: MediaInfo{Width: 2160, Height: 3840, PixelFormat: "yuv420p10le"}, expected: 4},
+		{name: "4K 10-bit, hardware layout", input: MediaInfo{Width: 3840, Height: 2160, PixelFormat: "p010le"}, expected: 4},
+		{name: "1080p", input: MediaInfo{Width: 1080, Height: 1920, PixelFormat: "yuvj420p"}, expected: maxCutInputs},
+		{name: "8K 10-bit: at least two", input: MediaInfo{Width: 7680, Height: 4320, PixelFormat: "yuv420p10le"}, expected: minCutInputs},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, inputLimit(tt.input.Frame()))
+		})
+	}
+}
+
+// TestGroupSegmentsMemory: twelve far segments of a 4K 10-bit source are decoded by four inputs.
+func TestGroupSegmentsMemory(t *testing.T) {
+	t.Parallel()
+
+	segments := make([]Segment, 0, 12)
+	for i := range 12 {
+		segments = append(segments, Segment{Start: 10 * float64(i), End: 10*float64(i) + 1})
+	}
+
+	hdr := MediaInfo{Width: 2160, Height: 3840, PixelFormat: "yuv420p10le"}
+	assert.Len(t, groupSegments(segments, RenderOptions{Source: hdr.Frame()}), 4)
+	assert.Len(t, groupSegments(segments, RenderOptions{}), maxCutInputs)
+}
+
 func TestCutInputArgs(t *testing.T) {
 	t.Parallel()
 

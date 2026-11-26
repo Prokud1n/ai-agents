@@ -76,6 +76,17 @@ type RenderOptions struct {
 	Denoise *Denoise
 	// Loudness, if set, brings the joined sound to it after the noise reduction; nil keeps the level of the source.
 	Loudness *LoudnessTarget
+	// Source is the size of the decoded frame of the source: it limits the number of inputs of a cut (inputLimit).
+	// Zero: unknown, the limit is maxCutInputs.
+	Source SourceFrame
+}
+
+// SourceFrame is the frame of the source as its decoder holds it.
+type SourceFrame struct {
+	Width  int
+	Height int
+	// BytesPerSample: 1 for 8-bit video, 2 for 10- and 12-bit.
+	BytesPerSample int
 }
 
 // RenderSegments re-encodes the given fragments of src one after another into dst (MP4 regardless of its
@@ -327,11 +338,6 @@ func writeConcat(b *strings.Builder, n int, opts RenderOptions, videoOut, audioO
 	}
 
 	sound := soundChain(opts)
-	if sound != "" && opts.Loudness != nil {
-		// The loudness the render actually gives is measured on the way (the summary at the end of the log).
-		sound += "," + measureFilter
-	}
-
 	joined := audioOut
 
 	if sound != "" {

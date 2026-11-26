@@ -23,7 +23,9 @@ const (
 	maxLoudnessPasses = 3
 	// maxCorrection (dB) of the gain by the measurement: a larger miss is not the limiter, the measurement is wrong.
 	maxCorrection = 12.0
-	measuredLabel = "m"
+	// minLoudnessSlope: a correction is at most the miss times 1/minLoudnessSlope.
+	minLoudnessSlope = 0.25
+	measuredLabel    = "m"
 )
 
 var errNoSummary = errors.New("ffmpeg reported no loudness summary")
@@ -34,9 +36,25 @@ type SoundReport struct {
 	Gain       float64
 	Correction float64
 	Passes     int
-	// Output is the loudness of the processed sound as the render measured it (before the AAC encode, which changes it
-	// by hundredths); nil if ffmpeg reported no summary.
+	// FitError: the passes over the sound of the cut failed, the render went on with the gain by the measurement of the
+	// source (Correction 0); nil if they did not fail.
+	FitError error
+	// Output is the loudness of the rendered file (after the AAC encode: its true peak is what the network gets),
+	// measured by one more pass over its sound; nil if it could not be measured.
 	Output *Loudness
+}
+
+// measureFile measures the loudness of the first audio stream of a local file; nil if it fails (only a report).
+func (r *Runner) measureFile(ctx context.Context, path string) *Loudness {
+	args := append(commonArgs(), inputArgs(path)...)
+	args = append(args, mapFlag, "0:a:0", audioFilterFlag, measureFilter, formatFlag, "null", "-")
+
+	log := newTailBuffer(measureLogTail)
+	if _, err := r.run(ctx, r.ffmpegPath, args, log); err != nil {
+		return nil
+	}
+
+	return parseLoudness(log.String())
 }
 
 // fitLoudness returns the options with the gain corrected so that the processed sound of the cut is at the target,
@@ -49,7 +67,8 @@ func (r *Runner) fitLoudness(ctx context.Context, in string, segments []Segment,
 
 	out := opts
 	target := *opts.Loudness
-	passes := 0
+	passes, slope := 0, 1.0
+	lastLevel, lastCorrection := 0.0, 0.0
 
 	for passes < maxLoudnessPasses {
 		attempt := target
@@ -67,7 +86,14 @@ func (r *Runner) fitLoudness(ctx context.Context, in string, segments []Segment,
 			break
 		}
 
-		target.Correction = min(max(target.Correction+miss, -maxCorrection), maxCorrection)
+		// The limiter takes a part of every dB of gain: the next correction is the miss divided by how much the last
+		// one moved the loudness (the secant), within minLoudnessSlope..1.
+		if step := attempt.Correction - lastCorrection; passes > 1 && step != 0 {
+			slope = min(max((measured.Integrated-lastLevel)/step, minLoudnessSlope), 1)
+		}
+
+		lastLevel, lastCorrection = measured.Integrated, attempt.Correction
+		target.Correction = min(max(target.Correction+miss/slope, -maxCorrection), maxCorrection)
 	}
 
 	out.Loudness = &target
