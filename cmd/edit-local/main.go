@@ -204,10 +204,12 @@ func printReport(out io.Writer, report *editlocal.Report) {
 	}
 }
 
-// hints explain the failures of the setup to the owner.
+// hints explain the failures of the setup to the owner; a complete hint says it all, so no technical cause is printed
+// under it.
 var hints = []struct {
-	err  error
-	hint string
+	err      error
+	hint     string
+	complete bool
 }{
 	{err: editlocal.ErrWorkerNotRunning, hint: "media-worker не запущен: make up"},
 	{err: editlocal.ErrOutInUse, hint: "в OUT уже есть монтаж: для правки передайте REVISION, для нового видео — другой OUT"},
@@ -224,7 +226,8 @@ var hints = []struct {
 		"make edit FILE=<видео> с новым OUT"},
 	{err: editlocal.ErrPendingDownload, hint: "последняя версия не скачана — докачать: make edit OUT=<эта папка> " +
 		"(без FILE и REVISION)"},
-	{err: editlocal.ErrNothingPending, hint: "всё уже скачано: для правки передайте REVISION"},
+	{err: editlocal.ErrNothingPending, hint: "всё уже скачано: для правки передайте REVISION", complete: true},
+	{err: editlocal.ErrLeaseTaken, hint: "эту версию монтирует другой запуск make edit: дождитесь его", complete: true},
 	{err: context.Canceled, hint: "монтаж остановлен (Ctrl+C), задание снято с очереди воркера"},
 }
 
@@ -246,11 +249,17 @@ func printFailure(out io.Writer, err error) {
 		cause = temporary.Err
 	}
 
+	complete := false
+
 	for _, h := range hints {
 		if errors.Is(err, h.err) {
 			fmt.Fprintln(out, h.hint)
+
+			complete = complete || h.complete
 		}
 	}
 
-	fmt.Fprintln(out, "причина:", cause)
+	if !complete {
+		fmt.Fprintln(out, "причина:", cause)
+	}
 }

@@ -209,7 +209,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		Kind: EditOutcome, Edit: edit, Cut: cut, Kept: kept,
 		Changes:  describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}, &sel),
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
-		Selected: sel.on, Target: in.TargetSeconds,
+		Selected: sel.on, Target: in.TargetSeconds, Cleaned: sel.cleaned.fragments,
 	}, nil
 }
 

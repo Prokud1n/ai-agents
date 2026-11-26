@@ -105,21 +105,20 @@ func TestCleanupInvalidNote(t *testing.T) {
 		"дубль вступления“.", fmt.Sprintf(cleanupInvalidNote, cutWithoutTakes))
 }
 
-// TestDescribeHonestTakes: «неудачные дубли» in the header only when some were cut — by the worker, the cleaning or a
-// disputed repeat cut.
+// TestDescribeHonestTakes: «неудачные дубли» in the header only when some were cut — by the worker, or by the editor
+// (the cleaning or a disputed repeat cut: Summary.Cleaned).
 func TestDescribeHonestTakes(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
 		retakes  int
-		changes  []string
+		cleaned  bool
 		expected string
 	}{
 		{name: "nothing of the takes", expected: cutWithoutTakes},
 		{name: "the worker's retakes", retakes: 1, expected: cutWithTakes},
-		{name: "a repeat cut", changes: []string{"Спорные повторы: вырезал 1, оставил 0."}, expected: cutWithTakes},
-		{name: "no repeat cut", changes: []string{"Спорные повторы: вырезал 0, оставил 2."}, expected: cutWithoutTakes},
+		{name: "the editor's cleaning", cleaned: true, expected: cutWithTakes},
 	}
 
 	for _, tt := range tests {
@@ -127,9 +126,34 @@ func TestDescribeHonestTakes(t *testing.T) {
 			t.Parallel()
 
 			result := &editjob.Result{SourceDuration: 60, Duration: 45, Retakes: tt.retakes}
-			text := Describe(result, 1, "", &editjob.Summary{Changes: tt.changes})
+			text := Describe(result, 1, "", &editjob.Summary{Cleaned: tt.cleaned})
 			assert.True(t, strings.HasPrefix(text, "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 ("+
 				tt.expected+")."), text)
+		})
+	}
+}
+
+// TestFirstSummaryCleaned: the cleaning or a disputed repeat cut marks the summary, so the header names the takes.
+func TestFirstSummaryCleaned(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		outcome  editplan.Outcome
+		expected bool
+	}{
+		{name: "cleaned", outcome: editplan.Outcome{Kind: editplan.EditOutcome, Cleaned: 2}, expected: true},
+		{name: "a repeat cut", outcome: editplan.Outcome{Kind: editplan.EditOutcome, Cut: 1}, expected: true},
+		{name: "nothing", outcome: editplan.Outcome{Kind: editplan.EditOutcome}},
+		{name: "no decision", outcome: editplan.Outcome{Kind: editplan.InvalidOutcome}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := &editplan.Request{Version: 1, Plan: &roughcut.Plan{Candidates: []roughcut.Candidate{{ID: 0}}}}
+			assert.Equal(t, tt.expected, firstSummary(req, &tt.outcome).Cleaned)
 		})
 	}
 }

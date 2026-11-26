@@ -538,7 +538,7 @@ func TestExecutorDecidesPlannedJob(t *testing.T) {
 	}{
 		{
 			name: "the caption applied", decider: &fakeDecider{outcome: editOutcome()}, edit: &editOutcome().Edit,
-			expected: &editjob.Summary{Changes: []string{
+			expected: &editjob.Summary{Cleaned: true, Changes: []string{
 				testChange, "Спорные повторы: вырезал 1, оставил 0.",
 			}},
 		},

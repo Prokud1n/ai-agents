@@ -301,7 +301,7 @@ func talkHeader(r *editjob.Result, summary *editjob.Summary) string {
 	}
 
 	return fmt.Sprintf("Черновик рилс готов: было %s, стало %s — вырезал %s (%s).",
-		clock(r.SourceDuration), clock(r.Duration), clock(removed), cutKinds(r.Retakes > 0 || cleaned(summary)))
+		clock(r.SourceDuration), clock(r.Duration), clock(removed), cutKinds(r.Retakes > 0 || (summary != nil && summary.Cleaned)))
 }
 
 // cutKinds names what a talking-head cut removed, the failed takes only when there were some.
@@ -311,20 +311,6 @@ func cutKinds(takes bool) string {
 	}
 
 	return cutWithoutTakes
-}
-
-// repeatsCutPrefix starts the line about the disputed repeats of a decided first version.
-const repeatsCutPrefix = "Спорные повторы: вырезал "
-
-// cleaned: the editor removed failed takes of the first version — its cleaning, or a disputed repeat cut (its earlier
-// phrase is a take; the worker's Result.Retakes does not count them) — by the lines in the changes.
-//
-// TODO: Summary.Cleaned in editjob instead of the lines (after T3.19c is merged).
-func cleaned(summary *editjob.Summary) bool {
-	return summary != nil && slices.ContainsFunc(summary.Changes, func(line string) bool {
-		return strings.HasPrefix(line, editplan.CleanupLinePrefix) ||
-			(strings.HasPrefix(line, repeatsCutPrefix) && !strings.HasPrefix(line, repeatsCutPrefix+"0,"))
-	})
 }
 
 // talkBody is what the editor changed, or how many disputed repeats an automatic cut left.
@@ -418,11 +404,12 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 	}
 
 	summary.Selected = outcome.Selected && !workout
+	summary.Cleaned = !workout && (outcome.Cleaned > 0 || outcome.Cut > 0)
 	summary.Changes = append(summary.Changes, outcome.Changes...)
 	summary.Note = editplan.DeclinedText(outcome.Declined)
 
 	if candidates > 0 {
-		summary.Changes = append(summary.Changes, fmt.Sprintf(repeatsCutPrefix+"%d, оставил %d.",
+		summary.Changes = append(summary.Changes, fmt.Sprintf("Спорные повторы: вырезал %d, оставил %d.",
 			outcome.Cut, candidates-outcome.Cut))
 	}
 

@@ -153,3 +153,45 @@ func TestPrintFailureOnce(t *testing.T) {
 
 	assert.Equal(t, 1, strings.Count(out.String(), "Текст тренеру."))
 }
+
+// TestPrintFailureCompleteHint: «всё уже скачано» says it all, no technical cause under it; other hints keep theirs.
+func TestPrintFailureCompleteHint(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		err         error
+		expected    string
+		expectCause bool
+	}{
+		{
+			name:     "nothing to download",
+			err:      fmt.Errorf("failed to download the version: version 2: %w", editlocal.ErrNothingPending),
+			expected: "всё уже скачано: для правки передайте REVISION\n",
+		},
+		{
+			name:     "another run took the lease",
+			err:      fmt.Errorf("failed to make the revision: %w", editlocal.ErrLeaseTaken),
+			expected: "эту версию монтирует другой запуск make edit: дождитесь его\n",
+		},
+		{name: "no worker", err: editlocal.ErrWorkerNotRunning, expectCause: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+
+			printFailure(&out, tt.err)
+
+			if tt.expectCause {
+				assert.Contains(t, out.String(), "причина:")
+
+				return
+			}
+
+			assert.Equal(t, tt.expected, out.String())
+		})
+	}
+}

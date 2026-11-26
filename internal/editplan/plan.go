@@ -149,6 +149,8 @@ type Outcome struct {
 	// length the trainer asked for) in a talking head; Target is that length, 0 for the recommended range.
 	Selected bool
 	Target   float64
+	// Cleaned is the number of fragments the cleaning of a first version cut (Request.Cleaning).
+	Cleaned int
 	// Declined are the texts for the trainer about what was asked and is not done (music, color...): with an edit
 	// (the rest is done) or with a refusal (CannotOutcome).
 	Declined []string

@@ -45,7 +45,9 @@ func TestDescribe(t *testing.T) {
 			result:  editjob.Result{SourceDuration: 60, Duration: 40, Candidates: 1},
 			version: 1,
 			caption: "без первой фразы",
-			summary: &editjob.Summary{Changes: []string{"Вырезал фрагмент «всем привет».", "Спорные повторы: вырезал 1, оставил 1."}},
+			summary: &editjob.Summary{
+				Changes: []string{"Вырезал фрагмент «всем привет».", "Спорные повторы: вырезал 1, оставил 1."}, Cleaned: true,
+			},
 			expected: "Черновик рилс готов: было 1:00, стало 0:40 — вырезал 0:20 (паузы, оговорки и неудачные дубли).\n" +
 				"Вырезал фрагмент «всем привет».\nСпорные повторы: вырезал 1, оставил 1.\n" +
 				"Ваша подпись к исходнику: «без первой фразы»",
@@ -100,7 +102,7 @@ func TestDescribe(t *testing.T) {
 			name:    "the editor's cleaning names the failed takes",
 			result:  editjob.Result{SourceDuration: 236, Duration: 129},
 			version: 1,
-			summary: &editjob.Summary{Changes: []string{testCleanupLine}},
+			summary: &editjob.Summary{Changes: []string{testCleanupLine}, Cleaned: true},
 			expected: "Черновик рилс готов: было 3:56, стало 2:09 — вырезал 1:47 (паузы, оговорки и неудачные дубли).\n" +
 				testCleanupLine,
 		},
@@ -193,7 +195,7 @@ func TestFirstSummary(t *testing.T) {
 		{
 			name: "repeats decided", plan: twoCandidates,
 			outcome:  editplan.Outcome{Kind: editplan.EditOutcome, Cut: 1, Kept: 1},
-			expected: editjob.Summary{Changes: []string{"Спорные повторы: вырезал 1, оставил 1."}},
+			expected: editjob.Summary{Changes: []string{"Спорные повторы: вырезал 1, оставил 1."}, Cleaned: true},
 		},
 		{
 			name: "the caption applied, no repeats", caption: "без начала", plan: &roughcut.Plan{},

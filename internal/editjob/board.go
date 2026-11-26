@@ -42,7 +42,7 @@ const (
 )
 
 var (
-	// unlockScript deletes the lock only if it is still the caller's.
+	// unlockScript deletes the lock (or the lease) only if it is still the caller's.
 	unlockScript = goredis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0
@@ -74,6 +74,14 @@ return 1
 if not current() then return false end
 redis.call('SET', KEYS[2], ARGV[3], 'NX', 'PX', ARGV[4])
 return redis.call('GET', KEYS[2])
+`)
+	// renewLeaseScript sets the lease for the token only if the key is the token's or there is none: a run never takes
+	// the lease of another run over by a refresh.
+	renewLeaseScript = goredis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if current and current ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
 `)
 	// refreshScript extends the lock only if it is still the caller's.
 	refreshScript = goredis.NewScript(`
@@ -109,6 +117,7 @@ end
 //	<stream>:result:<id>     the result
 //	<stream>:started:<id>    when a worker took the job (the job timeout counts from it)
 //	<stream>:lock:<id>       the worker editing the job, refreshed by its heartbeat
+//	<stream>:lease:<id>      the token of the local edit (make edit) waiting for the job (Job.Lease), refreshed by it
 //	<stream>:done            channel: the task ID of a finished job, so the app runs the task at once
 //	<stream>:worker          presence of a live worker
 type Board struct {
@@ -144,6 +153,7 @@ func (b *Board) jobKey(id string) string     { return b.stream + ":job:" + id }
 func (b *Board) resultKey(id string) string  { return b.stream + ":result:" + id }
 func (b *Board) lockKey(id string) string    { return b.stream + ":lock:" + id }
 func (b *Board) startedKey(id string) string { return b.stream + ":started:" + id }
+func (b *Board) leaseKey(id string) string   { return b.stream + ":lease:" + id }
 func (b *Board) doneChannel() string         { return b.stream + ":done" }
 func (b *Board) presenceKey() string         { return b.stream + ":worker" }
 
@@ -353,4 +363,61 @@ func (b *Board) WorkerAlive(ctx context.Context) (bool, error) {
 	}
 
 	return n > 0, nil
+}
+
+// Lease takes the lease of the job for the token for ttl, over any other token (a new run of make edit takes the lease of
+// a killed one; the lock of its output directory keeps a second live run out); RenewLease keeps it. A job with Job.Lease
+// is current for the worker only while its token holds the lease.
+func (b *Board) Lease(ctx context.Context, jobID, token string, ttl time.Duration) error {
+	if token == "" || ttl <= 0 {
+		return fmt.Errorf("lease of job %s needs a token and a positive ttl: %w", jobID, ErrInvalidJob)
+	}
+
+	if err := b.rdb.Set(ctx, b.leaseKey(jobID), token, ttl).Err(); err != nil {
+		return fmt.Errorf("failed to lease job %s: %w", jobID, err)
+	}
+
+	return nil
+}
+
+// RenewLease extends the lease of the job for the token for ttl, or takes it if there is none (it expired while the run
+// slept); false when another token holds it: another run edits the version, the lease is not touched.
+func (b *Board) RenewLease(ctx context.Context, jobID, token string, ttl time.Duration) (bool, error) {
+	if token == "" || ttl <= 0 {
+		return false, fmt.Errorf("lease of job %s needs a token and a positive ttl: %w", jobID, ErrInvalidJob)
+	}
+
+	n, err := renewLeaseScript.Run(ctx, b.rdb, []string{b.leaseKey(jobID)}, token, ttl.Milliseconds()).Int()
+	if err != nil {
+		return false, fmt.Errorf("failed to renew the lease of job %s: %w", jobID, err)
+	}
+
+	return n == 1, nil
+}
+
+// ReleaseLease deletes the lease of the job if the token still holds it.
+func (b *Board) ReleaseLease(ctx context.Context, jobID, token string) error {
+	if err := unlockScript.Run(ctx, b.rdb, []string{b.leaseKey(jobID)}, token).Err(); err != nil {
+		return fmt.Errorf("failed to release the lease of job %s: %w", jobID, err)
+	}
+
+	return nil
+}
+
+// LeaseHeld reports whether the job's lease is held by its token (Job.Lease); a job without a lease is always held.
+func (b *Board) LeaseHeld(ctx context.Context, job *Job) (bool, error) {
+	if job.Lease == "" {
+		return true, nil
+	}
+
+	token, err := b.rdb.Get(ctx, b.leaseKey(job.ID)).Result()
+	if errors.Is(err, goredis.Nil) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("failed to read the lease of job %s: %w", job.ID, err)
+	}
+
+	return token == job.Lease, nil
 }

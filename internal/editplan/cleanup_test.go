@@ -204,6 +204,7 @@ func TestApplyCleanupLine(t *testing.T) {
 			assert.True(t, strings.HasPrefix(outcome.Changes[0], tt.expected), outcome.Changes[0])
 			assert.True(t, strings.HasSuffix(outcome.Changes[0], " с)."), outcome.Changes[0])
 			assert.Less(t, outcome.Duration, req.Plan.Duration)
+			assert.Positive(t, outcome.Cleaned, "the fragments cleaned")
 			assert.Equal(t, []string{"Чистка первой версии: отсчёт и слова про дубль"}, outcome.Edit.Notes)
 			assert.Len(t, outcome.Edit.Details, len(in.Remove)+len(in.CleanupWords))
 		})
