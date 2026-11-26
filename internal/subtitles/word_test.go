@@ -73,7 +73,7 @@ func TestWordCues(t *testing.T) {
 		{name: "no speech", input: &transcription.Result{Duration: 3}, expected: []string{}},
 	}
 
-	style := DefaultStyle()
+	style := WordsStyle()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -94,7 +94,7 @@ func TestWordCues(t *testing.T) {
 func TestWordText(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 
 	tests := []struct {
 		input    string
@@ -127,7 +127,7 @@ func TestCardHidesSpeech(t *testing.T) {
 	result.Duration = result.Words[len(result.Words)-1].End
 	notes := []Note{{Kind: CalloutNote, Text: calloutYears, Start: result.Duration - 1}}
 
-	for _, style := range []Style{DefaultStyle(), PhraseStyle()} {
+	for _, style := range []Style{WordsStyle(), PhraseStyle()} {
 		ass, _ := buildDocument(&CreateSubtitlesData{
 			Transcript: result, Notes: notes, Branding: &Branding{Handle: testHandle, EndCard: true},
 		}, &style)
@@ -168,7 +168,7 @@ func TestTimeWords(t *testing.T) {
 		{Text: "d", Start: 4.95, End: 6.45, Pause: true},
 	}
 
-	got := timeWords(input, DefaultStyle().WordBox.MinDuration)
+	got := timeWords(input, WordsStyle().WordBox.MinDuration)
 	require.Len(t, got, len(expected))
 
 	for i := range expected {
@@ -184,7 +184,7 @@ func TestTimeWords(t *testing.T) {
 func TestWordEvents(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 
 	tests := []struct {
 		name     string
@@ -222,7 +222,7 @@ func TestWordEvents(t *testing.T) {
 func TestWordStyleLine(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 
 	assert.Equal(t, "Style: Word,Manrope Medium,48,&H00111111,&H00111111,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,"+
 		"3,9,0,7,149,389,609,1", wordStyleLine(&style))
@@ -257,7 +257,7 @@ func TestValidateWordBox(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			style := DefaultStyle()
+			style := WordsStyle()
 			if tt.phrase {
 				style = PhraseStyle()
 			}
@@ -282,7 +282,7 @@ func TestValidateWordBox(t *testing.T) {
 func TestBuildDocumentWordLayout(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 	result := speech("Привет! Сегодня три ошибки в планке.", "Первая — прогиб в пояснице.")
 	result.Duration = 10
 

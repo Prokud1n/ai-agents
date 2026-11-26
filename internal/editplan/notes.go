@@ -16,6 +16,8 @@ const (
 	// maxNoteRunes of a screen note: a short item («1/ на русском»), not a sentence; the subtitles wrap it into two
 	// lines at most.
 	maxNoteRunes = 40
+	// maxSectionRunes of a section heading: «страх 1», «ошибка 2» — one short line.
+	maxSectionRunes = 24
 )
 
 // Lines about the screen notes in the description of a draft.
@@ -60,14 +62,19 @@ func checkNotesInput(req *Request, in *Input) error {
 func checkNote(req *Request, n *NoteInput) error {
 	text := normalizeHook(n.Text)
 
+	limit := maxNoteRunes
+	if n.Kind == roughcut.SectionNote {
+		limit = maxSectionRunes
+	}
+
 	switch {
-	case n.Kind != roughcut.ListTitleNote && n.Kind != roughcut.ListItemNote && n.Kind != roughcut.CalloutNote:
-		return checkFailedf("screen_notes: kind — list_title, list_item или callout, а не %q", n.Kind)
+	case noteKindNames[n.Kind] == "":
+		return checkFailedf("screen_notes: kind — section, list_title, list_item или callout, а не %q", n.Kind)
 	case strings.ContainsFunc(n.Text, forbiddenRune):
 		return checkFailedf("элемент на экране «%s»: без переносов строк, невидимых символов и { } \\ < >",
 			truncate(oneLine(n.Text), maxNoteRunes))
-	case text == "" || utf8.RuneCountInString(text) > maxNoteRunes:
-		return checkFailedf("элемент на экране «%s»: от 1 до %d символов", truncate(text, maxNoteRunes), maxNoteRunes)
+	case text == "" || utf8.RuneCountInString(text) > limit:
+		return checkFailedf("элемент на экране «%s»: от 1 до %d символов", truncate(text, limit), limit)
 	case strings.ContainsFunc(text, emojiRune) || strings.Contains(text, "#"):
 		return checkFailedf("элемент на экране «%s»: без эмодзи и хештегов", text)
 	case (n.Word == nil) == (n.Start == nil):
@@ -194,8 +201,8 @@ func screenNotesLines(req *Request, in *Input, previous *roughcut.Edit) []string
 	}
 }
 
-// notesLine says what is on the screen: «На экране: 3 пункта и 2 выноски.»; a list without items is «заголовок
-// списка» (one) or «2 заголовка списка».
+// notesLine says what is on the screen: «На экране: 3 раздела.», «На экране: 3 пункта и 2 выноски.»; a list without
+// items is «заголовок списка» (one) or «2 заголовка списка».
 func notesLine(notes []roughcut.ScreenNote) string {
 	counts := map[roughcut.NoteKind]int{}
 	for _, n := range notes {
@@ -203,6 +210,10 @@ func notesLine(notes []roughcut.ScreenNote) string {
 	}
 
 	parts := make([]string, 0, len(counts))
+
+	if n := counts[roughcut.SectionNote]; n > 0 {
+		parts = append(parts, plural(n, "раздел", "раздела", "разделов"))
+	}
 
 	if n := counts[roughcut.ListItemNote]; n > 0 {
 		parts = append(parts, plural(n, "пункт", "пункта", "пунктов"))
@@ -253,6 +264,7 @@ var noteKindNames = map[roughcut.NoteKind]string{
 	roughcut.ListTitleNote: "заголовок списка",
 	roughcut.ListItemNote:  "пункт",
 	roughcut.CalloutNote:   "выноска",
+	roughcut.SectionNote:   "раздел",
 }
 
 // writeScreenNotes says the screen notes of the current version (a talking head) and what to do with them: change or
@@ -276,8 +288,8 @@ func writeScreenNotes(b *strings.Builder, req *Request) {
 		b.WriteString("\nПунктов и цифр на экране нет. Добавь их через screen_notes, только если тренер просит.\n")
 	default:
 		b.WriteString("\nПункты и цифры на экране: если тренер перечисляет («во-первых…», «три причины…») или " +
-			"называет цифры, сроки, неожиданный факт — вынеси их через screen_notes по разделу «Пункты на экране»; " +
-			"выносить нечего — не указывай.\n")
+			"называет цифры, сроки, неожиданный факт — вынеси их через screen_notes по разделу «Пункты на экране»: " +
+			"переход к новому пункту — заголовок раздела (section), цифры — выноски; выносить нечего — не указывай.\n")
 	}
 }
 

@@ -82,7 +82,7 @@ func workoutPipeline(t *testing.T, files store, speech transcriber) (*Pipeline, 
 		fonts = repoFontsDir
 	}
 
-	service, err := subtitles.NewService(runner, &config.Subtitles{FontsDir: fonts}, log)
+	service, err := subtitles.NewService(runner, &config.Subtitles{FontsDir: fonts, StyleFile: wordsStyleFile(t)}, log)
 	require.NoError(t, err)
 
 	burner := &capturingBurner{service: service}

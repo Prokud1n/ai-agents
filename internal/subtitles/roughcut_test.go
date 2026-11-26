@@ -130,7 +130,9 @@ func TestRoughCutTranscriptToWords(t *testing.T) {
 	svc, err := subtitles.NewService(nil, &config.Subtitles{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
-	result, err := svc.CreateSubtitles(&subtitles.CreateSubtitlesData{Transcript: &transcript})
+	// The word layout (the reference reels' style) shows the words one by one.
+	style := subtitles.WordsStyle()
+	result, err := svc.CreateSubtitles(&subtitles.CreateSubtitlesData{Transcript: &transcript, Style: &style})
 	require.NoError(t, err)
 
 	words := make([]string, 0, result.Cues)

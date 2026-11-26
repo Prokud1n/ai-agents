@@ -2,6 +2,7 @@ package editor
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,15 +16,18 @@ import (
 const testHandle = "@prokudina.ana"
 
 // TestCheckBranding: REELS_HANDLE is checked strictly at the start of the app: empty is no handle, anything but «@»
-// and 1–30 of a-z, 0-9, «.», «_» fails the start.
+// and 1–30 of a-z, 0-9, «.», «_» fails the start; REELS_TOPBAR_* — at most 40 printable characters without markup.
 func TestCheckBranding(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
 		handle   string
+		left     string
+		right    string
 		expected *editjob.Branding
 		invalid  bool
+		topbar   bool
 	}{
 		{name: "none"},
 		{name: "spaces only", handle: "  "},
@@ -34,17 +38,33 @@ func TestCheckBranding(t *testing.T) {
 		{name: "no @", handle: "prokudina.ana", invalid: true},
 		{name: "capitals", handle: "@Prokudina", invalid: true},
 		{name: "markup", handle: "@a{\\an7}", invalid: true},
+		{
+			name: "the top line without a handle", left: " tg: @ana_prokudina ", right: "2x",
+			expected: &editjob.Branding{Icon: true, EndCard: true, TopbarLeft: "tg: @ana_prokudina", TopbarRight: "2x"},
+		},
+		{name: "markup in the top line", left: "tg: {\\an7}", topbar: true},
+		{name: "a line break in the top line", right: "2x\nREC", topbar: true},
+		{name: "a long top line", left: strings.Repeat("a", 41), topbar: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := &config.Editor{ReelsHandle: tt.handle, ReelsHandleIcon: true, ReelsEndCard: true}
+			cfg := &config.Editor{
+				ReelsHandle: tt.handle, ReelsHandleIcon: true, ReelsEndCard: true, ReelsTopbarLeft: tt.left,
+				ReelsTopbarRight: tt.right,
+			}
 
 			err := CheckBranding(cfg)
-			if tt.invalid {
+
+			switch {
+			case tt.invalid:
 				require.ErrorIs(t, err, editjob.ErrInvalidHandle)
+
+				return
+			case tt.topbar:
+				require.ErrorIs(t, err, editjob.ErrInvalidTopbar)
 
 				return
 			}

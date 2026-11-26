@@ -281,7 +281,7 @@ func TestNewServiceStyleFile(t *testing.T) {
 		expectedErr error
 	}{
 		{name: "built-in style", expected: TopPosition},
-		{name: "brand book file", styleFile: valid, expected: BottomPosition},
+		{name: "brand book file over the phrase style", styleFile: valid, expected: BottomPosition},
 		{name: "invalid file fails the start", styleFile: broken, expectedErr: ErrInvalidStyle},
 		{name: "missing file fails the start", styleFile: filepath.Join(dir, "none.yaml"), expectedErr: os.ErrNotExist},
 	}

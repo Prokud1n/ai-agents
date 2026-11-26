@@ -140,6 +140,9 @@ const (
 	ListItemNote NoteKind = "list_item"
 	// CalloutNote is a short number or remark («6 лет») shown alone for a moment.
 	CalloutNote NoteKind = "callout"
+	// SectionNote is a section heading of a talking head («страх 1»): shown above the subtitles while the section
+	// starts, the next one replaces it.
+	SectionNote NoteKind = "section"
 )
 
 // ScreenNote is a point or a number on the screen from Start, in seconds of the source; End 0 lets the subtitles

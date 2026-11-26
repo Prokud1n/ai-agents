@@ -93,7 +93,7 @@ func TestNoteBlocks(t *testing.T) {
 		},
 	}
 
-	style := DefaultStyle()
+	style := WordsStyle()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -115,7 +115,7 @@ func TestNoteBlocks(t *testing.T) {
 func TestNoteFades(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 	blocks := noteBlocks([]Note{
 		{Kind: ListTitleNote, Text: listTitle, Start: 1},
 		{Kind: ListItemNote, Text: itemWater, Start: 2},
@@ -133,7 +133,7 @@ func TestNoteFades(t *testing.T) {
 func TestNoteEvents(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 	blocks := []noteBlock{
 		{start: 2, end: 4, entries: []string{listTitle, "1/ стакан {\\b1}воды"}, lines: 2, fadeIn: true},
 		{start: 4, end: 6, entries: []string{calloutYears}, lines: 1},

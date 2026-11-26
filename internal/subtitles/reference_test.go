@@ -45,7 +45,7 @@ func countPixels(frame []byte, b area, check func(level byte) bool) int {
 	return n
 }
 
-// TestBurnReferenceStyleWithFFmpeg: libass draws the reference look (the default style) — the word black on its white
+// TestBurnReferenceStyleWithFFmpeg: libass draws the reference look (WordsStyle) — the word black on its white
 // plate at the left edge at a third of the height, a callout at the top, the handle with its icon at the right edge —
 // and the end card darkens the last two seconds with the handle in the middle, the watermark and the words gone.
 func TestBurnReferenceStyleWithFFmpeg(t *testing.T) {
@@ -68,8 +68,11 @@ func TestBurnReferenceStyleWithFFmpeg(t *testing.T) {
 	transcript := speech("Делаем 10 приседаний каждое утро.", "Держим спину ровно и дышим спокойно, не торопимся.")
 	transcript.Duration = 6
 
+	words := WordsStyle()
+
 	result, err := svc.BurnSubtitles(ctx, &BurnSubtitlesData{
 		CreateSubtitlesData: CreateSubtitlesData{
+			Style:      &words,
 			Transcript: transcript,
 			Notes:      []Note{{Kind: CalloutNote, Text: "10 приседаний", Start: 0.5}},
 			Branding:   &Branding{Handle: testHandle, Icon: true, EndCard: true},
@@ -80,7 +83,7 @@ func TestBurnReferenceStyleWithFFmpeg(t *testing.T) {
 	assert.Empty(t, result.FontFallbacks)
 	assert.Empty(t, result.MissingGlyphs)
 
-	style := DefaultStyle()
+	style := WordsStyle()
 	plate := style.wordBoxRect()
 	plateBox := area{x0: plate.left - 10, y0: plate.top - 10, x1: plate.right, y1: plate.bottom + 10}
 	handle := style.handleRect()

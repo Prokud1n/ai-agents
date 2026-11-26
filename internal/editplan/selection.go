@@ -29,8 +29,8 @@ const (
 // selection is the editorial selection of a decision: whether phrases were picked for the length of a reel (and the
 // reel got shorter), the length asked for (0: the recommended range), and the reel built with the decision.
 //
-// cleanup is the cleaning of a first talking head (Request.Cleaning), only that it is the whole decision (no caption:
-// Request.CleanupOnly), cleaned what it removed.
+// cleanup is the cleaning of a first talking head (Request.CleansTakes: cleaned or shortened by the selection), only
+// that it is the whole decision (no caption: Request.CleanupOnly), cleaned what it removed.
 type selection struct {
 	on       bool
 	target   float64
@@ -46,7 +46,7 @@ func newSelection(req *Request, in *Input, mode roughcut.Mode, plan *roughcut.Pl
 	return selection{
 		on:     isSelected(req, in, mode) && plan.Duration < req.Plan.Duration-minShortenSeconds,
 		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep,
-		cleanup: req.Cleaning() && mode == roughcut.TalkMode, only: req.CleanupOnly() && mode == roughcut.TalkMode,
+		cleanup: req.CleansTakes() && mode == roughcut.TalkMode, only: req.CleanupOnly() && mode == roughcut.TalkMode,
 	}
 }
 

@@ -36,7 +36,7 @@ type noteBlock struct {
 
 // noteBlocks lays the notes out in time at the hook's place. A note waits for the hook to go. A list title starts a
 // list (so does an item numbered first after other items, «1/ …») and its items pile up under it, line by line, until the list ends: at the end of its last element, at the next
-// note that is not its item, or listTail after its last element; when the lines do not fit (hookLines), the earliest
+// note that is not its item, or listTail after its last element; when the lines do not fit (the hook's), the earliest
 // items scroll away (the title goes last). A callout is shown alone (calloutDuration, or its end within
 // minCallout..maxCallout) and the list comes back with its next item. A note never runs past the reel (reelEnd 0:
 // unknown) or into the next one.
@@ -146,7 +146,7 @@ func noteEnd(notes []Note, i int, start, hookEnd float64) float64 {
 	return min(end, next)
 }
 
-// scrollEntries keeps what fits hookLines lines: the earliest items scroll away first, the title (titled) last, the
+// scrollEntries keeps what fits the hook's lines: the earliest items scroll away first, the title (titled) last, the
 // latest item always stays. It returns the entries shown and their lines.
 func scrollEntries(entries []string, titled bool, style *Style) (shown []string, lines int) {
 	title, items := "", entries
@@ -160,18 +160,20 @@ func scrollEntries(entries []string, titled bool, style *Style) (shown []string,
 		total += noteLines(item, style)
 	}
 
-	for total > hookLines && len(items) > 1 {
+	maxLines := style.hookMaxLines()
+
+	for total > maxLines && len(items) > 1 {
 		total -= noteLines(items[0], style)
 		items = items[1:]
 	}
 
-	if total > hookLines && title != "" {
+	if total > maxLines && title != "" {
 		total -= noteLines(title, style)
 		title = ""
 	}
 
 	if title == "" {
-		return slices.Clone(items), min(total, hookLines)
+		return slices.Clone(items), min(total, maxLines)
 	}
 
 	return append([]string{title}, items...), total
@@ -184,7 +186,7 @@ func noteLines(text string, style *Style) int {
 		return 0
 	}
 
-	return len(splitHook(words, style.hookLineChars()))
+	return len(splitHook(words, style.hookLineChars(), style.hookMaxLines()))
 }
 
 // fades are the fade in and out of the block, ms: fade where it fades, 0 where it does not.
@@ -234,7 +236,7 @@ func noteEvents(blocks []noteBlock, style *Style) string {
 		for _, entry := range bl.entries {
 			words := hookWords(entry, style)
 
-			for _, line := range splitHook(words, maxChars) {
+			for _, line := range splitHook(words, maxChars, style.hookMaxLines()) {
 				if !first {
 					text.WriteString(assLineBreak)
 				}

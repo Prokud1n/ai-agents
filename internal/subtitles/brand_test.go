@@ -20,7 +20,7 @@ const (
 func TestBrandEvents(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 
 	tests := []struct {
 		name        string
@@ -87,7 +87,7 @@ func TestBrandEvents(t *testing.T) {
 func TestCardTimes(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
+	style := WordsStyle()
 	on := &Branding{Handle: testHandle, EndCard: true}
 
 	tests := []struct {
@@ -166,7 +166,7 @@ func TestValidateHandle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			style := DefaultStyle()
+			style := WordsStyle()
 			if tt.phrase {
 				style = PhraseStyle()
 			}

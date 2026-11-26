@@ -61,7 +61,9 @@ const (
 type HandleStyle struct {
 	TextStyle `yaml:",inline"`
 
-	Right int `yaml:"right"`
+	// Enabled draws the handle (REELS_HANDLE) and its end card in this style; the trainer's style has none.
+	Enabled bool `yaml:"enabled"`
+	Right   int  `yaml:"right"`
 	// Y is the top of the handle; 0: auto (the row of the words, or below the phrase subtitles).
 	Y        int `yaml:"y"`
 	MaxWidth int `yaml:"max_width"`
@@ -87,6 +89,7 @@ type EndCardStyle struct {
 func defaultHandle() HandleStyle {
 	return HandleStyle{
 		TextStyle: TextStyle{Font: defaultFont, Size: 32, Color: white},
+		Enabled:   true,
 		Right:     40,
 		MaxWidth:  300,
 		IconSize:  34,
@@ -104,6 +107,15 @@ func defaultEndCard() EndCardStyle {
 		IconSize:  120,
 	}
 }
+
+// Names of the places in the frame in the errors of the style checks.
+const (
+	hookPlaceName      = "the hook and the screen notes"
+	titlesPlaceName    = "the exercise titles"
+	wordsPlaceName     = "the words"
+	subtitlesPlaceName = "the subtitles"
+	shiftedPlaceName   = "the subtitles under the hook"
+)
 
 // handleRect is the place of the widest handle with its icon.
 func (s *Style) handleRect() rect {
@@ -136,7 +148,7 @@ func validateBrand(s *Style) []error {
 	errs = append(errs, validateText("end_card", &s.EndCard.TextStyle)...)
 	errs = append(errs, validateBrandValues(&s.Handle, &s.EndCard)...)
 
-	if len(errs) > 0 {
+	if len(errs) > 0 || !s.Handle.Enabled {
 		return errs
 	}
 
@@ -196,14 +208,14 @@ func validateHandlePlace(s *Style) []error {
 	hookTop, hookBottom := s.hookSpan()
 	titleTop, titleBottom := s.titleSpan()
 	others := map[string]rect{
-		"the hook and the screen notes": band(hookTop, hookBottom),
-		"the exercise titles":           band(titleTop, titleBottom),
+		hookPlaceName:   band(hookTop, hookBottom),
+		titlesPlaceName: band(titleTop, titleBottom),
 	}
 
 	if s.wordMode() {
-		others["the words"] = s.wordBoxRect()
+		others[wordsPlaceName] = s.wordBoxRect()
 	} else {
-		names := []string{"the subtitles", "the subtitles under the hook"}
+		names := []string{subtitlesPlaceName, shiftedPlaceName}
 		for i, span := range s.phraseSpans() {
 			others[names[i]] = rect{
 				left: s.Layout.MarginSide, top: span[0], right: FrameWidth - s.Layout.MarginSide, bottom: span[1],
@@ -228,7 +240,7 @@ func (s *Style) phraseSpans() [][2]int {
 	top, bottom := s.subtitlesSpan()
 	spans := [][2]int{{top, bottom}}
 
-	if margin := s.hookSubtitlesMargin(hookLines); margin > 0 {
+	if margin := s.hookSubtitlesMargin(s.hookMaxLines()); margin > 0 {
 		shiftedTop, shiftedBottom := blockSpan(s.Layout.Position, margin, s.blockHeight())
 		spans = append(spans, [2]int{shiftedTop, shiftedBottom})
 	}
@@ -248,10 +260,11 @@ func sortedKeys(m map[string]rect) []string {
 	return keys
 }
 
-// brandEvents are the handle over the reel and the end card over its last seconds (cardTimes); "" without a valid
-// handle. The handle fades out as the card fades in.
+// brandEvents are the top line (when the style has it) and the handle (when the style has it and it is valid) over
+// the reel, and the end card over its last seconds (cardTimes). The top line and the handle fade out as the card
+// fades in.
 func brandEvents(branding *Branding, reelEnd float64, style *Style) string {
-	if branding == nil || editjob.CheckHandle(branding.Handle) != nil {
+	if branding == nil {
 		return ""
 	}
 
@@ -261,20 +274,31 @@ func brandEvents(branding *Branding, reelEnd float64, style *Style) string {
 	}
 
 	start, duration := cardTimes(branding, reelEnd, style)
-	if duration == 0 {
-		return handleEvent(branding, end, 0, style)
+	fade := 0
+
+	if duration > 0 {
+		end, fade = start, min(style.EndCard.Fade, int(duration*millisPerSecond)/2)
 	}
 
-	fade := min(style.EndCard.Fade, int(duration*millisPerSecond)/2)
+	events := topbarEvents(branding, end, fade, style)
+	if !style.Handle.Enabled || editjob.CheckHandle(branding.Handle) != nil {
+		return events
+	}
 
-	return handleEvent(branding, start, fade, style) + cardEvents(branding, [2]float64{start, reelEnd}, fade, style)
+	events += handleEvent(branding, end, fade, style)
+	if duration > 0 {
+		events += cardEvents(branding, [2]float64{start, reelEnd}, fade, style)
+	}
+
+	return events
 }
 
 // cardTimes are the start and the length of the end card: its duration, but at most cardShare of the reel, and only
 // when minCardLead seconds of the reel are left before it; 0, 0 without a card (off, no valid handle, a reel of
-// unknown length or too short).
+// unknown length or too short, a style without the handle).
 func cardTimes(branding *Branding, reelEnd float64, style *Style) (start, duration float64) {
-	if branding == nil || !branding.EndCard || reelEnd <= 0 || editjob.CheckHandle(branding.Handle) != nil {
+	if branding == nil || !branding.EndCard || reelEnd <= 0 || !style.Handle.Enabled ||
+		editjob.CheckHandle(branding.Handle) != nil {
 		return 0, 0
 	}
 

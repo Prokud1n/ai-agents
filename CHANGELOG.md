@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The trainer's own style is the default subtitle style (T3.20), measured on the reel she edited herself: the speech in
+  phrases of one or two lines, small white Manrope Regular, the first word of a sentence in small letters, no accents,
+  plates or vignette; the hook in large peach Fira Sans Extra Condensed ExtraBold capitals that appears as an object
+  selected in an editor (a thin frame with handles and a cursor, growing from the right to its place in half a second)
+  and stays until the first section; section headings («СТРАХ 1») above the subtitles, one at a time; the top line
+  `REELS_TOPBAR_LEFT` / `REELS_TOPBAR_RIGHT` («tg: @ana_prokudina … 2x») over the whole reel. The style of the reference
+  reels is `assets/subtitles/style-words.yaml` (`/app/subtitles-style-words.yaml`), the phrase style stays
+  `style-phrase.yaml`. New style fields: `hook.margin`, `margin_side`, `max_lines`, `until`, `animation`, `section`,
+  `topbar`, `handle.enabled`, `layout.lowercase_sentences`.
+- Section headings of a talking head: `section` in `screen_notes` (up to 24 characters), proposed by the editor's model
+  where the trainer goes to the next point; «На экране: 3 раздела.» in the description.
+- Obscene words in the subtitles, the hook, the notes and the exercise titles are shown with one letter masked
+  («х*йня», «б*ять», «долбо*б»; «Ебола», «ебонит» stay); the sound is not touched.
+- In the trainer's style the speech is not shown under the hook (`hook.hide_subtitles`; a phrase started under it is
+  shown from its end), only the words that read a section heading out («страх номер один») are not shown under the
+  heading — the rest of the phrase (the question) is, and a phrase at the heading that does not read it stays, the
+  heading stays to the end of the question after it (2.5–6 s), a callout replaces a heading. The hook is measured by
+  the advances of its font (122 px, the frame 16 px around the text), stands small for 0.95 s (35 %, 30 px lower),
+  grows to the left with its right edge held in 0.28 s slowing down, the cursor goes at 1.67 s, and stays 1.8–2.5 s.
+  The first word of a sentence is lowered unless it has more capitals (МФЦ, PDF); a name at the start of a sentence is
+  lowered too (Whisper does not tell it apart) — accepted.
+- The editorial selection of a long first version (longer than the target, 66 s by default) cuts the failed takes
+  through `cleanup_words` too: they count in the length of the reel and get the line about the cleaning in the
+  description, without the floor of a cleaning; a revision and a workout still refuse them.
+- A style file names its base: `base: trainer | words | phrase`; a file without it starts from the phrase style, so the
+  files written before keep their look (the full `style.yaml` of T3.17 gives the reference reels' style). The app warns
+  at the start when `REELS_HANDLE` is set but the media worker draws the trainer's style, which has no handle.
+
 - The editor cleans the first version of a talking head (T3.19a, `EDITOR_CLEANUP`, default `true`: every first
   version waits for the model): the model removes the failed takes (the same thought said again 5–90 s later: the
   last full take stays), a phrase said again in a row («ну привет» ×3 → one) and the preparation for the shooting (a
@@ -492,6 +520,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `EDITOR_REELS_TARGET_DURATION` defaults to `60s` (T3.20): a talking head longer than 66 s after the cleaning is
+  shortened by the editor's model to 30–60 s by the trainer's structure (an intro or the hook, each point — a question
+  or a thesis and the gist of the answer — with its heading, the finale). `REELS_END_CARD` defaults to `false`; the
+  Instagram handle and the end card are drawn only by `style-words.yaml`.
 - `MEDIA_WORKER_MIN_SPEECH_SHARE` defaults to 0.35 instead of 0.6 (T3.19a): the trainer's talking heads keep
   0.44–0.58 of the source, a workout 0.26, music 0.01 — a usual talking head (0.583) was planned as a workout.
 - The draft names the failed takes in «вырезал … (паузы, оговорки и неудачные дубли)» only when some were cut (the

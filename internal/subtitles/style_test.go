@@ -9,6 +9,7 @@ import (
 
 const (
 	styleFile       = "../../assets/subtitles/style.yaml"
+	wordsStyleFile  = "../../assets/subtitles/style-words.yaml"
 	phraseStyleFile = "../../assets/subtitles/style-phrase.yaml"
 )
 
@@ -20,6 +21,54 @@ func TestStyleFileIsDefault(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, DefaultStyle(), style)
+}
+
+// The reference reels' look of T3.17 is kept as a file: it must stay equal to WordsStyle and be valid.
+func TestWordsStyleFile(t *testing.T) {
+	t.Parallel()
+
+	style, err := LoadStyle(wordsStyleFile)
+
+	require.NoError(t, err)
+	assert.Equal(t, WordsStyle(), style)
+	assert.Equal(t, WordMode, style.Layout.Mode)
+	assert.True(t, style.Handle.Enabled)
+	assert.False(t, style.Topbar.Enabled)
+	assert.False(t, style.Section.Enabled)
+}
+
+// TestStyleFileBase: a file starts from the built-in style its base names; a file without base (written before T3.20,
+// the full style.yaml of T3.17 here) starts from the phrase style, so it keeps its look; an unknown base is an error.
+func TestStyleFileBase(t *testing.T) {
+	t.Parallel()
+
+	old, err := LoadStyle("testdata/style-t3.17.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, WordsStyle(), old, "the style file of T3.17 keeps the words")
+
+	tests := []struct {
+		name     string
+		input    string
+		expected Style
+	}{
+		{name: "no base", input: "", expected: PhraseStyle()},
+		{name: "the trainer's", input: "base: trainer\n", expected: DefaultStyle()},
+		{name: "the words'", input: "base: words\n", expected: WordsStyle()},
+		{name: "the phrase", input: "base: phrase\n", expected: PhraseStyle()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseStyle([]byte(tt.input))
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+
+	_, err = ParseStyle([]byte("base: fancy\n"))
+	require.ErrorIs(t, err, ErrInvalidStyle)
 }
 
 // The phrase layout of before T3.17 is kept as a file: it must stay equal to PhraseStyle and be valid.
@@ -34,6 +83,8 @@ func TestPhraseStyleFile(t *testing.T) {
 	assert.True(t, style.Vignette.Enabled)
 }
 
+// TestParseStyle: a file over the reference reels' style (WordsStyle) changes only what it sets, and an invalid one
+// fails with the reason.
 func TestParseStyle(t *testing.T) {
 	t.Parallel()
 
@@ -115,7 +166,8 @@ func TestParseStyle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := ParseStyle([]byte(tt.input))
+			base := WordsStyle()
+			got, err := parseStyleOver(&base, []byte(tt.input))
 			if tt.expectedErr != "" {
 				require.ErrorIs(t, err, ErrInvalidStyle)
 				assert.Contains(t, err.Error(), tt.expectedErr)
@@ -125,7 +177,7 @@ func TestParseStyle(t *testing.T) {
 
 			require.NoError(t, err)
 
-			expected := DefaultStyle()
+			expected := WordsStyle()
 			tt.modify(&expected)
 			assert.Equal(t, expected, got)
 		})

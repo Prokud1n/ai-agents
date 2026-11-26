@@ -260,8 +260,8 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   черновика ≤ 920 UTF-16 (`editor.fitDescription`): заголовок и пометки первыми, хвост списков режется с пометкой. `Mute` — `volume=0` в графе (дорожка остаётся), субтитров речи нет. Проверка с ffmpeg —
   `mediaworker.TestIntegrationWorkoutKeepsPauses` и `TestIntegrationNoSpeechIsPlanned`. Черновик длиннее
   `EDITOR_REELS_MAX_DURATION` — пометка в описании.
-- Редакторский отбор (T3.16a): `editjob.Job.TargetDuration` (`EDITOR_REELS_TARGET_DURATION`, по умолчанию `0` — отбор выключен, ролик
-  сокращается только по длине из подписи или правки через `target_seconds`; при `60s` — стадия `auto`
+- Редакторский отбор (T3.16a): `editjob.Job.TargetDuration` (`EDITOR_REELS_TARGET_DURATION`, по умолчанию `60s` с T3.20; `0` —
+  отбор выключен, ролик сокращается только по длине из подписи или правки через `target_seconds`; при `60s` — стадия `auto`
   разговорного ролика (не мало речи), чей чистовой план длиннее цели × `roughcut.TargetMargin` (1,1), завершается
   `planned` и без подписи/кандидатов; app решает по той же `roughcut.LongerThanTarget`.
   `editplan.Request.TargetSeconds` → `Selecting()` (первая версия, talk, длиннее цели с запасом; диапазон `TargetRange` —
@@ -311,8 +311,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   пересекают друг друга, подписи упражнений и зоны Instagram. Строка описания —
   первой в `Outcome.Changes` (`editplan.hookLines`). Проверка — `mediaworker.TestIntegrationHookTitle`,
   `TestIntegrationHookRender` (без Redis/S3, в media-image), `subtitles.TestBurnHookWithFFmpeg`.
-- Оформление как у референсов (T3.17). Стиль по умолчанию — `layout.mode: word` (`subtitles.DefaultStyle`;
-  прежний — `PhraseStyle`, файл `assets/subtitles/style-phrase.yaml`, тесты фразовой раскладки берут его явно):
+- Оформление как у референсов (T3.17). Стиль `subtitles.WordsStyle` (`assets/subtitles/style-words.yaml`, тесты
+  этой раскладки и интеграционные тесты воркера, кроме `TestIntegrationTrainerStyle`, берут его явно —
+  `mediaworker.wordsStyleFile`) — `layout.mode: word`; фразовый — `PhraseStyle`, `style-phrase.yaml`:
   `subtitles.wordCues` — по слову (число с единицей — одним событием: `joinThousands` склеивает «10 000»,
   `markNumberGroups(…, true)` размечает и группу сразу после группы, новая группа начинается с числа; тире не
   показывается; слово, за которым следующее
@@ -342,6 +343,38 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`handle.max_width` справа, выше кнопок Instagram — `rightButtonsTop` 1000) и фразовые субтитры не пересекаются.
   Проверка — `subtitles.TestBurnReferenceStyleWithFFmpeg` (пиксели; в media-image), `mediaworker.TestIntegrationScreenNotes`,
   скорость — `TestRenderSpeed` (референсный стиль против фразового).
+- Стиль тренера (T3.20) — `subtitles.DefaultStyle` (`assets/subtitles/style.yaml`). Файл стиля: `base: trainer |
+  words | phrase` (`ParseStyle`: сначала читается только `base`, затем строгий разбор `styleDocument` поверх него); без
+  `base` — `PhraseStyle`, поэтому старые файлы не меняют вид (`TestStyleFileBase`: `testdata/style-t3.17.yaml` →
+  `WordsStyle`); `TestStyleFileIsDefault`, `TestWordsStyleFile`, `TestPhraseStyleFile`. Фразовая раскладка (Manrope
+  Regular 60, белый, `margin_top` 455, ≤ 30 символов, без акцентов и виньетки), `layout.lowercase_sentences`
+  (`lowerSentenceStarts`: первое слово после `strongBreak` со строчной, слово с ≥ 2 заглавными — как есть). Хук:
+  `hook.margin`/`margin_side`/`max_lines` (свои отступы и строки, 0 — как раньше), `hook.until: section` (`hookEnd` —
+  до первого `SectionNote`, clamp min..max: 1,8–2,5 с), `hook.hide_subtitles` (`hideUnderHook`: субтитр под хуком
+  убирается, начатый под ним — с конца хука, остаток < 0,5 с — нет; сдвига под хук нет), `hook.animation: select`
+  (`selection.go`: ширина строки — `hookTextWidth` по таблице ширин заглавных Fira `firaAdvances`, иначе
+  `char_width`; `selectLines` — меньше строк при масштабе ≥ 93 %, предлог в конце строки допустим, если иначе хук
+  мельче; масштаб всего хука `\fscx\fscy` ≥ 60 %; текст и рамка `\p1` (кольцо + 4 маркера, отступ 16 px) — общий
+  `\move` и `\t(…,0.5,…)` (замедление); стоят маленькими (35 %, на 30 px ниже, правый край — как у хука на месте, но
+  не левее 990 px: растёт влево, прижавшись правым краем) 0,95 с, растут 0,28 с, рамка до +0,18 с; курсор `\an7`
+  догоняет угол рамки `cursorSteps` прямыми `\move` (центр линейный, масштаб — по степени 0,5), уходит в 1,67 с). Разделы: `roughcut.SectionNote` (`section` в `screen_notes`, ≤ 24 символов, `editplan.notesLine` — «N
+  раздела») → `subtitles.splitSections` (только при `section.enabled`; иначе — выноски) → `sectionBlocks` (ждёт хук;
+  держится до конца первого сегмента после фразы-заголовка — `readsHeading`: начало ±0,3 с от раздела и конец раньше
+  `min_duration`; 2,5–6 с; следующий заменяет) → стиль `Section` (`\an8` на `section.margin`, высота строки = кегль);
+  `hideReadings` (`readings.go`, только нарисованные после `separateBlocks` разделы) убирает из субтитров только слова,
+  которыми тренер читает заголовок (начало ±0,3 с от раздела; слова заголовка в любом порядке, числа словами и
+  порядковые — как цифры, до 2 «номер/пункт»; совпало ≥ ½ заголовка и ≥ ½ прочитанного), остаток фразы показывается; `separateBlocks`: выноска/пункт, начатые при разделе, заменяют его,
+  идущие при его начале — заканчиваются. Верхняя строка: `REELS_TOPBAR_LEFT`/`_RIGHT` (`config.Editor`)
+  → `editjob.Branding.TopbarLeft/Right` (`editjob.CheckTopbar`: ≤ 40 печатных без `{}\<>`; `Branding.Validate` —
+  ник необязателен, если есть строка) → `subtitles.topbarEvents` (`\an4`/`\an6` у `topbar.side` на `topbar.y`,
+  правый — `\fs right_size`, слой 3, до карточки). `handle.enabled` (в стиле тренера false: ни ника, ни карточки —
+  `cardTimes`; `editor.WarnHiddenHandle` при старте app предупреждает, если `REELS_HANDLE` задан, а
+  `SUBTITLES_STYLE_FILE` (читается в `config.Editor`) пуст или файл тренера). Мат: `subtitles.censor` (корни с префиксами/целые слова, маска — вторая буква корня) в
+  `tokensFromTranscript`, `cleanWords` (хук, пункты, разделы) и `titleEvents`; исключения `obsceneExceptions`
+  («Ебола», «ебонит»); звук не трогается. Валидация: верхняя строка, хук,
+  разделы, субтитры (и под хуком), подписи — врозь. Проверка — `subtitles.TestBurnTrainerStyleWithFFmpeg` (пиксели
+  против замеров рилс тренера ± 12 px; в media-image), `mediaworker.TestIntegrationTrainerStyle` (умолчания
+  `config.Editor`: отбор под 60 с, хук и 3 раздела, правка «убери разделы»).
 - Чистка первой версии и невыполнимые просьбы (T3.19a). `EDITOR_CLEANUP` (по умолчанию `true`) →
   `job.Decide = подпись || cleanup` (каждая первая версия ждёт модель) и `editplan.Request.Cleanup`.
   `Request.Cleaning()` — первая версия talk без отбора (с подписью и без): поле `cleanup_words` (вырезается как
@@ -352,7 +385,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   упражнений, mute; workout можно, но без вырезов; `cleanupFloor`: ≥ 25 % плана без чистки (с принятыми повторами) и
   ≥ 15 с (у ролика < 30 с — половина). Дважды не прошло проверку — автоматическая склейка, `editor.cleanupInvalidNote`
   и хук, если он прошёл свою проверку (`Session` → `Outcome.Edit.Hook`, `editor.renderedEdit`). Отбор (`Selecting`)
-  — не чистка, но в задаче «сначала выкинь неудачные дубли…» (`selectionCleaning`). Подсказки `editplan.writeRepeats`
+  — не чистка, но в задаче «сначала выкинь неудачные дубли… через cleanup_words» (`selectionCleaning`):
+  `Request.CleansTakes()` = `Cleaning() || Selecting()` разрешает `cleanup_words` и при отборе (и при
+  `EDITOR_CLEANUP=false`) — они в длине отбора и в строке чистки, `cleanupFloor` не применяется; в правках и workout — нет. Подсказки `editplan.writeRepeats`
   (первая версия talk): похожие оставленные фразы в пределах 90 с — общие содержательные слова (без стоп-слов;
   `formsOfWord`: та же основа `stem` — без 1–2 последних букв — или общее начало ≥ 4 букв) ≥ 2 и ≥ 60 % короткой или
   те же слова; разные числительные в обеих фразах — не пара; ряд из ≥ 3 соседних похожих, но разных фраз —
