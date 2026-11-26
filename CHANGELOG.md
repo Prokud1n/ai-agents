@@ -531,7 +531,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sync, HDR and the sound are unchanged (`TestRunnerRenderSeeksGroups`, the sync and zoom tests). A one-minute
   draft from a 4-minute 4K source, sparse layout: 96.5 s before, about 60 s after on the CI runner (2 CPUs,
   `subtitles.TestRenderSpeedLongSource`, which also measures a dense one-take layout and the memory of ffmpeg and
-  checks the sparse render against the full decode of the source in the same run, at most 1.4 of it;
+  checks the sparse render against the full decode of the source in the same run, at most 2.0 of it (1.6 now,
+  about 2.7 when the whole source was decoded; the CI step now fails on any failed render benchmark);
   `TestRenderSpeedMemoryHDR` — 4K 10-bit HEVC). For a 4K HDR (10-bit HEVC) source with a sparse selection the gain is
   small (a 22 s reel of 11 far pieces: 94 s, 4.3 s per second of the reel): every piece is seeked to and decoded from
   its keyframe, and the tone mapping costs the same; rendering such pieces in batches or from a 1080p copy is a
