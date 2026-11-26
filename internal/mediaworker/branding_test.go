@@ -30,6 +30,12 @@ func TestPipelineBranding(t *testing.T) {
 			expected: &subtitles.Branding{Handle: "@prokudina.ana", Icon: true, EndCard: true},
 		},
 		{name: "an invalid handle is not drawn", input: &editjob.Branding{Handle: "@a{\\an7}", EndCard: true}},
+		{
+			name:     "the top line",
+			input:    &editjob.Branding{TopbarLeft: trainerLeft, TopbarRight: trainerRight},
+			expected: &subtitles.Branding{TopbarLeft: trainerLeft, TopbarRight: trainerRight},
+		},
+		{name: "an invalid top line is not drawn", input: &editjob.Branding{TopbarLeft: "tg {\\an7}"}},
 	}
 
 	for _, tt := range tests {

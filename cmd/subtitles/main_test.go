@@ -92,7 +92,7 @@ func TestLoadInput(t *testing.T) {
 	require.NoError(t, os.WriteFile(transcript, []byte(`{"language":"ru","duration":1.5,"text":"Привет!",
 		"segments":[{"start":0,"end":1.2,"text":"Привет!"}],"words":[{"word":"Привет","start":0.1,"end":0.9}]}`), 0o600))
 	require.NoError(t, os.WriteFile(broken, []byte(`{"words":`), 0o600))
-	require.NoError(t, os.WriteFile(style, []byte("layout:\n  position: bottom\n"), 0o600))
+	require.NoError(t, os.WriteFile(style, []byte("layout:\n  position: bottom\nhook:\n  margin_side: 140\n  size: 100\n"), 0o600))
 
 	tests := []struct {
 		name        string

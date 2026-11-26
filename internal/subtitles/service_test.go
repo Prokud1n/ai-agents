@@ -271,17 +271,17 @@ func TestNewServiceStyleFile(t *testing.T) {
 	valid := filepath.Join(dir, "brand.yaml")
 	broken := filepath.Join(dir, "broken.yaml")
 
-	require.NoError(t, os.WriteFile(valid, []byte("layout:\n  position: bottom\n"), 0o600))
+	require.NoError(t, os.WriteFile(valid, []byte("layout:\n  margin_top: 470\n"), 0o600))
 	require.NoError(t, os.WriteFile(broken, []byte("layout:\n  margin_top: 10\n"), 0o600))
 
 	tests := []struct {
 		name        string
 		styleFile   string
-		expected    Position
+		expected    int
 		expectedErr error
 	}{
-		{name: "built-in style", expected: TopPosition},
-		{name: "brand book file", styleFile: valid, expected: BottomPosition},
+		{name: "built-in style", expected: DefaultStyle().Layout.MarginTop},
+		{name: "brand book file", styleFile: valid, expected: 470},
 		{name: "invalid file fails the start", styleFile: broken, expectedErr: ErrInvalidStyle},
 		{name: "missing file fails the start", styleFile: filepath.Join(dir, "none.yaml"), expectedErr: os.ErrNotExist},
 	}
@@ -298,7 +298,7 @@ func TestNewServiceStyleFile(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, svc.Style().Layout.Position)
+			assert.Equal(t, tt.expected, svc.Style().Layout.MarginTop)
 		})
 	}
 }

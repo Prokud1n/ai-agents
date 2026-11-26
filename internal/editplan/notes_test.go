@@ -15,6 +15,8 @@ const (
 	noteSpine  = "1/ спина ровно"
 	noteSquats = "10 приседаний"
 	noteYears  = "6 лет"
+	sectionOne = "страх 1"
+	sectionTwo = "страх 2"
 )
 
 // testNotes are a list of two items and a callout on the words of testSpeech (word 6, «эээ», is cut as a filler).
@@ -87,6 +89,10 @@ func TestApplyScreenNotes(t *testing.T) {
 			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: noteYears, Word: new(3), End: new(1.0)}},
 		},
 		{name: "too many", notes: tooMany, err: "слишком много"},
+		{
+			name: "a long section heading", err: "от 1 до 24",
+			notes: []NoteInput{{Kind: roughcut.SectionNote, Text: strings.Repeat("а", maxSectionRunes+1), Word: new(0)}},
+		},
 		{name: "in a workout", notes: testNotes(), mode: roughcut.WorkoutMode, err: "только в разговорном"},
 		{
 			name: "on a cut word", err: "не видно в ролике",
@@ -107,6 +113,26 @@ func TestApplyScreenNotes(t *testing.T) {
 			assert.Contains(t, check.Message, tt.err)
 		})
 	}
+}
+
+// TestApplySections: the section headings of a talking head («страх 1») are kept by the edit like the other notes,
+// up to 24 characters, and named in the description.
+func TestApplySections(t *testing.T) {
+	t.Parallel()
+
+	outcome, err := Apply(testRequest(1, nil), &Input{Decision: EditDecision, Reason: testReason,
+		ScreenNotes: new([]NoteInput{
+			{Kind: roughcut.SectionNote, Text: sectionTwo, Word: new(3)},
+			{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)},
+		})})
+	require.NoError(t, err)
+
+	words := speech(testSpeech).Words
+	assert.Equal(t, []roughcut.ScreenNote{
+		{Kind: roughcut.SectionNote, Text: sectionOne, Start: words[0].Start},
+		{Kind: roughcut.SectionNote, Text: sectionTwo, Start: words[3].Start},
+	}, outcome.Edit.ScreenNotes)
+	assert.Equal(t, "На экране: 2 раздела.", outcome.Changes[0])
 }
 
 // TestApplyScreenNotesRevision: a revision replaces the list (an empty one removes it), keeps it when it does not
@@ -165,6 +191,7 @@ func TestNotesLine(t *testing.T) {
 	item := roughcut.ScreenNote{Kind: roughcut.ListItemNote}
 	callout := roughcut.ScreenNote{Kind: roughcut.CalloutNote}
 	title := roughcut.ScreenNote{Kind: roughcut.ListTitleNote}
+	section := roughcut.ScreenNote{Kind: roughcut.SectionNote}
 
 	tests := []struct {
 		name     string
@@ -174,6 +201,9 @@ func TestNotesLine(t *testing.T) {
 		{name: "items and callouts", input: []roughcut.ScreenNote{title, item, item, item, callout, callout},
 			expected: "На экране: 3 пункта и 2 выноски."},
 		{name: "one item", input: []roughcut.ScreenNote{item}, expected: "На экране: 1 пункт."},
+		{name: "three sections", input: []roughcut.ScreenNote{section, section, section}, expected: "На экране: 3 раздела."},
+		{name: "sections and a callout", input: []roughcut.ScreenNote{section, callout, section},
+			expected: "На экране: 2 раздела и 1 выноска."},
 		{name: "five callouts", input: []roughcut.ScreenNote{callout, callout, callout, callout, callout},
 			expected: "На экране: 5 выносок."},
 		{name: "a title alone", input: []roughcut.ScreenNote{title}, expected: "На экране: заголовок списка."},

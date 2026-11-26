@@ -38,6 +38,9 @@ const (
 	ListItemNote NoteKind = "list_item"
 	// CalloutNote is a short number or remark shown alone for a moment.
 	CalloutNote NoteKind = "callout"
+	// SectionNote is a section heading of a talking head («СТРАХ 1»): shown above the subtitles while the section
+	// starts, the next one replaces it (section.enabled; otherwise it is drawn as a callout).
+	SectionNote NoteKind = "section"
 )
 
 // Note is a point or a number shown from Start; End 0: a list stays until the next note, a callout a moment.
@@ -49,11 +52,15 @@ type Note struct {
 }
 
 // Branding is the trainer's Instagram handle («@prokudina.ana»), drawn small at the right edge over the whole reel
-// with a simple Instagram icon (Icon) and large in the middle of the end card over the last seconds (EndCard).
+// with a simple Instagram icon (Icon) and large in the middle of the end card over the last seconds (EndCard), and the
+// top line over the whole reel («tg: @ana_prokudina» on the left, «2x» on the right). The style decides which of them
+// it draws (handle.enabled, topbar.enabled); a text that fails editjob.CheckHandle or editjob.CheckTopbar is not drawn.
 type Branding struct {
-	Handle  string
-	Icon    bool
-	EndCard bool
+	Handle      string
+	Icon        bool
+	EndCard     bool
+	TopbarLeft  string
+	TopbarRight string
 }
 
 // Title is a caption shown from Start to End, in seconds.

@@ -9,6 +9,7 @@ import (
 
 const (
 	styleFile       = "../../assets/subtitles/style.yaml"
+	wordsStyleFile  = "../../assets/subtitles/style-words.yaml"
 	phraseStyleFile = "../../assets/subtitles/style-phrase.yaml"
 )
 
@@ -20,6 +21,20 @@ func TestStyleFileIsDefault(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, DefaultStyle(), style)
+}
+
+// The reference reels' look of T3.17 is kept as a file: it must stay equal to WordsStyle and be valid.
+func TestWordsStyleFile(t *testing.T) {
+	t.Parallel()
+
+	style, err := LoadStyle(wordsStyleFile)
+
+	require.NoError(t, err)
+	assert.Equal(t, WordsStyle(), style)
+	assert.Equal(t, WordMode, style.Layout.Mode)
+	assert.True(t, style.Handle.Enabled)
+	assert.False(t, style.Topbar.Enabled)
+	assert.False(t, style.Section.Enabled)
 }
 
 // The phrase layout of before T3.17 is kept as a file: it must stay equal to PhraseStyle and be valid.
@@ -34,6 +49,8 @@ func TestPhraseStyleFile(t *testing.T) {
 	assert.True(t, style.Vignette.Enabled)
 }
 
+// TestParseStyle: a file over the reference reels' style (WordsStyle) changes only what it sets, and an invalid one
+// fails with the reason.
 func TestParseStyle(t *testing.T) {
 	t.Parallel()
 
@@ -115,7 +132,7 @@ func TestParseStyle(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := ParseStyle([]byte(tt.input))
+			got, err := parseStyleOver(WordsStyle(), []byte(tt.input))
 			if tt.expectedErr != "" {
 				require.ErrorIs(t, err, ErrInvalidStyle)
 				assert.Contains(t, err.Error(), tt.expectedErr)
@@ -125,7 +142,7 @@ func TestParseStyle(t *testing.T) {
 
 			require.NoError(t, err)
 
-			expected := DefaultStyle()
+			expected := WordsStyle()
 			tt.modify(&expected)
 			assert.Equal(t, expected, got)
 		})

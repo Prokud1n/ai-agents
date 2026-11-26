@@ -124,18 +124,23 @@ func NewExecutor(b board, s store, d decider, tech techReporter, cfg *config.Edi
 	}
 }
 
-// brandingOf is the handle and the card of the jobs by REELS_HANDLE*: nil without a handle.
+// brandingOf is the handle, the card and the top line of the jobs by REELS_HANDLE* and REELS_TOPBAR_*: nil without
+// a handle and a top line.
 func brandingOf(cfg *config.Editor) *editjob.Branding {
-	handle := strings.TrimSpace(cfg.ReelsHandle)
-	if handle == "" {
+	branding := editjob.Branding{
+		Handle: strings.TrimSpace(cfg.ReelsHandle), Icon: cfg.ReelsHandleIcon, EndCard: cfg.ReelsEndCard,
+		TopbarLeft: strings.TrimSpace(cfg.ReelsTopbarLeft), TopbarRight: strings.TrimSpace(cfg.ReelsTopbarRight),
+	}
+
+	if branding.Handle == "" && branding.TopbarLeft == "" && branding.TopbarRight == "" {
 		return nil
 	}
 
-	return &editjob.Branding{Handle: handle, Icon: cfg.ReelsHandleIcon, EndCard: cfg.ReelsEndCard}
+	return &branding
 }
 
-// CheckBranding fails the start of the app (and of cmd/edit-local) on an invalid REELS_HANDLE: a typo is found at
-// once, not on a draft.
+// CheckBranding fails the start of the app (and of cmd/edit-local) on an invalid REELS_HANDLE or REELS_TOPBAR_*: a
+// typo is found at once, not on a draft.
 func CheckBranding(cfg *config.Editor) error {
 	branding := brandingOf(cfg)
 	if branding == nil {
@@ -143,7 +148,7 @@ func CheckBranding(cfg *config.Editor) error {
 	}
 
 	if err := branding.Validate(); err != nil {
-		return fmt.Errorf("failed to read REELS_HANDLE: %w", err)
+		return fmt.Errorf("failed to read REELS_HANDLE and REELS_TOPBAR_*: %w", err)
 	}
 
 	return nil

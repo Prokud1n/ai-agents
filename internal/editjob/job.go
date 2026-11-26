@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
@@ -121,7 +123,8 @@ type Job struct {
 	// of the first version): a job of a failed revision left on the board is not given to the next revision.
 	RevisionHash string `json:"revision_hash,omitempty"`
 	// Branding is the trainer's handle over the reel and the end card with it (REELS_HANDLE, REELS_HANDLE_ICON,
-	// REELS_END_CARD of the app); nil: none. The worker checks the handle again and draws nothing with an invalid one.
+	// REELS_END_CARD of the app) and the top line (REELS_TOPBAR_LEFT, REELS_TOPBAR_RIGHT); nil: none. The worker checks
+	// them again and draws nothing of an invalid one; the subtitle style decides which of them it draws.
 	Branding *Branding `json:"branding,omitempty"`
 	// Lease is the token of the local edit (make edit) that waits for the job; empty for the app's jobs. The job is
 	// current only while the token holds the lease (Board.Lease, refreshed by the waiting run): the worker drops the
@@ -130,16 +133,58 @@ type Job struct {
 }
 
 // Branding is the trainer's Instagram handle drawn over the reel: small at the right edge with the icon (Icon) and
-// large on the card over the last seconds (EndCard).
+// large on the card over the last seconds (EndCard); and the top line over the reel, a text at the left edge
+// («tg: @ana_prokudina») and one at the right edge («2x»).
 type Branding struct {
-	Handle  string `json:"handle"`
-	Icon    bool   `json:"icon,omitempty"`
-	EndCard bool   `json:"end_card,omitempty"`
+	Handle      string `json:"handle"`
+	Icon        bool   `json:"icon,omitempty"`
+	EndCard     bool   `json:"end_card,omitempty"`
+	TopbarLeft  string `json:"topbar_left,omitempty"`
+	TopbarRight string `json:"topbar_right,omitempty"`
 }
 
-// Validate checks the handle: «@» and 1–30 small Latin letters, digits, dots and underscores.
+// Validate checks the handle (when set: «@» and 1–30 small Latin letters, digits, dots and underscores) and the texts
+// of the top line; branding without a handle and a top line is invalid (ErrInvalidHandle).
 func (b *Branding) Validate() error {
-	return CheckHandle(b.Handle)
+	if b.Handle == "" && b.TopbarLeft == "" && b.TopbarRight == "" {
+		return fmt.Errorf("branding has neither a handle nor a top line: %w", ErrInvalidHandle)
+	}
+
+	var errs []error
+
+	if b.Handle != "" {
+		errs = append(errs, CheckHandle(b.Handle))
+	}
+
+	errs = append(errs, CheckTopbar(b.TopbarLeft), CheckTopbar(b.TopbarRight))
+
+	return errors.Join(errs...)
+}
+
+// maxTopbarRunes is the longest text of the top line.
+const maxTopbarRunes = 40
+
+// ErrInvalidTopbar: a text of the top line that is longer than maxTopbarRunes or has a character that is not printable
+// or is markup ({ } \ < >).
+var ErrInvalidTopbar = errors.New("invalid top line text")
+
+// CheckTopbar checks a text of the top line (REELS_TOPBAR_LEFT, REELS_TOPBAR_RIGHT): empty (nothing drawn), or at most
+// 40 printable characters without { } \ < > (no line breaks, invisible characters or ASS markup reach the document).
+func CheckTopbar(text string) error {
+	if text == "" {
+		return nil
+	}
+
+	bad := strings.ContainsFunc(text, func(r rune) bool {
+		return !unicode.IsPrint(r) || strings.ContainsRune(`{}\<>`, r)
+	})
+
+	if bad || utf8.RuneCountInString(text) > maxTopbarRunes {
+		return fmt.Errorf("top line text %q must be 1-%d printable characters without { } \\ < >: %w", text,
+			maxTopbarRunes, ErrInvalidTopbar)
+	}
+
+	return nil
 }
 
 // handleRe is an Instagram handle as the app accepts it (REELS_HANDLE): «@», then 1–30 small letters, digits, dots and

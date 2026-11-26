@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The trainer's own style is the default subtitle style (T3.20), measured on the reel she edited herself: the speech in
+  phrases of one or two lines, small white Manrope Regular, the first word of a sentence in small letters, no accents,
+  plates or vignette; the hook in large peach Fira Sans Extra Condensed ExtraBold capitals that appears as an object
+  selected in an editor (a thin frame with handles and a cursor, growing from the right to its place in half a second)
+  and stays until the first section; section headings («СТРАХ 1») above the subtitles, one at a time; the top line
+  `REELS_TOPBAR_LEFT` / `REELS_TOPBAR_RIGHT` («tg: @ana_prokudina … 2x») over the whole reel. The style of the reference
+  reels is `assets/subtitles/style-words.yaml` (`/app/subtitles-style-words.yaml`), the phrase style stays
+  `style-phrase.yaml`. New style fields: `hook.margin`, `margin_side`, `max_lines`, `until`, `animation`, `section`,
+  `topbar`, `handle.enabled`, `layout.lowercase_sentences`.
+- Section headings of a talking head: `section` in `screen_notes` (up to 24 characters), proposed by the editor's model
+  where the trainer goes to the next point; «На экране: 3 раздела.» in the description.
+- Obscene words in the subtitles, the hook and the notes are shown with one letter masked («х*йня», «б*ять»); the sound
+  is not touched.
+
 - Leases of local edits (T3.19c). A job of `make edit` carries the lease token of its run (`editjob.Job.Lease`,
   `omitempty`); the run holds the key `<stream>:lease:<job>` with a 20 s TTL and refreshes it every 5 s while it waits
   (`editlocal.LeaseBoard`, `Runner.holdLease`). The worker treats a leased job whose key is gone or holds another token
@@ -474,6 +488,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `EDITOR_REELS_TARGET_DURATION` defaults to `60s` (T3.20): a talking head longer than 66 s after the cleaning is
+  shortened by the editor's model to 30–60 s by the trainer's structure (an intro or the hook, each point — a question
+  or a thesis and the gist of the answer — with its heading, the finale). `REELS_END_CARD` defaults to `false`; the
+  Instagram handle and the end card are drawn only by `style-words.yaml`.
 - The default subtitle style follows the reference reels (T3.17): one word at a time (a number with its unit together,
   every quantity of its own — «3 подхода» | «10 повторений» —, «10 000 шагов» as one, a word shorter than 0.15 s with
   the next one, no blinking between words, a dash said apart not shown), in small letters without the punctuation of

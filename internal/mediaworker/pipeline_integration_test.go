@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editjob"
@@ -149,6 +150,28 @@ func clipTranscript() *transcription.Result {
 func realPipelineWith(t *testing.T, files store, speech transcriber) *Pipeline {
 	t.Helper()
 
+	return realPipelineStyled(t, files, speech, wordsStyleFile(t))
+}
+
+// wordsStyleFile writes the reference reels' style (subtitles.WordsStyle) to a file: the pipeline tests written for
+// it (the words on their plate, the handle and the end card) render in it; the trainer's default style has a test of
+// its own. The file is made from the code, so the test binary runs inside the media image without the repository.
+func wordsStyleFile(t *testing.T) string {
+	t.Helper()
+
+	data, err := yaml.Marshal(subtitles.WordsStyle())
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "style-words.yaml")
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	return path
+}
+
+// realPipelineStyled is the pipeline of the worker with the subtitle style file (empty: the built-in default style).
+func realPipelineStyled(t *testing.T, files store, speech transcriber, styleFile string) *Pipeline {
+	t.Helper()
+
 	log := slog.New(slog.DiscardHandler)
 	runner := ffmpeg.NewRunner(&config.FFmpeg{Timeout: 2 * time.Minute})
 
@@ -162,7 +185,7 @@ func realPipelineWith(t *testing.T, files store, speech transcriber) *Pipeline {
 		fonts = repoFontsDir
 	}
 
-	burner, err := subtitles.NewService(runner, &config.Subtitles{FontsDir: fonts}, log)
+	burner, err := subtitles.NewService(runner, &config.Subtitles{FontsDir: fonts, StyleFile: styleFile}, log)
 	require.NoError(t, err)
 
 	p, err := NewPipeline(&PipelineParams{

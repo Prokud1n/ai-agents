@@ -175,7 +175,9 @@ func referenceStyle(
 	elapsed := burnBench(ctx, t, burner, filepath.Join(dir, "phrase.mp4"), &before)
 	phraseRatio := logReel(ctx, t, "talk in the phrase style", filepath.Join(dir, "phrase.mp4"), elapsed, fragments)
 
+	words := subtitles.WordsStyle()
 	after := *draft
+	after.Style = &words
 	after.Notes = []subtitles.Note{
 		{Kind: subtitles.ListTitleNote, Text: "3 вещи", Start: 1},
 		{Kind: subtitles.ListItemNote, Text: "1/ стакан воды", Start: 3},

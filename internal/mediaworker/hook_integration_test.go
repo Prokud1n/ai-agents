@@ -227,7 +227,7 @@ func TestIntegrationHookTitle(t *testing.T) {
 func checkHookDrawn(t *testing.T, hooked, plain []byte) {
 	t.Helper()
 
-	style := subtitles.DefaultStyle()
+	style := subtitles.WordsStyle()
 	from := style.Layout.MarginTop
 	to := from + int(hookBandLines*float64(style.Hook.Size))
 

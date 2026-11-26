@@ -260,8 +260,8 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   черновика ≤ 920 UTF-16 (`editor.fitDescription`): заголовок и пометки первыми, хвост списков режется с пометкой. `Mute` — `volume=0` в графе (дорожка остаётся), субтитров речи нет. Проверка с ffmpeg —
   `mediaworker.TestIntegrationWorkoutKeepsPauses` и `TestIntegrationNoSpeechIsPlanned`. Черновик длиннее
   `EDITOR_REELS_MAX_DURATION` — пометка в описании.
-- Редакторский отбор (T3.16a): `editjob.Job.TargetDuration` (`EDITOR_REELS_TARGET_DURATION`, по умолчанию `0` — отбор выключен, ролик
-  сокращается только по длине из подписи или правки через `target_seconds`; при `60s` — стадия `auto`
+- Редакторский отбор (T3.16a): `editjob.Job.TargetDuration` (`EDITOR_REELS_TARGET_DURATION`, по умолчанию `60s` с T3.20; `0` —
+  отбор выключен, ролик сокращается только по длине из подписи или правки через `target_seconds`; при `60s` — стадия `auto`
   разговорного ролика (не мало речи), чей чистовой план длиннее цели × `roughcut.TargetMargin` (1,1), завершается
   `planned` и без подписи/кандидатов; app решает по той же `roughcut.LongerThanTarget`.
   `editplan.Request.TargetSeconds` → `Selecting()` (первая версия, talk, длиннее цели с запасом; диапазон `TargetRange` —
@@ -308,8 +308,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   пересекают друг друга, подписи упражнений и зоны Instagram. Строка описания —
   первой в `Outcome.Changes` (`editplan.hookLines`). Проверка — `mediaworker.TestIntegrationHookTitle`,
   `TestIntegrationHookRender` (без Redis/S3, в media-image), `subtitles.TestBurnHookWithFFmpeg`.
-- Оформление как у референсов (T3.17). Стиль по умолчанию — `layout.mode: word` (`subtitles.DefaultStyle`;
-  прежний — `PhraseStyle`, файл `assets/subtitles/style-phrase.yaml`, тесты фразовой раскладки берут его явно):
+- Оформление как у референсов (T3.17). Стиль `subtitles.WordsStyle` (`assets/subtitles/style-words.yaml`, тесты
+  этой раскладки и интеграционные тесты воркера, кроме `TestIntegrationTrainerStyle`, берут его явно —
+  `mediaworker.wordsStyleFile`) — `layout.mode: word`; фразовый — `PhraseStyle`, `style-phrase.yaml`:
   `subtitles.wordCues` — по слову (число с единицей — одним событием: `joinThousands` склеивает «10 000»,
   `markNumberGroups(…, true)` размечает и группу сразу после группы, новая группа начинается с числа; тире не
   показывается; слово, за которым следующее
@@ -339,6 +340,27 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`handle.max_width` справа, выше кнопок Instagram — `rightButtonsTop` 1000) и фразовые субтитры не пересекаются.
   Проверка — `subtitles.TestBurnReferenceStyleWithFFmpeg` (пиксели; в media-image), `mediaworker.TestIntegrationScreenNotes`,
   скорость — `TestRenderSpeed` (референсный стиль против фразового).
+- Стиль тренера (T3.20) — `subtitles.DefaultStyle` (`assets/subtitles/style.yaml`; `ParseStyle` накладывает файл на
+  него, поэтому `style-words.yaml`/`style-phrase.yaml` выписывают все поля; `TestStyleFileIsDefault`,
+  `TestWordsStyleFile`, `TestPhraseStyleFile`): фразовая раскладка (Manrope Regular 60, белый, `margin_top` 455, ≤ 30
+  символов, без акцентов и виньетки), `layout.lowercase_sentences` (`lowerSentenceStarts`: первое слово после
+  `strongBreak` со строчной). Хук: `hook.margin`/`margin_side`/`max_lines` (свои отступы и строки, 0 — как раньше),
+  `hook.until: section` (`hookEnd` — до первого `SectionNote`, clamp min..max), `hook.animation: select`
+  (`selection.go`: `selectLines` — меньше строк при масштабе ≥ 93 %, предлог в конце строки допустим, если иначе хук
+  мельче; масштаб всего хука `\fscx\fscy` ≥ 60 % вместо построчного сжатия; три события слоя 2 с общим `\move` и `\t`:
+  текст, рамка `\p1` (кольцо + 4 маркера, `framePath`) и курсор `\an7`; рамка и курсор до 1,05 с). Разделы:
+  `roughcut.SectionNote` (`section` в `screen_notes`, ≤ 24 символов, `editplan.notesLine` — «N раздела») →
+  `subtitles.splitSections` (только при `section.enabled`; иначе — выноски) → `sectionBlocks` (ждёт хук, держится до
+  конца первой фразы ≥ min_duration после начала + 0,5 с в пределах 2,5–4 с, следующий заменяет) → стиль `Section`
+  (`\an8` на `section.margin`, высота строки = кегль). Верхняя строка: `REELS_TOPBAR_LEFT`/`_RIGHT` (`config.Editor`)
+  → `editjob.Branding.TopbarLeft/Right` (`editjob.CheckTopbar`: ≤ 40 печатных без `{}\<>`; `Branding.Validate` —
+  ник необязателен, если есть строка) → `subtitles.topbarEvents` (`\an4`/`\an6` у `topbar.side` на `topbar.y`,
+  правый — `\fs right_size`, слой 3, до карточки). `handle.enabled` (в стиле тренера false: ни ника, ни карточки —
+  `cardTimes`). Мат: `subtitles.censor` (корни с префиксами/целые слова, маска — вторая буква корня) в
+  `tokensFromTranscript` и `cleanWords` (хук, пункты, разделы); звук не трогается. Валидация: верхняя строка, хук,
+  разделы, субтитры (и под хуком), подписи — врозь. Проверка — `subtitles.TestBurnTrainerStyleWithFFmpeg` (пиксели
+  против замеров рилс тренера ± 12 px; в media-image), `mediaworker.TestIntegrationTrainerStyle` (умолчания
+  `config.Editor`: отбор под 60 с, хук и 3 раздела, правка «убери разделы»).
 - Звук и зумы (T3.15a): `ffmpeg.Runner.ExtractAudioMeasured` меряет громкость исходника (`ebur128`) в том же проходе,
   что извлекает звук для Whisper, → `transcription.Result.Loudness` (хранится в транскрипте исходника, render и правки
   не меряют заново). `mediaworker.soundSettings.cut` (`MEDIA_WORKER_LOUDNESS`/`_DENOISE`/`_ZOOM`) добавляет к
