@@ -96,7 +96,7 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 		tokens = lowerSentenceStarts(tokens)
 	}
 
-	tokens = markAccents(tokens, data.Accents, style.Accent.Words)
+	tokens = markAccents(hideReadings(tokens, headings), data.Accents, style.Accent.Words)
 	limits := layoutLimits{maxLines: style.Layout.MaxLines, maxLineChars: style.lineChars()}
 	units := buildUnits(tokens, limits.maxLineChars)
 	timed := clipCues(timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(data.Accents)) > 0)), limit)
@@ -105,8 +105,6 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 	if style.Hook.HideSubtitles {
 		timed, layout.margin = hideUnderHook(timed, end), 0
 	}
-
-	timed = hideReadings(timed, sections, style)
 
 	return renderASS(timed, style, data.Karaoke, layout) + extras, len(timed)
 }
