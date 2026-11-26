@@ -42,9 +42,9 @@ const (
 	longStride    = 23.0
 	longPhrases   = 3
 	longPause     = 0.6
-	// Dense: a phrase every denseStride s (its pause under 3 s) from longFirst for denseTake s.
-	denseStride = 4.5
-	denseTake   = 150.0
+	// Dense: densePhrases phrases every denseStride s (their pauses under 3 s) from longFirst: a take of 2.5 minutes.
+	denseStride  = 4.5
+	densePhrases = 33
 	// maxLongRender (s) of the one-minute draft on 2 CPUs: the goal of T3.19b. Before it the whole source was decoded:
 	// 96.5 s on the CI runner for the sparse layout (the trainer's machine took 4.3 min for such an edit).
 	maxLongRender = 100.0
@@ -88,9 +88,9 @@ func TestRenderSpeedLongSource(t *testing.T) {
 	t.Logf("render speed (long source, sparse): a %.1f s reel from a %d s 4K source rendered in %.1f s",
 		reel, longDuration, elapsed)
 
-	elapsed, reel = bench.render(ctx, t, source, spreadTranscript(denseStride, int(denseTake/denseStride), 1), "dense")
-	t.Logf("render speed (long source, dense): a %.1f s reel from a %.0f s take of a 4K source rendered in %.1f s",
-		reel, denseTake, elapsed)
+	elapsed, reel = bench.render(ctx, t, source, spreadTranscript(denseStride, densePhrases, 1), "dense")
+	t.Logf("render speed (long source, dense): a %.1f s reel from a %.1f s take of a 4K source rendered in %.1f s",
+		reel, denseStride*densePhrases, elapsed)
 }
 
 // TestRenderSpeedMemoryHDR measures the peak memory of ffmpeg rendering a draft from far apart pieces of a 4K 10-bit
