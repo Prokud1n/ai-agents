@@ -134,8 +134,9 @@ func brandingOf(cfg *config.Editor) *editjob.Branding {
 	return &editjob.Branding{Handle: handle, Icon: cfg.ReelsHandleIcon, EndCard: cfg.ReelsEndCard}
 }
 
-// checkBranding fails the start of the app on an invalid REELS_HANDLE: a typo is found at once, not on a draft.
-func checkBranding(cfg *config.Editor) error {
+// CheckBranding fails the start of the app (and of cmd/edit-local) on an invalid REELS_HANDLE: a typo is found at
+// once, not on a draft.
+func CheckBranding(cfg *config.Editor) error {
 	branding := brandingOf(cfg)
 	if branding == nil {
 		return nil

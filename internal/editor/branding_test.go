@@ -42,7 +42,7 @@ func TestCheckBranding(t *testing.T) {
 
 			cfg := &config.Editor{ReelsHandle: tt.handle, ReelsHandleIcon: true, ReelsEndCard: true}
 
-			err := checkBranding(cfg)
+			err := CheckBranding(cfg)
 			if tt.invalid {
 				require.ErrorIs(t, err, editjob.ErrInvalidHandle)
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/agents"
 	"github.com/Prokud1n/ai-agents/internal/config"
+	"github.com/Prokud1n/ai-agents/internal/editlocal"
 	"github.com/Prokud1n/ai-agents/internal/editor"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/gateway"
@@ -33,6 +34,7 @@ func TestDeclareOptions(t *testing.T) {
 		{name: "application", options: DeclareApplicationOptions()},
 		{name: "agent run", options: DeclareAgentRunOptions()},
 		{name: "media worker", options: DeclareMediaWorkerOptions()},
+		{name: "edit local", options: DeclareEditLocalOptions()},
 	}
 
 	for _, tt := range tests {
@@ -113,5 +115,23 @@ func TestMediaWorkerHasNoAppSecrets(t *testing.T) {
 		func(*config.Anthropic) {},
 	} {
 		require.Error(t, fx.ValidateApp(append(DeclareMediaWorkerOptions(), fx.Invoke(invoke))...))
+	}
+}
+
+// TestEditLocalHasNoTelegram: make edit builds the editor of the app without the Telegram gateway, the task queue or
+// teamchat, so a local edit sends nothing to the group and queues no task.
+func TestEditLocalHasNoTelegram(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, fx.ValidateApp(append(DeclareEditLocalOptions(),
+		fx.Invoke(func(*editlocal.Runner) {}))...))
+
+	for _, invoke := range []any{
+		func(*gateway.Sender) {},
+		func(*tasks.Service) {},
+		func(*teamchat.Handler) {},
+		func(tasks.Notifier) {},
+	} {
+		require.Error(t, fx.ValidateApp(append(DeclareEditLocalOptions(), fx.Invoke(invoke))...))
 	}
 }

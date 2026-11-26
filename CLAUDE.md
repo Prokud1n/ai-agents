@@ -34,6 +34,7 @@ make subtitles ARGS="-in video.mp4 -transcript result.json -out reel.mp4"  # с�
 FFMPEG_TESTS_REQUIRED=1 go test -run TestBurnSubtitlesWithFFmpeg ./internal/subtitles/  # рендер субтитров
 INTEGRATION=1 go test -run TestIntegrationPipeline ./internal/mediaworker/  # конвейер Монтажёра на ffmpeg, без Redis/S3
 docker compose logs -f media-worker                     # шаги монтажа (step done) с секундами
+make edit FILE=/путь/видео.mov [CAPTION=…] [OUT=./edits/x]  # Монтажёр без Telegram; правка: make edit OUT=… REVISION="…"
 ```
 
 - `make lint`/`make fmt` идут через `scripts/golangci-lint.sh` (запиненная версия), а не через глобальный бинарь.
@@ -58,6 +59,7 @@ docker compose logs -f media-worker                     # шаги монтаж�
 | `cmd/roughcut` | `internal/roughcut.go` | ffmpeg + whisper + transcription + roughcut; логи в stderr, файлы в `-out` |
 | `cmd/subtitles` | `internal/subtitles.go` | ffmpeg + subtitles (ASS через libass, шрифты `assets/fonts`); логи в stderr; код выхода 2 — подмена шрифта |
 | `cmd/media-worker` (сервис `media-worker`) | `internal/mediaworker.go: DeclareMediaWorkerOptions` | redis + s3 + media + ffmpeg + whisper + transcription + roughcut + subtitles + editjob + mediaworker; **без** gateway, anthropic, postgres (проверяет `TestMediaWorkerHasNoAppSecrets`); `media-worker healthcheck` — свежесть heartbeat-файла |
+| `cmd/edit-local` (`make edit`) | `internal/editlocal.go: DeclareEditLocalOptions` | то же, что `agent-run`, + redis + s3 + media + editjob + editlocal (`editor.Executor` с моделью, «Техничка» — в лог); **без** gateway, tasks, teamchat и HTTP (`TestEditLocalHasNoTelegram`); логи в stderr, сводка в stdout |
 | `cmd/migrate` | вне fx (`internal/migrator`) | — |
 
 Долгие CLI-команды (`kb`, `transcribe`, `roughcut`, `subtitles`) выполняются **между** `app.Start` и `app.Stop` или вовсе без `Start`, а не в
@@ -270,6 +272,15 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   (`editplan.phrases`: интервал или причина выреза, сегмент, пауза > 0,7 с, ≤ 8 слов; начало, длительность, начало в
   ролике) с диапазонами индексов слов.
   Проверка — `mediaworker.TestIntegrationSelectionForLongTalk`.
+- `make edit` (T3.18, `internal/editlocal`, `scripts/edit.sh`): синтетическая задача (ID = `editlocal.TaskIDBase`
+  10^18 + `INCR edit-local:seq`, исходник — чат `editlocal.LocalChatID` 1, имя `local-<8 hex>`; занятый в S3 ключ не
+  перезаписывается — следующий ID), `editor.Executor` в цикле как воркеры задач (`DeferredError` — ожидание ≤ 5 с или
+  канал `done`, остальное кроме `PermanentError` — ретраи с бэкоффом `TASKS_*`, `LastAttempt`, прогон ≤ `TASKS_TIMEOUT`;
+  отмена контекста — `Board.Forget` задания, воркер его отменяет), файлы версии из S3 → `OUT/v<N>/`, `OUT/state.json`
+  (`format` 1, `pending` — сделанная, но не скачанная версия; без FILE/REVISION — докачка) и `OUT/.lock`.
+  Расход модели — `editlocal.UsageMeter` поверх `agents.Runtime` (decider собирается в модуле, не из `editplan.Module`).
+  Makefile экспортирует `FILE`/`CAPTION`/`OUT`/`REVISION` через `$(value …)` (без раскрытия `$`); «образ старше кода» —
+  общий `scripts/image-age.sh` (и `kb.sh`). Проверка — `mediaworker.TestIntegrationEditLocalRevision`/`…Caption`/`…Hook` (`EDITOR_HOOK_TITLE`).
 - Заголовок-хук (T3.15b): `roughcut.Edit.Hook` (накапливается по версиям, `omitempty`), `hook_title` в `submit_edit`
   (текст — поставить/поменять, `""` — убрать, нет поля — оставить; `editplan.checkHook`: 1–14 слов, ≤ 90 символов, без
   управляющих/Cf-символов, `{}\<>`, эмодзи и `#`; обрамляющие кавычки и точка в конце снимаются — `normalizeHook`). `EDITOR_HOOK_TITLE` (по умолчанию `true`) → `editjob.Job.Hook`:
