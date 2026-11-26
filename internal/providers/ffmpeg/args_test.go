@@ -47,7 +47,7 @@ func TestBuildArgs(t *testing.T) {
 			name:  "cut audio",
 			input: cutAudioArgs(testAudio, "file:/tmp/chunk-1.mp3", 598.25, 601.5),
 			expected: concat(
-				common, []string{"-ss", "598.250", "-t", "601.500"}, input(testAudio), encode, []string{"file:/tmp/chunk-1.mp3"},
+				common, []string{seekFlag, "598.250", durationFlag, "601.500"}, input(testAudio), encode, []string{"file:/tmp/chunk-1.mp3"},
 			),
 		},
 		{

@@ -18,6 +18,8 @@ const (
 	audioChannels   = "1"
 
 	inputFlag       = "-i"
+	seekFlag        = "-ss"
+	durationFlag    = "-t"
 	audioCodecFlag  = "-c:a"
 	audioFilterFlag = "-af"
 	channelsFlag    = "-ac"
@@ -82,7 +84,7 @@ func extractAudioArgs(src, dst string) []string {
 func cutAudioArgs(src, dst string, start, duration float64) []string {
 	args := commonArgs()
 	// -ss before -i seeks the input; with re-encoding the cut is still sample-accurate.
-	args = append(args, "-ss", formatDecimal(start), "-t", formatDecimal(duration))
+	args = append(args, seekFlag, formatDecimal(start), durationFlag, formatDecimal(duration))
 	args = append(args, inputArgs(src)...)
 	args = append(args, encodeArgs()...)
 

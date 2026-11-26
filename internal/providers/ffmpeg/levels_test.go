@@ -77,7 +77,7 @@ func TestRunnerAudioLevels(t *testing.T) {
 	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
 		lavfiInput("aevalsrc=if(between(t\\,1\\,2)\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=3"),
 		lavfiInput("testsrc=duration=3:size=64x64:rate=30"),
-		[]string{videoCodecFlag, "ffv1", audioCodecFlag, "pcm_s16le", shortestFlag, src}), nil)
+		[]string{videoCodecFlag, "ffv1", audioCodecFlag, pcmCodec, shortestFlag, src}), nil)
 	require.NoError(t, err)
 
 	levels, err := r.AudioLevels(ctx, src)

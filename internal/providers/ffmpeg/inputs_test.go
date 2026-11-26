@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// pcmCodec keeps the sound of a generated source exact.
+const pcmCodec = "pcm_s16le"
+
 func TestGroupSegments(t *testing.T) {
 	t.Parallel()
 
@@ -121,8 +124,8 @@ func TestCutInputArgs(t *testing.T) {
 			name:  "groups: each input seeked and bounded, its decoder with two threads",
 			input: []inputGroup{{length: 3.5}, {seek: 9.48, length: 4.02}},
 			expected: concat(
-				[]string{"-threads", "2", "-t", "3.500000"}, inputArgs(testVideo),
-				[]string{"-threads", "2", "-ss", "9.480000", "-t", "4.020000"}, inputArgs(testVideo),
+				[]string{threadsFlag, groupThreads, durationFlag, "3.500000"}, inputArgs(testVideo),
+				[]string{threadsFlag, groupThreads, seekFlag, "9.480000", durationFlag, "4.020000"}, inputArgs(testVideo),
 			),
 		},
 	}
@@ -181,7 +184,7 @@ func TestRunnerRenderSeeksGroups(t *testing.T) {
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=20"),
 		lavfiInput("color=c=black:s=64x32:r=60:d=20,format=gray,"+
 			"geq=lum='if(lt(X\\,32)\\,mod(N\\,64)*4\\,floor(N/64)*8)'"),
-		[]string{videoCodecFlag, videoCodec, "-qp", "0", "-g", "30", "-pix_fmt", "yuv420p", audioCodecFlag, "pcm_s16le",
+		[]string{videoCodecFlag, videoCodec, "-qp", "0", "-g", "30", "-pix_fmt", "yuv420p", audioCodecFlag, pcmCodec,
 			shortestFlag, src},
 	), nil)
 	require.NoError(t, err)

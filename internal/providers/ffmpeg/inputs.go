@@ -21,6 +21,7 @@ const (
 	// groupThreads of the decoder of each input when there are several: one of them decodes at a time, and two
 	// threads keep its frames few (a decoder with as many threads as CPUs holds a frame per thread).
 	groupThreads = "2"
+	threadsFlag  = "-threads"
 	// seekPreroll: a group's input starts this much before its first segment, so the frame shown at the first output
 	// frame is decoded and the fps filter sees the frames before it, as in a whole decoded source.
 	seekPreroll = 0.5
@@ -133,15 +134,15 @@ func cutInputArgs(src string, groups []inputGroup) []string {
 
 	for _, g := range groups {
 		if len(groups) > 1 {
-			args = append(args, "-threads", groupThreads)
+			args = append(args, threadsFlag, groupThreads)
 		}
 
 		if g.seek > 0 {
-			args = append(args, "-ss", formatPrecise(g.seek))
+			args = append(args, seekFlag, formatPrecise(g.seek))
 		}
 
 		if g.length > 0 {
-			args = append(args, "-t", formatPrecise(g.length))
+			args = append(args, durationFlag, formatPrecise(g.length))
 		}
 
 		args = append(args, inputArgs(src)...)
