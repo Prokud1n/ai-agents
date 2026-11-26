@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -21,21 +22,26 @@ const (
 	loudnessTolerance = 0.1
 	// maxLoudnessPasses of the sound alone before the render.
 	maxLoudnessPasses = 3
-	// maxCorrection (dB) of the gain by the measurement: a larger miss is not the limiter, the measurement is wrong.
+	// maxCorrection (dB): the correction of the gain by the passes is held within ±maxCorrection. The limiter and the
+	// cut move the loudness by a few dB (1–4 dB on the trainer's videos); a correction that reaches the bound means
+	// the sound of the cut is not like the measured source (almost silent, music, a broken measurement): the render
+	// goes on with the bound and the report says so (SoundReport.CorrectionCapped), the result may miss the target.
 	maxCorrection = 12.0
 	// minLoudnessSlope: a correction is at most the miss times 1/minLoudnessSlope.
 	minLoudnessSlope = 0.25
 	// maxFilePeak (dBTP) of the sound of the rendered file. The limiter holds the true peak at the target (-2 dBTP,
 	// oversampled), but the AAC encoder can overshoot it by several dB on bright bursts (sibilants): the sound alone is
-	// then encoded again, lower by the overshoot and peakMargin (the video is copied; seconds), at most peakRetries
-	// times.
+	// then made again with the ceiling of the limiter lower by the overshoot and peakMargin (the same gain; the video is
+	// copied; seconds), at most peakRetries times (capFilePeak).
 	maxFilePeak = -1.0
 	peakMargin  = 0.5
 	peakRetries = 2
-	// maxPeakCut (dB): the sound is never lowered more than this after the encode, the loudness would miss the target.
+	// maxPeakCut (dB): the ceiling of the limiter is never lowered more than this after the encode: the limiter would
+	// press the speech itself and the loudness would miss the target.
 	maxPeakCut    = 3.0
 	peakSuffix    = ".peak.mp4"
 	measuredLabel = "m"
+	peakLabel     = "p"
 )
 
 var errNoSummary = errors.New("ffmpeg reported no loudness summary")
@@ -49,9 +55,14 @@ type SoundReport struct {
 	// FitError: the passes over the sound of the cut failed, the render went on with the gain by the measurement of the
 	// source (Correction 0); nil if they did not fail.
 	FitError error
-	// PeakCut (dB) is how much the sound of the rendered file was lowered after the encode: the AAC encoder overshot
-	// maxFilePeak (capFilePeak); 0 if it did not.
+	// CorrectionCapped: the correction reached ±maxCorrection, the loudness may miss the target.
+	CorrectionCapped bool
+	// PeakCut (dB) is how much lower the ceiling of the limiter was made after the encode, because the AAC encoder
+	// overshot maxFilePeak (capFilePeak); 0 if it did not.
 	PeakCut float64
+	// PeakError: lowering the peaks after the encode failed; the file is the render as it was (its true peak is in
+	// Output). Nil if it did not fail.
+	PeakError error
 	// Output is the loudness of the rendered file (after the AAC encode: its true peak is what the network gets),
 	// measured by one more pass over its sound; nil if it could not be measured.
 	Output *Loudness
@@ -117,29 +128,11 @@ func (r *Runner) fitLoudness(ctx context.Context, in string, segments []Segment,
 // measureCut measures the loudness of the processed sound of the cut: the audio of the source alone, decoded whole
 // (cheap next to the picture), cut, joined and processed as the render does it.
 func (r *Runner) measureCut(ctx context.Context, in string, segments []Segment, opts RenderOptions) (*Loudness, error) {
-	dir, err := os.MkdirTemp("", filterDirPattern)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create filter dir: %w", err)
-	}
-
-	defer func() { _ = os.RemoveAll(dir) }() // best effort: a few bytes in the temp dir
-
-	graph := filepath.Join(dir, filterFileName)
-	if err := os.WriteFile(graph, []byte(soundGraph(segments, opts)), filterFileMode); err != nil {
-		return nil, fmt.Errorf("failed to write filter graph: %w", err)
-	}
-
-	major, err := r.majorVersion(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	args := append(commonArgs(), inputArgs(in)...)
-	args = append(args, filterFileArgs(graph, major)...)
-	args = append(args, mapFlag, "["+measuredLabel+"]", formatFlag, "null", "-")
-
 	log := newTailBuffer(measureLogTail)
-	if _, err := r.run(ctx, r.ffmpegPath, args, log); err != nil {
+
+	err := r.runSoundGraph(ctx, soundGraph(segments, opts), inputArgs(in),
+		[]string{mapFlag, "[" + measuredLabel + "]", formatFlag, "null", "-"}, log)
+	if err != nil {
 		return nil, fmt.Errorf("failed to measure the sound of the cut: %w", err)
 	}
 
@@ -151,11 +144,48 @@ func (r *Runner) measureCut(ctx context.Context, in string, segments []Segment, 
 	return measured, nil
 }
 
+// runSoundGraph runs ffmpeg with the inputs, the filter graph (through a file in a temp dir: hundreds of segments do
+// not fit an argument) and the output arguments.
+func (r *Runner) runSoundGraph(ctx context.Context, graph string, inputs, output []string, log io.Writer) error {
+	dir, err := os.MkdirTemp("", filterDirPattern)
+	if err != nil {
+		return fmt.Errorf("failed to create filter dir: %w", err)
+	}
+
+	defer func() { _ = os.RemoveAll(dir) }() // best effort: a few bytes in the temp dir
+
+	path := filepath.Join(dir, filterFileName)
+	if err := os.WriteFile(path, []byte(graph), filterFileMode); err != nil {
+		return fmt.Errorf("failed to write filter graph: %w", err)
+	}
+
+	major, err := r.majorVersion(ctx)
+	if err != nil {
+		return err
+	}
+
+	args := append(commonArgs(), inputs...)
+	args = append(args, filterFileArgs(path, major)...)
+	args = append(args, output...)
+
+	if _, err := r.run(ctx, r.ffmpegPath, args, log); err != nil {
+		return fmt.Errorf("failed to run the sound graph: %w", err)
+	}
+
+	return nil
+}
+
 // soundGraph is the sound of segmentsGraph from one input (the whole source), processed and measured:
 //
 //	[0:a:0]asetpts=PTS,asplit=2[t0][t1];[t0]atrim=…[a0];[t1]atrim=…[a1];[a0][a1]concat=n=2:v=0:a=1[j];
 //	[j]<soundChain>,ebur128=peak=true:framelog=verbose[m]
 func soundGraph(segments []Segment, opts RenderOptions) string {
+	return cutSoundGraph(segments, opts, measureFilter, measuredLabel)
+}
+
+// cutSoundGraph is the sound of segmentsGraph from one input, processed by soundChain and then by tail (none if
+// empty), into [label].
+func cutSoundGraph(segments []Segment, opts RenderOptions, tail, label string) string {
 	var b strings.Builder
 
 	whole := inputGroup{first: 0, last: len(segments) - 1, shift: opts.Offset}
@@ -165,37 +195,63 @@ func soundGraph(segments []Segment, opts RenderOptions) string {
 		b.WriteString("[a" + strconv.Itoa(i) + "]")
 	}
 
+	filters := make([]string, 0, 2)
+	for _, f := range []string{soundChain(opts), tail} {
+		if f != "" {
+			filters = append(filters, f)
+		}
+	}
+
+	if len(filters) == 0 {
+		filters = append(filters, "anull")
+	}
+
 	b.WriteString("concat=n=" + strconv.Itoa(len(segments)) + ":v=0:a=1[" + soundLabel + "];[" + soundLabel + "]")
-	b.WriteString(soundChain(opts) + "," + measureFilter + "[" + measuredLabel + "]")
+	b.WriteString(strings.Join(filters, ",") + "[" + label + "]")
 
 	return b.String()
 }
 
-// capFilePeak lowers the sound of the rendered file (a local path) when its true peak after the encode is above
-// maxFilePeak, by at most maxPeakCut in all, and updates the report (PeakCut, Output). The file is replaced only by a
-// complete one.
-func (r *Runner) capFilePeak(ctx context.Context, path string, report *SoundReport) error {
+// capFilePeak brings the true peak of the rendered file (path) under maxFilePeak when the AAC encoder pushed it over:
+// the sound of the cut is made again from the source (src, a local URL) with the same gain and the ceiling of the
+// limiter lower by the overshoot and peakMargin (by at most maxPeakCut in all), encoded and joined with the picture of
+// the file (copied, +faststart). Only the loudest peaks are pressed, the loudness stays at the target (a volume
+// change of the whole sound would take it under -14.5 LUFS). The report is updated (PeakCut, Output); the file is
+// replaced only by a complete one, the temporary file is removed in any case.
+func (r *Runner) capFilePeak(ctx context.Context, src, path string, cut *Cut, report *SoundReport) error {
+	if cut == nil || cut.Options.Loudness == nil {
+		return nil
+	}
+
+	out, tmp, err := localFiles(path, path+peakSuffix)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = os.Remove(path + peakSuffix) }() // best effort: gone after a successful replace
+
 	for range peakRetries {
 		if report.Output == nil || report.Output.TruePeak <= maxFilePeak {
 			return nil
 		}
 
-		cut := min(report.Output.TruePeak-maxFilePeak+peakMargin, maxPeakCut-report.PeakCut)
-		if cut <= 0 {
+		lower := min(report.Output.TruePeak-maxFilePeak+peakMargin, maxPeakCut-report.PeakCut)
+		if lower <= 0 {
 			return nil
 		}
 
-		in, tmp, err := localFiles(path, path+peakSuffix)
+		opts := cut.Options
+		target := *opts.Loudness
+		target.TruePeak -= report.PeakCut + lower
+		opts.Loudness = &target
+
+		inputs := append(inputArgs(src), inputArgs(out)...)
+
+		err := r.runSoundGraph(ctx, cutSoundGraph(cut.Segments, opts, "", peakLabel), inputs,
+			[]string{mapFlag, "1:v:0", mapFlag, "[" + peakLabel + "]", videoCodecFlag, "copy", audioCodecFlag, renderACodec,
+				"-b:a", outAudioBits, sampleRateFlag, outAudioRate, channelsFlag, outChannels, "-movflags", "+faststart",
+				formatFlag, renderFormat, tmp}, nil)
 		if err != nil {
-			return err
-		}
-
-		args := append(commonArgs(), inputArgs(in)...)
-		args = append(args, mapFlag, "0:v:0", mapFlag, "0:a:0", videoCodecFlag, "copy",
-			audioFilterFlag, "volume=-"+formatLevel(cut)+"dB", audioCodecFlag, renderACodec, "-b:a", outAudioBits,
-			sampleRateFlag, outAudioRate, channelsFlag, outChannels, "-movflags", "+faststart", formatFlag, renderFormat, tmp)
-
-		if _, err := r.run(ctx, r.ffmpegPath, args, nil); err != nil {
 			return fmt.Errorf("failed to lower the peaks of the sound: %w", err)
 		}
 
@@ -203,8 +259,8 @@ func (r *Runner) capFilePeak(ctx context.Context, path string, report *SoundRepo
 			return fmt.Errorf("failed to replace the render: %w", err)
 		}
 
-		report.PeakCut += cut
-		report.Output = r.measureFile(ctx, in)
+		report.PeakCut += lower
+		report.Output = r.measureFile(ctx, out)
 	}
 
 	return nil

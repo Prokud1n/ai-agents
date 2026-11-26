@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -189,13 +190,34 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 
 	report := &BurnReport{Fonts: parseFontSelections(fonts.String()), MissingGlyphs: missing}
 	if report.Sound = soundReport(burn.Cut, passes, fitErr); report.Sound != nil {
-		report.Sound.Output = r.measureFile(ctx, out)
-		if err := r.capFilePeak(ctx, data.Output, report.Sound); err != nil {
+		if err := r.finishSound(ctx, in, data.Output, burn.Cut, report.Sound); err != nil {
 			return nil, err
 		}
 	}
 
 	return report, nil
+}
+
+// finishSound measures the sound of the rendered file (path; in is the source) and lowers its peaks if the encoder
+// pushed them over (capFilePeak). A failure to lower them does not fail the render: the file stays as rendered and
+// the report says why (PeakError); only a cancelled context is an error.
+func (r *Runner) finishSound(ctx context.Context, in, path string, cut *Cut, report *SoundReport) error {
+	out, err := localFile(path)
+	if err != nil {
+		return err
+	}
+
+	report.Output = r.measureFile(ctx, out)
+
+	if err := r.capFilePeak(ctx, in, path, cut, report); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+
+		report.PeakError = err
+	}
+
+	return nil
 }
 
 // fitCutLoudness is the data with the gain of the cut corrected (Runner.fitLoudness) and the number of passes it took.
@@ -221,7 +243,10 @@ func soundReport(cut *Cut, passes int, fitErr error) *SoundReport {
 
 	l := cut.Options.Loudness
 
-	return &SoundReport{Gain: l.Gain(), Correction: l.Correction, Passes: passes, FitError: fitErr}
+	return &SoundReport{
+		Gain: l.Gain(), Correction: l.Correction, Passes: passes, FitError: fitErr,
+		CorrectionCapped: math.Abs(l.Correction) >= maxCorrection,
+	}
 }
 
 // burnSubtitlesArgs returns the arguments and the filter graph. Without a cut the graph is an argument; with one

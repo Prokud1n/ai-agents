@@ -75,6 +75,46 @@ func TestNewSelectionBySoundPlan(t *testing.T) {
 	}
 }
 
+// TestApplySelectionBySoundLength: the worker's reels are 20 % shorter than the plans counted here (the pauses cut by
+// the sound): the length is checked and logged as the worker will render it, not as counted by the margins.
+func TestApplySelectionBySoundLength(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		share    float64 // of the worker's plan against the margins
+		ok       bool
+		expected string
+	}{
+		{name: "counted by the margins 9.75 s is too long", share: 1, expected: "ролик длится 9."},
+		{name: "the worker's reel 7.8 s fits", share: 0.8, ok: true, expected: `^Длина рилс: 0:07\.8 \(рекомендуется 4–8 с\)$`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := selectionRequest(t, 1)
+			req.Plan.Duration *= tt.share
+
+			outcome, err := Apply(req, &Input{
+				Decision: EditDecision, Reason: "без вступления", Remove: []roughcut.WordRange{introWords},
+			})
+			if !tt.ok {
+				var check *CheckError
+				require.ErrorAs(t, err, &check)
+				assert.Contains(t, check.Message, tt.expected)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotEmpty(t, outcome.Edit.Details)
+			assert.Regexp(t, tt.expected, outcome.Edit.Details[0])
+		})
+	}
+}
+
 func TestRequestSelecting(t *testing.T) {
 	t.Parallel()
 

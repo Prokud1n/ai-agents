@@ -410,7 +410,13 @@ func (b *intervalBuilder) addWord(i int, reasons []CutReason) {
 	end, next := b.joint(b.words[b.prev], w)
 
 	if next > end {
-		b.cur.End = max(b.cur.End, end)
+		if b.grid != nil {
+			// By the sound the tail may end inside a word Whisper stretched into the silence (past its middle).
+			b.cur.End = max(end, b.cur.Start)
+		} else {
+			b.cur.End = max(b.cur.End, end)
+		}
+
 		b.keep = append(b.keep, b.cur)
 		b.cut(b.cur.End, next, reasons)
 		b.cur = Interval{Start: next, End: w.End}
@@ -437,7 +443,7 @@ func (b *intervalBuilder) joint(prev, w transcription.Word) (end, next float64) 
 		end = max(min(end, first.Start), prev.End)
 		next = min(max(next, last.End), w.Start)
 	case b.grid != nil:
-		if cutEnd, cutNext, ok := b.grid.pause(prev.End, w.Start, b.settings.MaxPause); ok {
+		if cutEnd, cutNext, ok := b.grid.pause(prev, w, b.settings.MaxPause); ok {
 			return cutEnd, cutNext
 		}
 

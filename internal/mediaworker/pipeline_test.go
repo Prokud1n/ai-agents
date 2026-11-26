@@ -598,7 +598,22 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 			measured: measured, loudness: true, noiseFloor: -64, zoom: true,
 			decisions: "усиление +13.6 dB (без поправки: предварительный замер склейки не удался), лимитер пиков на " +
 				"-2.0 dBTP; итог -15.2 LUFS, true peak -2.1 dBTP (замер готового файла, после AAC); кодек поднял пики, " +
-				"звук файла снижен на 1.2 dB\n",
+				"звук пересобран с потолком лимитера ниже на 1.2 dB\n",
+		},
+		{
+			// The correction reached its bound, and the peaks could not be lowered after the encode: both are said.
+			name: "the correction at its bound, the peaks not lowered",
+			change: func(f *pipelineFakes) {
+				f.burner.result.Sound = &ffmpeg.SoundReport{
+					Gain: 25.6, Correction: 12, Passes: 3, CorrectionCapped: true,
+					PeakError: errors.New("encode failed"), Output: &ffmpeg.Loudness{Integrated: -16.2, TruePeak: -0.6},
+				}
+			},
+			measured: measured, loudness: true, noiseFloor: -64, zoom: true,
+			decisions: "усиление +25.6 dB (поправка +12.0 dB по предварительному замеру склейки упёрлась в предел — " +
+				"громкость может не попасть в цель; проходов: 3), лимитер пиков на -2.0 dBTP; итог -16.2 LUFS, " +
+				"true peak -0.6 dBTP (замер готового файла, после AAC); снизить пики после кодека не удалось, " +
+				"файл оставлен как есть\n",
 		},
 		{
 			name:     "a transcript without a measurement: one pass",

@@ -45,9 +45,12 @@ const (
 	// Dense: densePhrases phrases every denseStride s (their pauses under 3 s) from longFirst: a take of 2.5 minutes.
 	denseStride  = 4.5
 	densePhrases = 33
-	// maxLongRender (s) of the one-minute draft on 2 CPUs: the goal of T3.19b. Before it the whole source was decoded:
-	// 96.5 s on the CI runner for the sparse layout (the trainer's machine took 4.3 min for such an edit).
-	maxLongRender = 100.0
+	// maxDecodeRatio: the render of the sparse one-minute draft takes at most this share of the time the machine takes
+	// to decode the whole source (measured in the same run, so the speed of the runner cancels out). A render that
+	// decodes the whole source costs the full decode and the rest of the render (the scaling and the encode of the
+	// reel): on the CI runner (2 CPUs) 96.5 s against about 55 s of the decode, 1.75 of it; decoding only the kept
+	// pieces took 57.9 s, about 1.05. The goal of T3.19b in absolute numbers was ≤ 100 s on 2 CPUs.
+	maxDecodeRatio = 1.4
 	// The memory bench: a 4K 10-bit HEVC HLG source of hdrDuration s (hdrChunk s repeated), cut into hdrPieces far
 	// apart (hdrStride s), so the decoders of the inputs (at most 4 for this frame) are open together.
 	hdrChunk    = 4
@@ -64,7 +67,7 @@ var longWords = []string{"Делаем", "три", "подхода", "держи
 // TestRenderSpeedLongSource measures the render of one-minute drafts (the rough cut, the sound, the zoom and the
 // subtitles in one pass, as the media worker renders them) from a 4-minute 4K source on the machine it runs on, with
 // the peak memory of ffmpeg: the time of an edit the trainer waits for. The sparse layout must take under
-// maxLongRender; the rest is a log, the speed depends on the machine.
+// maxDecodeRatio of the full decode of the source on the same machine; the rest is a log.
 func TestRenderSpeedLongSource(t *testing.T) {
 	if os.Getenv(renderBenchEnv) != "1" {
 		t.Skip("render benchmark: run with " + renderBenchEnv + "=1 and ffmpeg with libass")
@@ -81,12 +84,17 @@ func TestRenderSpeedLongSource(t *testing.T) {
 	t.Logf("long bench source: %s %d fps H.264 8-bit SDR at %sbit/s, keyframe every %s frames, %d s, generated in %.1f s",
 		longSize, longRate, longBitrate, longGOP, longDuration, time.Since(started).Seconds())
 
+	started = time.Now()
+	runBench(ctx, t, "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-i", source, "-map", "0:v:0",
+		"-f", "null", "-")
+	decode := time.Since(started).Seconds()
+
 	bench := newLongBench(t, dir)
 
 	elapsed, reel := bench.render(ctx, t, source, spreadTranscript(longStride, longStretches, longPhrases), "sparse")
-	assert.Less(t, elapsed, maxLongRender, "an edit of a one-minute reel decodes only what it keeps")
-	t.Logf("render speed (long source, sparse): a %.1f s reel from a %d s 4K source rendered in %.1f s",
-		reel, longDuration, elapsed)
+	assert.Less(t, elapsed/decode, maxDecodeRatio, "an edit of a one-minute reel decodes only what it keeps")
+	t.Logf("render speed (long source, sparse): a %.1f s reel from a %d s 4K source rendered in %.1f s, "+
+		"%.2f of the full decode of the source (%.1f s)", reel, longDuration, elapsed, elapsed/decode, decode)
 
 	elapsed, reel = bench.render(ctx, t, source, spreadTranscript(denseStride, densePhrases, 1), "dense")
 	t.Logf("render speed (long source, dense): a %.1f s reel from a %.1f s take of a 4K source rendered in %.1f s",

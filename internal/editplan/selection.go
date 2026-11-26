@@ -43,9 +43,11 @@ type selection struct {
 
 // newSelection is the selection of a decision with the plan it builds: on only when the reel got shorter.
 func newSelection(req *Request, in *Input, mode roughcut.Mode, plan *roughcut.Plan) selection {
+	baseline := baselineDuration(req)
+
 	return selection{
-		on:     isSelected(req, in, mode) && plan.Duration < baselineDuration(req)-minShortenSeconds,
-		target: in.TargetSeconds, duration: plan.Duration, keep: plan.Keep,
+		on:     isSelected(req, in, mode) && plan.Duration < baseline-minShortenSeconds,
+		target: in.TargetSeconds, duration: estimatedDuration(req, plan.Duration, baseline), keep: plan.Keep,
 		cleanup: req.Cleaning() && mode == roughcut.TalkMode, only: req.CleanupOnly() && mode == roughcut.TalkMode,
 	}
 }
@@ -63,6 +65,17 @@ func baselineDuration(req *Request) float64 {
 	}
 
 	return before.Duration
+}
+
+// estimatedDuration is the length the worker's reel of a plan built here (duration, by the margins) will have: the
+// worker cuts a talking head by the sound, its reels are shorter or longer by the same share as the plan the model saw
+// (req.Plan.Duration) is against the same edit counted here (baseline). duration as it is without either.
+func estimatedDuration(req *Request, duration, baseline float64) float64 {
+	if baseline <= 0 || req.Plan.Duration <= 0 {
+		return duration
+	}
+
+	return duration * req.Plan.Duration / baseline
 }
 
 // isSelected: a talking head shortened for a reel — a first version longer than the target, or a length asked for.
@@ -107,21 +120,27 @@ func buildSized(req *Request, in *Input, mode roughcut.Mode, edit *roughcut.Edit
 	}
 
 	low, high, ok := lengthBounds(req, in, mode)
-	if !ok || (plan.Duration >= low && plan.Duration <= high) {
+	if !ok {
 		return plan, nil
 	}
 
-	hint := lengthHint(req, in, &plan, low, high)
+	// The reel the worker renders, not the plan counted here by the margins.
+	duration := estimatedDuration(req, plan.Duration, baselineDuration(req))
+	if duration >= low && duration <= high {
+		return plan, nil
+	}
+
+	hint := lengthHint(req, in, &plan, duration, low, high)
 
 	if in.TargetSeconds > 0 {
 		return roughcut.Plan{}, checkFailedf("после решения ролик длится %.1f с, а длина по просьбе тренера — %.0f с "+
-			"(допустимо %.1f–%.1f с): %s", plan.Duration, in.TargetSeconds, low, high, hint)
+			"(допустимо %.1f–%.1f с): %s", duration, in.TargetSeconds, low, high, hint)
 	}
 
 	from, to := req.TargetRange()
 
 	return roughcut.Plan{}, checkFailedf("после решения ролик длится %.1f с, а рилс должен быть %.0f–%.0f с "+
-		"(допустимо %.1f–%.1f с): %s; если тренер просила другую длину, укажи её в target_seconds", plan.Duration,
+		"(допустимо %.1f–%.1f с): %s; если тренер просила другую длину, укажи её в target_seconds", duration,
 		from, to, low, high, hint)
 }
 
@@ -136,18 +155,18 @@ type sized struct {
 
 // lengthHint says the model of a reel out of its length how many seconds to cut or to bring back and which phrases
 // are about that long, so the second attempt gets the length: kept phrases of a reel too long, the ranges the model
-// cut of a reel too short.
-func lengthHint(req *Request, in *Input, plan *roughcut.Plan, low, high float64) string {
+// cut of a reel too short. duration is the length of the reel (estimatedDuration).
+func lengthHint(req *Request, in *Input, plan *roughcut.Plan, duration, low, high float64) string {
 	words := req.Transcript.Words
 
-	if plan.Duration > high {
-		least, most := plan.Duration-high, plan.Duration-low
+	if duration > high {
+		least, most := duration-high, duration-low
 
 		return fmt.Sprintf("вырежи ещё от %.1f до %.1f с целыми фразами через remove_words%s", least, most,
 			sizedHint("подходят по длине оставленные фразы", words, keptPhrases(req, plan), least, most))
 	}
 
-	least, most := low-plan.Duration, high-plan.Duration
+	least, most := low-duration, high-duration
 
 	return fmt.Sprintf("ролик короче нужного: вырежи на %.1f–%.1f с меньше — не вырезай часть фраз из remove_words "+
 		"(в правке — верни их через restore_words)%s", least, most,

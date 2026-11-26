@@ -89,10 +89,10 @@ func TestSpeechEdges(t *testing.T) {
 		got      float64
 		expected float64
 	}{
-		{name: "the ending heard after Whisper's end, over the closure of the stop", got: levels.speechEnd(1.2, 1.5), expected: 1.35},
-		{name: "not past the limit", got: levels.speechEnd(1.2, 1.3), expected: 1.3},
-		{name: "a late start found earlier", got: levels.speechStart(2.5, 2.2), expected: 2.4},
-		{name: "silence: Whisper's edge stays", got: levels.speechStart(3.5, 3.2), expected: 3.5},
+		{name: "the ending heard after Whisper's end, over the closure of the stop", got: levels.speechEnd(1.2, 1.2, 1.5), expected: 1.35},
+		{name: "not past the limit", got: levels.speechEnd(1.2, 1.2, 1.3), expected: 1.3},
+		{name: "a late start found earlier", got: levels.speechStart(2.5, 2.5, 2.2), expected: 2.4},
+		{name: "silence: Whisper's edge stays", got: levels.speechStart(3.5, 3.5, 3.2), expected: 3.5},
 	}
 
 	for _, tt := range tests {
@@ -147,7 +147,7 @@ func TestCutGridPause(t *testing.T) {
 				nextStart = 1.5
 			}
 
-			end, next, ok := grid.pause(prevEnd, nextStart, 0.3)
+			end, next, ok := grid.pause(word("раз", 0.2, prevEnd), word("два", nextStart, 3), 0.3)
 			require.Equal(t, tt.cut, ok)
 
 			if !tt.cut {
@@ -161,6 +161,78 @@ func TestCutGridPause(t *testing.T) {
 			assert.GreaterOrEqual(t, 2.4-next, leadMin-1e-6, "the lead of the next one")
 		})
 	}
+}
+
+// TestCutGridPauseStretchedWords: Whisper's edges lie in the silence (a late end, an early start, both edges meeting
+// in the middle of a real pause): the pause is measured from the sound inside the words and still becomes a breath.
+func TestCutGridPauseStretchedWords(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		input      *ffmpeg.Levels
+		prev, next transcription.Word
+		heardEnd   float64
+		heardStart float64
+	}{
+		{
+			name:  "the end late by 0.35 s",
+			input: soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{2.4, 3, testSpeech}),
+			prev:  word("раз", 0.2, 1.35), next: word("два", 2.4, 3), heardEnd: 1.0, heardStart: 2.4,
+		},
+		{
+			name:  "the start early by 0.3 s",
+			input: soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{2.4, 3, testSpeech}),
+			prev:  word("раз", 0.2, 1.0), next: word("два", 2.1, 3), heardEnd: 1.0, heardStart: 2.4,
+		},
+		{
+			// Whisper puts no pause between the words at all, the sound has 0.8 s of silence.
+			name:  "the edges meet inside a pause of 0.8 s",
+			input: soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{1.8, 3, testSpeech}),
+			prev:  word("раз", 0.2, 1.4), next: word("два", 1.4, 3), heardEnd: 1.0, heardStart: 1.8,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			grid := &cutGrid{levels: newSpeechLevels(tt.input), fps: testFPS}
+			require.NotNil(t, grid.levels)
+
+			end, next, ok := grid.pause(tt.prev, tt.next, 0.3)
+			require.True(t, ok, "the pause is cut")
+
+			assert.InDelta(t, breathPause, (end-tt.heardEnd)+(tt.heardStart-next), 0.5/testFPS+1e-6,
+				"a breath of silence is left")
+			assert.GreaterOrEqual(t, end-tt.heardEnd, tailMin-1e-6, "the tail of the phrase")
+			assert.GreaterOrEqual(t, tt.heardStart-next, leadMin-1e-6, "the lead of the next one")
+			assert.Greater(t, end, (tt.prev.Start+tt.prev.End)/2, "the word keeps its middle")
+			assert.Less(t, next, (tt.next.Start+tt.next.End)/2, "the next word keeps its middle")
+		})
+	}
+}
+
+// TestBuildPlanStretchedPause: the plan cuts a pause Whisper hid inside the words, and the subtitles keep both words.
+func TestBuildPlanStretchedPause(t *testing.T) {
+	t.Parallel()
+
+	src := words(word("раз", 0.2, 1.4), word("два", 1.4, 3))
+	levels := soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{1.8, 3, testSpeech})
+
+	settings := testSettings()
+	settings.MaxPause, settings.PadBefore, settings.PadAfter = 0.3, defaultPadBefore, defaultPadAfter
+
+	grid := &cutGrid{levels: newSpeechLevels(levels), fps: testFPS}
+	require.NotNil(t, grid.levels)
+
+	plan, err := buildPlan(src, 4, settings, &Edit{}, grid)
+	require.NoError(t, err)
+	require.Len(t, plan.Keep, 2)
+
+	silence := (plan.Keep[0].End - 1.0) + (1.8 - plan.Keep[1].Start)
+	assert.InDelta(t, breathPause, silence, 0.5/testFPS+1e-3, "the pause of 0.8 s is a breath")
+	assert.Len(t, RemapTranscript(src, plan.Keep).Words, 2, "both words stay in the subtitles")
 }
 
 // TestBuildPlanBySound: with the sound level the phrases keep the sound Whisper's times miss, the pauses become a
@@ -258,12 +330,70 @@ func TestTailKeepsTheDecay(t *testing.T) {
 	require.NotNil(t, grid.levels)
 
 	// Whisper ends the word before its sound does.
-	end, _, ok := grid.pause(0.95, 2.5, 0.3)
+	end, _, ok := grid.pause(word("раз", 0.2, 0.95), word("два", 2.5, 3), 0.3)
 	require.True(t, ok)
 
 	audible := decayFrom + (decayTo-decayFrom)*(grid.levels.threshold-testSpeech)/(digital-testSpeech)
 	assert.GreaterOrEqual(t, end, audible+tailMin-1e-6, "the decay down to the threshold (%.1f dB) is kept, with a tail",
 		grid.levels.threshold)
+}
+
+// TestRoomNoiseOverDigitalSilence: a quarter of the sound is digital silence (a gate), the pauses between the
+// phrases have the noise of the room (-65 dBFS): the floor is the room noise, not the silence, so the pause is cut.
+func TestRoomNoiseOverDigitalSilence(t *testing.T) {
+	t.Parallel()
+
+	const (
+		digital = -120.0
+		room    = -65.0
+	)
+
+	levels := soundOf(10, [3]float64{0, 1, digital}, [3]float64{1, 4, testSpeech}, [3]float64{4, 5, room},
+		[3]float64{5, 8, testSpeech}, [3]float64{8, 8.5, room}, [3]float64{8.5, 10, digital})
+
+	floor, _, ok := levelStats(levels)
+	require.True(t, ok)
+	assert.InDelta(t, room, floor, 1e-9, "the floor is the room noise")
+
+	grid := &cutGrid{levels: newSpeechLevels(levels), fps: testFPS}
+	require.NotNil(t, grid.levels)
+	assert.InDelta(t, -47.0, grid.levels.threshold, 1e-9, "40 percent of the way from the room noise to the speech")
+
+	end, next, ok := grid.pause(word("раз", 1, 4), word("два", 5, 8), 0.3)
+	require.True(t, ok, "the pause with the room noise is cut")
+	assert.InDelta(t, breathPause, (end-4)+(5-next), 0.5/testFPS+1e-6, "a breath is left")
+}
+
+func TestLevelStatsDigitalSilence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    *ffmpeg.Levels
+		expected float64
+	}{
+		{
+			name:     "no digital silence: the 10th percentile",
+			input:    soundOf(10, [3]float64{1, 4, testSpeech}, [3]float64{5, 8, testSpeech}),
+			expected: testFloor,
+		},
+		{
+			// The audible windows are the speech only: their floor is not the noise, the floor is held at -90.
+			name:     "all the pauses are digital silence",
+			input:    soundOf(10, [3]float64{0, 10, -120}, [3]float64{1, 4, testSpeech}, [3]float64{5, 8, -30}),
+			expected: digitalFloor,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			floor, _, ok := levelStats(tt.input)
+			require.True(t, ok)
+			assert.InDelta(t, tt.expected, floor, 1e-9)
+		})
+	}
 }
 
 func TestSoundLevelsOf(t *testing.T) {

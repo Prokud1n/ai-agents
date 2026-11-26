@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"os"
@@ -480,33 +481,126 @@ func TestRunnerTruePeakBright(t *testing.T) {
 		report.Sound.Passes, report.Sound.PeakCut)
 }
 
-// TestRunnerCapFilePeak: a rendered file whose true peak is above -1 dBTP gets its sound lowered (the picture copied):
-// the report says by how much and has the new measurement.
+// TestRunnerCapFilePeak: a rendered reel whose true peak is reported above -1 dBTP (the AAC encoder overshot) gets its
+// sound made again from the source with the same gain and a lower ceiling of the limiter: the loudness stays at the
+// target (not under -14.5 LUFS, as a volume change of the whole sound would make it), the picture is copied, the file
+// starts with its index (+faststart) and the sound is not shifted against the first render.
 func TestRunnerCapFilePeak(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
 
+	const (
+		target     = -14.0
+		minLevel   = -14.5
+		overshoot  = 0.0 // dBTP: the true peak the encoder is said to have left
+		sampleRate = 48000
+		maxLag     = 240 // samples (5 ms) the sound is compared at
+	)
+
 	ctx := t.Context()
-	r := newTestRunner(time.Minute)
-	reel := filepath.Join(t.TempDir(), "reel.mp4")
+	r := newTestRunner(2 * time.Minute)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "speech.mp4")
 
 	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
-		lavfiInput("aevalsrc=0.98*sin(2*PI*1000*t):s=48000:d=3"),
-		lavfiInput("testsrc=duration=3:size=180x320:rate=30"),
-		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, reel}), nil)
+		lavfiInput(speechLike("1.0")),
+		lavfiInput("testsrc=duration=8:size=180x320:rate=30"),
+		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 	require.NoError(t, err)
 
-	in, err := localFile(reel)
+	measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "speech"+AudioExtension))
 	require.NoError(t, err)
+	require.NotNil(t, measured)
 
-	report := &SoundReport{Output: r.measureFile(ctx, in)}
-	require.NotNil(t, report.Output)
-	require.Greater(t, report.Output.TruePeak, maxFilePeak, "the generated tone is too loud")
+	cut := &Cut{
+		Segments: []Segment{{Start: 0.5, End: 3.5}, {Start: 4, End: 7.5}},
+		Options: RenderOptions{
+			Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}, Denoise: &Denoise{NoiseFloor: NoiseFloorFor(measured)},
+			Loudness: &LoudnessTarget{Integrated: target, TruePeak: -2, Range: 11, Measured: measured},
+		},
+	}
 
-	require.NoError(t, r.capFilePeak(ctx, reel, report))
+	reel, burned := burnTestReelReport(ctx, t, r, dir, src, cut)
+	require.NotNil(t, burned.Sound)
+	require.NotNil(t, burned.Sound.Output)
+
+	before := decodeSamples(ctx, t, r, reel)
+
+	// The cut as the render used it (the fitted gain), and the overshoot of the encoder.
+	fitted := *cut
+	loudness := *cut.Options.Loudness
+	loudness.Correction = burned.Sound.Correction
+	fitted.Options.Loudness = &loudness
+
+	report := &SoundReport{Output: &Loudness{Integrated: burned.Sound.Output.Integrated, TruePeak: overshoot}}
+
+	in, err := localFile(src)
+	require.NoError(t, err)
+	require.NoError(t, r.capFilePeak(ctx, in, reel, &fitted, report))
+
 	require.NotNil(t, report.Output)
+	assert.InDelta(t, overshoot-maxFilePeak+peakMargin, report.PeakCut, 1e-9, "the ceiling is lower by the overshoot")
 	assert.LessOrEqual(t, report.Output.TruePeak, maxFilePeak)
-	assert.Positive(t, report.PeakCut)
-	assert.LessOrEqual(t, report.PeakCut, maxPeakCut)
+	assert.NoFileExists(t, reel+peakSuffix, "the temporary file is removed")
+
+	out := measureLoudness(ctx, t, r, reel)
+	assert.GreaterOrEqual(t, out.Integrated, minLevel, "the loudness stays at the target")
 	assert.Contains(t, probeStreams(t, r, reel), "h264,180,320", "the picture is kept")
+
+	data, err := os.ReadFile(reel)
+	require.NoError(t, err)
+
+	moov, mdat := bytes.Index(data, []byte("moov")), bytes.Index(data, []byte("mdat"))
+	require.Positive(t, moov)
+	assert.Less(t, moov, mdat, "+faststart: the index (moov) before the media (mdat)")
+
+	after := decodeSamples(ctx, t, r, reel)
+	assert.InDelta(t, len(before), len(after), sampleRate/100, "the sound is as long as before")
+	assert.Equal(t, 0, bestLag(before, after, maxLag), "the sound is not shifted")
+	t.Logf("capped: %.1f LUFS → %.1f LUFS, true peak %.1f dBTP, the ceiling lower by %.1f dB",
+		burned.Sound.Output.Integrated, out.Integrated, out.TruePeak, report.PeakCut)
+}
+
+// decodeSamples decodes the sound of a file as mono 48 kHz samples.
+func decodeSamples(ctx context.Context, t *testing.T, r *Runner, path string) []float64 {
+	t.Helper()
+
+	in, err := localFile(path)
+	require.NoError(t, err)
+
+	pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
+		[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, "s16le", "-"}), 1<<22)
+	require.NoError(t, err)
+
+	samples := make([]float64, 0, len(pcm)/2)
+
+	for i := 0; i+1 < len(pcm); i += 2 {
+		v := int(pcm[i]) | int(pcm[i+1])<<8
+		if v >= 1<<15 { // signed 16-bit little-endian
+			v -= 1 << 16
+		}
+
+		samples = append(samples, float64(v))
+	}
+
+	return samples
+}
+
+// bestLag is the shift of b against a (samples, within ±maxLag) at which they match best.
+func bestLag(a, b []float64, maxLag int) int {
+	best, lag := math.Inf(-1), 0
+
+	for d := -maxLag; d <= maxLag; d++ {
+		sum := 0.0
+
+		for i := maxLag; i+maxLag < len(a) && i+maxLag < len(b); i++ {
+			sum += a[i] * b[i+d]
+		}
+
+		if sum > best {
+			best, lag = sum, d
+		}
+	}
+
+	return lag
 }

@@ -503,22 +503,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   level the margins around the words (now 0.12/0.18 s, were 0.08/0.12) are used. The 10 ms fades at every joint stay
   (no clicks, the length unchanged). `decisions.log` has the levels (noise p10, loud speech p95, the threshold of
   speech, dBFS), how the cut points were placed and how many pauses longer than 0.3 s are left (`plan.json`:
-  `sound_levels`, `sound_cuts`, `long_pauses`).
+  `sound_levels`, `sound_cuts`, `long_pauses`). Whisper also stretches words into the silence (an end late by 0.35 s,
+  a start early by 0.3 s, both edges meeting inside a real pause): when nothing is heard at Whisper's edge, the sound
+  is looked for inside the word too (not past its middle, at most 0.4 s), so such a pause is compressed to the breath
+  as well; the endings are still kept (the search goes inside only when the edge is silent). The noise floor is taken
+  from the windows above −100 dBFS (digital silence of a gate no longer drags the threshold under the room noise of
+  the other pauses), or held at −90 dBFS when those windows are only speech. The editor's length check (±15 %) and
+  «Длина рилс» in `decisions.log` estimate the worker's reel (the plan here × the worker's plan / the same edit counted
+  here), not the plan counted by the margins.
 - The loudness of a draft is −14 ± 0.5 LUFS with the true peak at most −1.0 dBTP after AAC (T3.19b): the limiter took
   the loudness 1–2 LU under the target, so before the render the sound of the cut alone (no picture, seconds) runs
   through the same chain and is measured, and the gain is corrected by the miss (up to 3 passes, the secant after the
   first, ±12 dB at most); the limiter works oversampled to 192 kHz (the review saw +1.5 dBTP after AAC at 48 kHz); the
   rendered file is measured, and `decisions.log` has that measurement («итог … LUFS, true peak … dBTP»), not the
   target. The sound of a draft is AAC 192k (at 128k the encoder pushed the true peak of bright bursts up by 4+ dB); a
-  file still above −1.0 dBTP gets its sound encoded again lower (the video copied, at most 3 dB). A failed measuring pass is logged, the draft is rendered with the gain by the measurement of the source.
+  file still above −1.0 dBTP gets its sound made again from the source with the same gain and the ceiling of the
+  limiter lower by the overshoot + 0.5 dB (at most 3 dB; the video copied, `+faststart`), so the loudness stays at the
+  target (lowering the whole sound took it under −14.5 LUFS). A failed measuring pass is logged, the draft is rendered
+  with the gain by the measurement of the source; a failed peak pass does not fail the job either: the file is the
+  render as it was and `decisions.log` says so («снизить пики после кодека не удалось, файл оставлен как есть»); a
+  correction that reached ±12 dB is marked («упёрлась в предел — громкость может не попасть в цель»).
 - An edit renders faster (T3.19b): a cut decodes only what it keeps. Neighbouring segments (gaps under 3 s) are a
   group, each group is its own input of the source seeked to 0.5 s before it and read to 0.5 s after it; the inputs
   fit a memory budget of their decoders (~1.3 GiB: 7 for 4K 8-bit, 4 for 4K 10-bit, 8 for 1080p, two threads each; more
   groups are merged where the gaps are the shortest); a group near the start is decoded from the start. Frame accuracy,
   the sync, HDR and the sound are unchanged (`TestRunnerRenderSeeksGroups`, the sync and zoom tests). A one-minute
   draft from a 4-minute 4K source, sparse layout: 96.5 s before, about 60 s after on the CI runner (2 CPUs,
-  `subtitles.TestRenderSpeedLongSource`, which also measures a dense one-take layout and the memory of ffmpeg;
-  `TestRenderSpeedMemoryHDR` — 4K 10-bit HEVC).
+  `subtitles.TestRenderSpeedLongSource`, which also measures a dense one-take layout and the memory of ffmpeg and
+  checks the sparse render against the full decode of the source in the same run, at most 1.4 of it;
+  `TestRenderSpeedMemoryHDR` — 4K 10-bit HEVC). For a 4K HDR (10-bit HEVC) source with a sparse selection the gain is
+  small (a 22 s reel of 11 far pieces: 94 s, 4.3 s per second of the reel): every piece is seeked to and decoded from
+  its keyframe, and the tone mapping costs the same; rendering such pieces in batches or from a 1080p copy is a
+  separate task.
 - `MEDIA_WORKER_MIN_SPEECH_SHARE` defaults to 0.35 instead of 0.6 (T3.19a): the trainer's talking heads keep
   0.44–0.58 of the source, a workout 0.26, music 0.01 — a usual talking head (0.583) was planned as a workout.
 - The draft names the failed takes in «вырезал … (паузы, оговорки и неудачные дубли)» only when some were cut (the
