@@ -365,7 +365,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   один вход) с той же цепочкой и `ebur128`, поправляет `LoudnessTarget.Correction` (≤ 3 прохода, допуск 0,1 LU, после
   первого — секущая с наклоном ≥ 0,25, ±12 dB); ошибка замера (не отмена) — рендер без поправки, `SoundReport.FitError`
   → лог воркера. Лимитер — на 192 кГц (`aresample` вокруг `alimiter`, предел −2 dBTP → после AAC ≤ −1,0 dBTP).
-  Готовый файл меряется отдельным проходом (`measureFile`) → `BurnReport.Sound.Output` → `subtitles.BurnResult.Sound`
+  Звук черновика — AAC 192k (на 128k кодек поднимал true peak ярких звуков на 4+ dB); готовый файл меряется отдельным
+  проходом (`measureFile`), true peak выше −1,0 dBTP — звук файла перекодируется тише (`capFilePeak`, видео копируется,
+  ≤ 3 dB, `SoundReport.PeakCut`) → `BurnReport.Sound.Output` → `subtitles.BurnResult.Sound`
   → строка «Громкость» с итогом и true peak. Скорость: `ffmpeg.groupSegments` (inputs.go) — куски с промежутком < 3 с в
   группу, группа — свой вход с `-ss` (за 0,5 с, целыми кадрами) и `-t`, `-threads 2`; число входов —
   `inputLimit(RenderOptions.Source)` по бюджету памяти декодеров `decodeMemoryBudget` (~1,3 ГиБ / (w·h·байт·1,5·16),

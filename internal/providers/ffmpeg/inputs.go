@@ -86,7 +86,11 @@ func groupSegments(segments []Segment, opts RenderOptions) []inputGroup {
 }
 
 // inputLimit is the number of inputs whose decoders fit decodeMemoryBudget (see maxCutInputs).
-func inputLimit(frame SourceFrame) int {
+func inputLimit(frame *SourceFrame) int {
+	if frame == nil {
+		return maxCutInputs
+	}
+
 	bytes := float64(frame.Width) * float64(frame.Height) * float64(frame.BytesPerSample)
 	if bytes <= 0 {
 		return maxCutInputs

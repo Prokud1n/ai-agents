@@ -238,7 +238,7 @@ func ffmpegRSS() int64 {
 			continue
 		}
 
-		largest = max(largest, processRSS(filepath.Join("/proc", e.Name(), "status")))
+		largest = max(largest, processRSS("/proc/"+e.Name()+"/status"))
 	}
 
 	return largest

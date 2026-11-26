@@ -491,7 +491,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the same chain and is measured, and the gain is corrected by the miss (up to 3 passes, the secant after the
   first, ±12 dB at most); the limiter works oversampled to 192 kHz (the review saw +1.5 dBTP after AAC at 48 kHz); the
   rendered file is measured, and `decisions.log` has that measurement («итог … LUFS, true peak … dBTP»), not the
-  target. A failed measuring pass is logged, the draft is rendered with the gain by the measurement of the source.
+  target. The sound of a draft is AAC 192k (at 128k the encoder pushed the true peak of bright bursts up by 4+ dB); a
+  file still above −1.0 dBTP gets its sound encoded again lower (the video copied, at most 3 dB). A failed measuring pass is logged, the draft is rendered with the gain by the measurement of the source.
 - An edit renders faster (T3.19b): a cut decodes only what it keeps. Neighbouring segments (gaps under 3 s) are a
   group, each group is its own input of the source seeked to 0.5 s before it and read to 0.5 s after it; the inputs
   fit a memory budget of their decoders (~1.3 GiB: 7 for 4K 8-bit, 4 for 4K 10-bit, 8 for 1080p, two threads each; more

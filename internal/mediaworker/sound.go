@@ -168,8 +168,13 @@ func loudnessResult(report *ffmpeg.SoundReport) string {
 		return "итог не измерен"
 	}
 
-	return fmt.Sprintf("итог %.1f LUFS, true peak %.1f dBTP (замер готового файла, после AAC)", report.Output.Integrated,
-		report.Output.TruePeak)
+	result := fmt.Sprintf("итог %.1f LUFS, true peak %.1f dBTP (замер готового файла, после AAC)",
+		report.Output.Integrated, report.Output.TruePeak)
+	if report.PeakCut > 0 {
+		result += fmt.Sprintf("; кодек поднял пики, звук файла снижен на %.1f dB", report.PeakCut)
+	}
+
+	return result
 }
 
 func (s *soundSettings) denoiseNote(cut *ffmpeg.Cut, workout bool) string {

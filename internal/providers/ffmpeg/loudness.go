@@ -25,7 +25,17 @@ const (
 	maxCorrection = 12.0
 	// minLoudnessSlope: a correction is at most the miss times 1/minLoudnessSlope.
 	minLoudnessSlope = 0.25
-	measuredLabel    = "m"
+	// maxFilePeak (dBTP) of the sound of the rendered file. The limiter holds the true peak at the target (-2 dBTP,
+	// oversampled), but the AAC encoder can overshoot it by several dB on bright bursts (sibilants): the sound alone is
+	// then encoded again, lower by the overshoot and peakMargin (the video is copied; seconds), at most peakRetries
+	// times.
+	maxFilePeak = -1.0
+	peakMargin  = 0.5
+	peakRetries = 2
+	// maxPeakCut (dB): the sound is never lowered more than this after the encode, the loudness would miss the target.
+	maxPeakCut    = 3.0
+	peakSuffix    = ".peak.mp4"
+	measuredLabel = "m"
 )
 
 var errNoSummary = errors.New("ffmpeg reported no loudness summary")
@@ -39,6 +49,9 @@ type SoundReport struct {
 	// FitError: the passes over the sound of the cut failed, the render went on with the gain by the measurement of the
 	// source (Correction 0); nil if they did not fail.
 	FitError error
+	// PeakCut (dB) is how much the sound of the rendered file was lowered after the encode: the AAC encoder overshot
+	// maxFilePeak (capFilePeak); 0 if it did not.
+	PeakCut float64
 	// Output is the loudness of the rendered file (after the AAC encode: its true peak is what the network gets),
 	// measured by one more pass over its sound; nil if it could not be measured.
 	Output *Loudness
@@ -156,4 +169,43 @@ func soundGraph(segments []Segment, opts RenderOptions) string {
 	b.WriteString(soundChain(opts) + "," + measureFilter + "[" + measuredLabel + "]")
 
 	return b.String()
+}
+
+// capFilePeak lowers the sound of the rendered file (a local path) when its true peak after the encode is above
+// maxFilePeak, by at most maxPeakCut in all, and updates the report (PeakCut, Output). The file is replaced only by a
+// complete one.
+func (r *Runner) capFilePeak(ctx context.Context, path string, report *SoundReport) error {
+	for range peakRetries {
+		if report.Output == nil || report.Output.TruePeak <= maxFilePeak {
+			return nil
+		}
+
+		cut := min(report.Output.TruePeak-maxFilePeak+peakMargin, maxPeakCut-report.PeakCut)
+		if cut <= 0 {
+			return nil
+		}
+
+		in, tmp, err := localFiles(path, path+peakSuffix)
+		if err != nil {
+			return err
+		}
+
+		args := append(commonArgs(), inputArgs(in)...)
+		args = append(args, mapFlag, "0:v:0", mapFlag, "0:a:0", videoCodecFlag, "copy",
+			audioFilterFlag, "volume=-"+formatLevel(cut)+"dB", audioCodecFlag, renderACodec, "-b:a", outAudioBits,
+			sampleRateFlag, outAudioRate, channelsFlag, outChannels, "-movflags", "+faststart", formatFlag, renderFormat, tmp)
+
+		if _, err := r.run(ctx, r.ffmpegPath, args, nil); err != nil {
+			return fmt.Errorf("failed to lower the peaks of the sound: %w", err)
+		}
+
+		if err := os.Rename(path+peakSuffix, path); err != nil {
+			return fmt.Errorf("failed to replace the render: %w", err)
+		}
+
+		report.PeakCut += cut
+		report.Output = r.measureFile(ctx, in)
+	}
+
+	return nil
 }

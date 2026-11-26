@@ -10,8 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// pcmCodec keeps the sound of a generated source exact.
-const pcmCodec = "pcm_s16le"
+const (
+	// pcmCodec keeps the sound of a generated source exact.
+	pcmCodec = "pcm_s16le"
+	tenBit   = "yuv420p10le"
+)
 
 func TestGroupSegments(t *testing.T) {
 	t.Parallel()
@@ -118,11 +121,11 @@ func TestInputLimit(t *testing.T) {
 		expected int
 	}{
 		{name: "not probed", input: MediaInfo{}, expected: maxCutInputs},
-		{name: "4K 8-bit H.264", input: MediaInfo{Width: 3840, Height: 2160, PixelFormat: "yuv420p"}, expected: 7},
-		{name: "4K 10-bit HEVC (iPhone HDR)", input: MediaInfo{Width: 2160, Height: 3840, PixelFormat: "yuv420p10le"}, expected: 4},
+		{name: "4K 8-bit H.264", input: MediaInfo{Width: 3840, Height: 2160, PixelFormat: videoPixFmt}, expected: 7},
+		{name: "4K 10-bit HEVC (iPhone HDR)", input: MediaInfo{Width: 2160, Height: 3840, PixelFormat: tenBit}, expected: 4},
 		{name: "4K 10-bit, hardware layout", input: MediaInfo{Width: 3840, Height: 2160, PixelFormat: "p010le"}, expected: 4},
 		{name: "1080p", input: MediaInfo{Width: 1080, Height: 1920, PixelFormat: "yuvj420p"}, expected: maxCutInputs},
-		{name: "8K 10-bit: at least two", input: MediaInfo{Width: 7680, Height: 4320, PixelFormat: "yuv420p10le"}, expected: minCutInputs},
+		{name: "8K 10-bit: at least two", input: MediaInfo{Width: 7680, Height: 4320, PixelFormat: tenBit}, expected: minCutInputs},
 	}
 
 	for _, tt := range tests {
@@ -143,7 +146,7 @@ func TestGroupSegmentsMemory(t *testing.T) {
 		segments = append(segments, Segment{Start: 10 * float64(i), End: 10*float64(i) + 1})
 	}
 
-	hdr := MediaInfo{Width: 2160, Height: 3840, PixelFormat: "yuv420p10le"}
+	hdr := MediaInfo{Width: 2160, Height: 3840, PixelFormat: tenBit}
 	assert.Len(t, groupSegments(segments, RenderOptions{Source: hdr.Frame()}), 4)
 	assert.Len(t, groupSegments(segments, RenderOptions{}), maxCutInputs)
 }

@@ -77,8 +77,8 @@ type RenderOptions struct {
 	// Loudness, if set, brings the joined sound to it after the noise reduction; nil keeps the level of the source.
 	Loudness *LoudnessTarget
 	// Source is the size of the decoded frame of the source: it limits the number of inputs of a cut (inputLimit).
-	// Zero: unknown, the limit is maxCutInputs.
-	Source SourceFrame
+	// Nil: unknown, the limit is maxCutInputs.
+	Source *SourceFrame
 }
 
 // SourceFrame is the frame of the source as its decoder holds it.

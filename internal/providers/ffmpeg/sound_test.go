@@ -431,7 +431,7 @@ func TestRunnerTruePeakBright(t *testing.T) {
 	ctx := t.Context()
 	r := newTestRunner(2 * time.Minute)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "bright.mp4")
+	src := filepath.Join(dir, "bright.mkv") // PCM: the source is exactly the generated sound
 
 	// Quiet speech (about -35 LUFS) with short bright bursts of 20 ms twice a second, 6 dB under full scale: the gain
 	// of about +20 dB drives the bursts far into the limiter.
@@ -439,20 +439,34 @@ func TestRunnerTruePeakBright(t *testing.T) {
 		lavfiInput("aevalsrc='0.12*(pow(abs(sin(2*PI*2*t)),3)*(0.35*sin(2*PI*150*t)+0.2*sin(2*PI*300*t)))+"+
 			"if(lt(mod(t,0.5),0.02),0.25*sin(2*PI*11025*t+1)+0.25*sin(2*PI*7350*t),0)':s=48000:d=6"),
 		lavfiInput("testsrc=duration=6:size=180x320:rate=30"),
-		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, "-b:a", "256k", shortestFlag, src}), nil)
+		[]string{videoCodecFlag, videoCodec, audioCodecFlag, pcmCodec, shortestFlag, src}), nil)
 	require.NoError(t, err)
 
 	measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "bright"+AudioExtension))
 	require.NoError(t, err)
 	require.NotNil(t, measured)
 
-	reel, report := burnTestReelReport(ctx, t, r, dir, src, &Cut{
+	cut := &Cut{
 		Segments: []Segment{{Start: 0.5, End: 5.5}},
 		Options: RenderOptions{
 			Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1},
 			Loudness: &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: measured},
 		},
-	})
+	}
+
+	// Before the encode: the oversampled limiter holds the true peak at its limit (at 48 kHz it lets the peaks between
+	// the samples through: -1.2 dBTP at the limit of -2 here).
+	in, err := localFile(src)
+	require.NoError(t, err)
+
+	fitted, _, err := r.fitLoudness(ctx, in, cut.Segments, cut.Options)
+	require.NoError(t, err)
+
+	processed, err := r.measureCut(ctx, in, cut.Segments, fitted)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, processed.TruePeak, -2.0+0.2, "the limiter holds the true peak")
+
+	reel, report := burnTestReelReport(ctx, t, r, dir, src, cut)
 
 	out := measureLoudness(ctx, t, r, reel)
 	assert.LessOrEqual(t, out.TruePeak, maxTruePeak, "the true peak after AAC")
@@ -460,7 +474,39 @@ func TestRunnerTruePeakBright(t *testing.T) {
 	require.NotNil(t, report.Sound)
 	require.NotNil(t, report.Sound.Output)
 	assert.InDelta(t, out.TruePeak, report.Sound.Output.TruePeak, 0.05, "the render reports the true peak of the file")
-	t.Logf("bright sound: source %.1f LUFS (peak %.1f dBTP) → reel %.1f LUFS, true peak %.1f dBTP; gain %+.1f dB "+
-		"(correction %+.1f dB, %d passes)", measured.Integrated, measured.TruePeak, out.Integrated, out.TruePeak,
-		report.Sound.Gain, report.Sound.Correction, report.Sound.Passes)
+	t.Logf("bright sound: source %.1f LUFS (peak %.1f dBTP) → processed %.1f dBTP → reel %.1f LUFS, true peak %.1f "+
+		"dBTP after AAC; gain %+.1f dB (correction %+.1f dB, %d passes), lowered after AAC by %.1f dB", measured.Integrated,
+		measured.TruePeak, processed.TruePeak, out.Integrated, out.TruePeak, report.Sound.Gain, report.Sound.Correction,
+		report.Sound.Passes, report.Sound.PeakCut)
+}
+
+// TestRunnerCapFilePeak: a rendered file whose true peak is above -1 dBTP gets its sound lowered (the picture copied):
+// the report says by how much and has the new measurement.
+func TestRunnerCapFilePeak(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	ctx := t.Context()
+	r := newTestRunner(time.Minute)
+	reel := filepath.Join(t.TempDir(), "reel.mp4")
+
+	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
+		lavfiInput("aevalsrc=0.98*sin(2*PI*1000*t):s=48000:d=3"),
+		lavfiInput("testsrc=duration=3:size=180x320:rate=30"),
+		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, reel}), nil)
+	require.NoError(t, err)
+
+	in, err := localFile(reel)
+	require.NoError(t, err)
+
+	report := &SoundReport{Output: r.measureFile(ctx, in)}
+	require.NotNil(t, report.Output)
+	require.Greater(t, report.Output.TruePeak, maxFilePeak, "the generated tone is too loud")
+
+	require.NoError(t, r.capFilePeak(ctx, reel, report))
+	require.NotNil(t, report.Output)
+	assert.LessOrEqual(t, report.Output.TruePeak, maxFilePeak)
+	assert.Positive(t, report.PeakCut)
+	assert.LessOrEqual(t, report.PeakCut, maxPeakCut)
+	assert.Contains(t, probeStreams(t, r, reel), "h264,180,320", "the picture is kept")
 }

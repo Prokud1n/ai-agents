@@ -42,10 +42,10 @@ type MediaInfo struct {
 // highDepthMarks are in the names of the pixel formats with more than 8 bits a sample: yuv420p10le, p010le, yuv422p12.
 var highDepthMarks = []string{"p10", "p12", "p14", "p16", "010", "012", "016"}
 
-// Frame is the decoded frame of the first video stream; zero if its size is unknown.
-func (m *MediaInfo) Frame() SourceFrame {
+// Frame is the decoded frame of the first video stream; nil if its size is unknown.
+func (m *MediaInfo) Frame() *SourceFrame {
 	if m.Width <= 0 || m.Height <= 0 {
-		return SourceFrame{}
+		return nil
 	}
 
 	bytes := 1
@@ -55,7 +55,7 @@ func (m *MediaInfo) Frame() SourceFrame {
 		}
 	}
 
-	return SourceFrame{Width: m.Width, Height: m.Height, BytesPerSample: bytes}
+	return &SourceFrame{Width: m.Width, Height: m.Height, BytesPerSample: bytes}
 }
 
 // HDR transfer functions of phones: HLG (iPhone, Android) and PQ (HDR10, Dolby Vision base layer).
@@ -149,7 +149,9 @@ func parseProbe(s string) (MediaInfo, error) {
 	info.Duration = duration
 	info.FormatStart = parseStart(out.Format.StartTime)
 
-	for _, st := range out.Streams {
+	for i := range out.Streams {
+		st := &out.Streams[i]
+
 		switch {
 		case st.CodecType == videoCodecType && !info.HasVideo:
 			info.HasVideo = true

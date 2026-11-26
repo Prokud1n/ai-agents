@@ -22,7 +22,7 @@ const (
 	publishPreset = videoPreset // the same as the rough cut render
 	videoProfile  = "high"
 	outAudioRate  = "48000"
-	outAudioBits  = "128k"
+	outAudioBits  = "192k"
 	maxVideoRate  = "10M"
 	videoBuffer   = "20M"
 	outChannels   = "2" // mono or multichannel phone audio becomes stereo
@@ -190,6 +190,9 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 	report := &BurnReport{Fonts: parseFontSelections(fonts.String()), MissingGlyphs: missing}
 	if report.Sound = soundReport(burn.Cut, passes, fitErr); report.Sound != nil {
 		report.Sound.Output = r.measureFile(ctx, out)
+		if err := r.capFilePeak(ctx, data.Output, report.Sound); err != nil {
+			return nil, err
+		}
 	}
 
 	return report, nil
