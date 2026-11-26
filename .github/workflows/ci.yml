@@ -603,7 +603,9 @@ jobs:
           docker run --rm --cpus=2 -e FFMPEG_TESTS_REQUIRED=1 -e RENDER_BENCH=1 \
             -v "$PWD/subtitles.test:/app/subtitles.test:ro" --entrypoint /app/subtitles.test ai-agents-media:ci \
             -test.v -test.count=1 -test.timeout=40m -test.run 'TestRenderSpeed' | tee bench.txt
-          grep -q -- '--- PASS: TestRenderSpeed ' bench.txt || { echo "::error::TestRenderSpeed did not pass"; exit 1; }
+          for test in TestRenderSpeed TestRenderSpeedLongSource TestRenderSpeedMemoryHDR; do
+            grep -q -- "--- PASS: $test " bench.txt || { echo "::error::$test did not pass"; exit 1; }
+          done
           grep -E 'render speed|workout estimate' bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
 
       # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with

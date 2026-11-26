@@ -208,6 +208,8 @@ func DecisionsLog(p *Plan) string {
 
 	if p.Mode == WorkoutMode {
 		b.WriteString("Режим: тренировка — паузы, паразиты и неудачные дубли не вырезаются, только по решению монтажёра\n")
+	} else {
+		writeDensity(&b, p)
 	}
 
 	fmt.Fprintf(&b, "Дубли: %d\n", len(p.Takes))
@@ -244,6 +246,28 @@ func DecisionsLog(p *Plan) string {
 	}
 
 	return b.String()
+}
+
+// writeDensity: how the cut points of a talking head were placed and how many long pauses are left in the reel.
+func writeDensity(b *strings.Builder, p *Plan) {
+	if p.SoundCuts {
+		fmt.Fprintf(b, "Точки разреза: по уровню звука — речь найдена вокруг слов, паузы сжаты до вдоха %.2f с, "+
+			"разрез в самой тихой точке паузы\n", breathPause)
+	} else {
+		b.WriteString("Точки разреза: по полям вокруг слов (уровень звука не помог отличить речь от тишины)\n")
+	}
+
+	if l := p.SoundLevels; l != nil {
+		used := "по нему ставились точки разреза"
+		if !l.Used {
+			used = fmt.Sprintf("разница меньше %.0f dB — порог не применён", minLevelContrast)
+		}
+
+		fmt.Fprintf(b, "Уровни звука: шум (p10) %.1f dBFS, громкая речь (p95) %.1f dBFS, порог речи %.1f dBFS — %s\n",
+			l.NoiseFloor, l.Speech, l.Threshold, used)
+	}
+
+	fmt.Fprintf(b, "Пауз длиннее %.1f с в ролике: %d\n", longPause, p.LongPauses)
 }
 
 func writeCuts(b *strings.Builder, cuts []Cut, reason CutReason, title string) {

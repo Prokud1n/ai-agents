@@ -99,4 +99,7 @@ type BurnResult struct {
 	MissingGlyphs []string
 	// Fonts are the fonts libass selected for the style families.
 	Fonts []ffmpeg.FontSelection
+	// Sound is what the render did to the loudness of a cut (the gain, its correction, the measured result); nil
+	// without a cut or a loudness target.
+	Sound *ffmpeg.SoundReport
 }

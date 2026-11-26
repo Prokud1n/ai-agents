@@ -42,6 +42,79 @@ var (
 		"сохраняйте и пробуйте завтра»."
 )
 
+// TestNewSelectionBySoundPlan: the worker's plan (cut by the sound, T3.19b) is longer or shorter than the plan built here
+// by the margins; whether the reel got shorter is judged against the plan built here, not the worker's length.
+func TestNewSelectionBySoundPlan(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		shift    float64 // of the worker's length against the margins
+		remove   []roughcut.WordRange
+		expected bool
+	}{
+		{name: "nothing removed, the worker's reel 2 s longer", shift: 2},
+		{name: "nothing removed, the worker's reel 2 s shorter", shift: -2},
+		{name: "a phrase removed, the worker's reel 3 s shorter", shift: -3, remove: []roughcut.WordRange{plankWords}, expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := selectionRequest(t, 1)
+			req.Plan.Duration += tt.shift
+
+			plan, err := roughcut.BuildPlanEdited(req.Transcript, req.Plan.SourceDuration, req.Plan.Settings,
+				&roughcut.Edit{Remove: tt.remove})
+			require.NoError(t, err)
+
+			sel := newSelection(req, &Input{TargetSeconds: selectionTarget}, roughcut.TalkMode, &plan)
+			assert.Equal(t, tt.expected, sel.on)
+		})
+	}
+}
+
+// TestApplySelectionBySoundLength: the worker's reels are 20 % shorter than the plans counted here (the pauses cut by
+// the sound): the length is checked and logged as the worker will render it, not as counted by the margins.
+func TestApplySelectionBySoundLength(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		share    float64 // of the worker's plan against the margins
+		ok       bool
+		expected string
+	}{
+		{name: "counted by the margins 9.75 s is too long", share: 1, expected: "ролик длится 9."},
+		{name: "the worker's reel 7.8 s fits", share: 0.8, ok: true, expected: `^Длина рилс: 0:07\.8 \(рекомендуется 4–8 с\)$`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := selectionRequest(t, 1)
+			req.Plan.Duration *= tt.share
+
+			outcome, err := Apply(req, &Input{
+				Decision: EditDecision, Reason: "без вступления", Remove: []roughcut.WordRange{introWords},
+			})
+			if !tt.ok {
+				var check *CheckError
+				require.ErrorAs(t, err, &check)
+				assert.Contains(t, check.Message, tt.expected)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotEmpty(t, outcome.Edit.Details)
+			assert.Regexp(t, tt.expected, outcome.Edit.Details[0])
+		})
+	}
+}
+
 func TestRequestSelecting(t *testing.T) {
 	t.Parallel()
 

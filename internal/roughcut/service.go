@@ -58,6 +58,7 @@ var (
 
 type mediaProcessor interface {
 	Probe(ctx context.Context, path string) (ffmpeg.MediaInfo, error)
+	AudioLevels(ctx context.Context, path string) (*ffmpeg.Levels, error)
 	RenderSegments(ctx context.Context, src, dst string, segments []ffmpeg.Segment, opts ffmpeg.RenderOptions) error
 }
 
@@ -148,24 +149,30 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	}
 
 	fps := rate.Float()
+	levels, soundLevels := s.levels(ctx, data)
 
-	plan, err := s.plan(data, sourceDuration(&info))
+	plan, err := s.plan(data, sourceDuration(&info), &cutGrid{levels: levels, fps: fps})
 	if err != nil {
 		return nil, err
 	}
 
 	plan = SnapToFrames(&plan, fps)
 	plan.MinSpeechShare = data.MinSpeechShare
+	plan.SoundLevels = soundLevels
 	if err := checkSegments(&plan, fps); err != nil {
 		return nil, err
 	}
 
+	transcript := SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit)
+	plan.LongPauses = countLongPauses(&plan, levels, transcript.Words)
+
 	s.logPlan(ctx, &plan, data.Plan != nil)
 
 	result := &Result{
-		Plan: plan, Transcript: SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit), Log: DecisionsLog(&plan),
+		Plan: plan, Transcript: transcript, Log: DecisionsLog(&plan),
 		Render: ffmpeg.RenderOptions{
 			Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info), Mute: plan.Edit != nil && plan.Edit.Mute,
+			Source: info.Frame(),
 		},
 		Titles:      RemapTitles(editTitles(plan.Edit), plan.Keep),
 		ScreenNotes: RemapScreenNotes(editScreenNotes(plan.Edit), plan.Keep),
@@ -341,7 +348,49 @@ func validateCutData(data *CutData) error {
 	return nil
 }
 
-func (s *Service) plan(data *CutData, duration float64) (Plan, error) {
+// levels reads the sound level of the source for the cut points of a talking head, with its summary for the decisions
+// log. The speech levels are nil (the margins around the words) if they cannot be read or tell speech from silence
+// nothing; both are nil, and nothing is read, for a given plan (its cut points are set) or a workout (no pause is cut).
+func (s *Service) levels(ctx context.Context, data *CutData) (*speechLevels, *SoundLevels) {
+	if data.Plan != nil || (data.Edit != nil && data.Edit.Mode.Effective() == WorkoutMode) {
+		return nil, nil
+	}
+
+	levels, err := s.media.AudioLevels(ctx, data.Source)
+	if err != nil {
+		s.log.WarnContext(ctx, "roughcut: no sound levels, cutting by the margins around the words", "error", err)
+
+		return nil, nil
+	}
+
+	summary := soundLevelsOf(levels)
+	if summary != nil {
+		s.log.InfoContext(ctx, "roughcut: sound levels", "noise_floor", summary.NoiseFloor, "speech", summary.Speech,
+			"threshold", summary.Threshold, "used", summary.Used)
+	}
+
+	return newSpeechLevels(levels), summary
+}
+
+// countLongPauses counts the pauses longer than longPause inside the reel: by the sound level, or by the gaps between
+// the words of the reel without it.
+func countLongPauses(p *Plan, levels *speechLevels, reelWords []transcription.Word) int {
+	if levels != nil {
+		return levels.longPauses(p.Keep)
+	}
+
+	count := 0
+
+	for i := 1; i < len(reelWords); i++ {
+		if reelWords[i].Start-reelWords[i-1].End > longPause {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (s *Service) plan(data *CutData, duration float64, grid *cutGrid) (Plan, error) {
 	if data.Plan != nil {
 		plan, err := checkPlan(data.Plan, duration)
 		if err != nil {
@@ -368,7 +417,11 @@ func (s *Service) plan(data *CutData, duration float64) (Plan, error) {
 		edit.Accept = append(edit.Accept, data.AcceptCandidates...)
 	}
 
-	plan, err := BuildPlanEdited(data.Transcript, duration, settings, edit)
+	if grid.levels == nil {
+		grid = nil
+	}
+
+	plan, err := buildPlan(data.Transcript, duration, settings, edit, grid)
 	if err != nil {
 		return Plan{}, err
 	}

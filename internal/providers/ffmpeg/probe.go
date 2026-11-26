@@ -32,6 +32,30 @@ type MediaInfo struct {
 	// empty if not tagged.
 	ColorTransfer  string
 	ColorPrimaries string
+	// Width, Height and PixelFormat ("yuv420p10le") of the first video stream as stored (before a rotation); zero if
+	// unknown.
+	Width       int
+	Height      int
+	PixelFormat string
+}
+
+// highDepthMarks are in the names of the pixel formats with more than 8 bits a sample: yuv420p10le, p010le, yuv422p12.
+var highDepthMarks = []string{"p10", "p12", "p14", "p16", "010", "012", "016"}
+
+// Frame is the decoded frame of the first video stream; nil if its size is unknown.
+func (m *MediaInfo) Frame() *SourceFrame {
+	if m.Width <= 0 || m.Height <= 0 {
+		return nil
+	}
+
+	bytes := 1
+	for _, mark := range highDepthMarks {
+		if strings.Contains(m.PixelFormat, mark) {
+			bytes = 2
+		}
+	}
+
+	return &SourceFrame{Width: m.Width, Height: m.Height, BytesPerSample: bytes}
 }
 
 // HDR transfer functions of phones: HLG (iPhone, Android) and PQ (HDR10, Dolby Vision base layer).
@@ -74,6 +98,9 @@ type probeOutput struct {
 		StartTime      string `json:"start_time"`
 		ColorTransfer  string `json:"color_transfer"`
 		ColorPrimaries string `json:"color_primaries"`
+		Width          int    `json:"width"`
+		Height         int    `json:"height"`
+		PixelFormat    string `json:"pix_fmt"`
 	} `json:"streams"`
 	Format struct {
 		Duration  string `json:"duration"`
@@ -102,7 +129,7 @@ func (r *Runner) Probe(ctx context.Context, path string) (MediaInfo, error) {
 }
 
 func probeArgs(input string) []string {
-	return probeEntriesArgs(input, "stream=codec_type,avg_frame_rate,r_frame_rate,start_time,color_transfer,color_primaries:"+
+	return probeEntriesArgs(input, "stream=codec_type,avg_frame_rate,r_frame_rate,start_time,color_transfer,color_primaries,width,height,pix_fmt:"+
 		"format=duration,start_time", "json")
 }
 
@@ -122,12 +149,15 @@ func parseProbe(s string) (MediaInfo, error) {
 	info.Duration = duration
 	info.FormatStart = parseStart(out.Format.StartTime)
 
-	for _, st := range out.Streams {
+	for i := range out.Streams {
+		st := &out.Streams[i]
+
 		switch {
 		case st.CodecType == videoCodecType && !info.HasVideo:
 			info.HasVideo = true
 			info.VideoStart = parseStart(st.StartTime)
 			info.ColorTransfer, info.ColorPrimaries = st.ColorTransfer, st.ColorPrimaries
+			info.Width, info.Height, info.PixelFormat = st.Width, st.Height, st.PixelFormat
 
 			if info.AvgFrameRate, err = parseRational(st.AvgFrameRate); err != nil {
 				return MediaInfo{}, err

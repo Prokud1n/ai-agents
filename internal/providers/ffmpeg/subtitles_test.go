@@ -23,7 +23,7 @@ func TestBurnSubtitlesArgs(t *testing.T) {
 		videoCodecFlag, "libx264", "-preset", "veryfast", "-crf", "20", "-maxrate", "10M", "-bufsize", "20M",
 		"-profile:v", "high", "-pix_fmt", "yuv420p",
 		"-colorspace", bt709, "-color_primaries", bt709, "-color_trc", bt709, "-color_range", "tv",
-		audioCodecFlag, "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", formatFlag, "mp4",
+		audioCodecFlag, "aac", "-b:a", outAudioBits, "-ar", "48000", "-ac", "2", "-movflags", "+faststart", formatFlag, "mp4",
 	}
 	head := []string{
 		"-hide_banner", "-nostdin", "-nostats", "-y", "-loglevel", "info", "-protocol_whitelist", "file", "-i", testVideo,

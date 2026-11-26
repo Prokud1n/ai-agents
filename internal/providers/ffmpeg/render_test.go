@@ -91,7 +91,7 @@ func TestRenderSegmentsArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			args := renderSegmentsArgs(testVideo, "file:/out/cut.part", "/tmp/g.txt", tt.input)
+			args := renderSegmentsArgs(inputArgs(testVideo), "file:/out/cut.part", "/tmp/g.txt", tt.input)
 
 			assert.Equal(t, concat(commonArgs(), inputArgs(testVideo)), args[:8])
 			assert.Equal(t, tt.expected, args[8:10])
@@ -341,7 +341,7 @@ func TestRunnerRenderHalvesFrameRate(t *testing.T) {
 		commonArgs(),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=1.2"),
 		lavfiInput("color=c=black:s=64x64:r=60:d=1.2,format=gray,geq=lum='N*3'"),
-		[]string{videoCodecFlag, "ffv1", audioCodecFlag, "pcm_s16le", shortestFlag, src},
+		[]string{videoCodecFlag, "ffv1", audioCodecFlag, pcmCodec, shortestFlag, src},
 	), nil)
 	require.NoError(t, err)
 

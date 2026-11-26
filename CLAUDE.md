@@ -415,6 +415,35 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   Строки «Звук и кадр» дописываются в `decisions.log` после рендера. Проверка с ffmpeg — `TestRunnerLoudness`,
   `TestRunnerSoundSync` (вспышка и щелчок через склейки), `TestRunnerZoom` (кадры на стыках); скорость —
   `TestRenderSpeed` (talk с T3.15 и без на одном раннере).
+- Склейка, громкость, скорость правок (T3.19b). Точки разреза — по уровню звука (`ffmpeg.Runner.AudioLevels`: моно
+  16 кГц PCM во временный файл, RMS по 10 мс; `roughcut/levels.go`: `newSpeechLevels` — порог речи 40 % от шумового
+  пола (p10) к громкой речи (p95), не ниже пола + 10 dB, без контраста 15 dB — `nil` и поля вокруг слов 0,12/0,18;
+  уровни не читаются при `CutData.Plan` и в workout): `Service.Cut` → `buildPlan(…, cutGrid)` (у `BuildPlanEdited`,
+  которым пользуется app, сетки нет — его план проверочный, точки ставит воркер; `SpeechShare` всегда по полям).
+  Пауза, слышимая длиннее `MaxPause` (0,3 с), сжимается до `breathPause` 0,15 с ± полкадра (`cutGrid.pause`: хвост —
+  самая тихая точка `tailMin`…`tailMax` 0,06–0,10 с после звука, из равных — поздняя; вступление ≥ `leadMin` 0,04 с),
+  вокруг вырезанных слов — `cutGrid.around` (добирает вдох: сначала раньше `next`, не раньше конца вырезанного, потом
+  позже `end`, не дальше его начала), края ролика — `lead`/`tail`. `Plan.SoundLevels` (p10/p95/порог), `SoundCuts`,
+  `LongPauses` (паузы > 0,3 с) — строки в `decisions.log`. Громкость: `Runner.fitLoudness` перед рендером
+  (`BurnSubtitles`/`RenderSegments`, только с измерением исходника) гоняет звук склейки без картинки (`soundGraph`,
+  один вход) с той же цепочкой и `ebur128`, поправляет `LoudnessTarget.Correction` (≤ 3 прохода, допуск 0,1 LU, после
+  первого — секущая с наклоном ≥ 0,25, ±12 dB); ошибка замера (не отмена) — рендер без поправки, `SoundReport.FitError`
+  → лог воркера. Лимитер — на 192 кГц (`aresample` вокруг `alimiter`, предел −2 dBTP → после AAC ≤ −1,0 dBTP).
+  Звук черновика — AAC 192k (на 128k кодек поднимал true peak ярких звуков на 4+ dB); готовый файл меряется отдельным
+  проходом (`measureFile`), true peak выше −1,0 dBTP — звук пересобирается из исходника той же склейкой с потолком
+  лимитера ниже на превышение + 0,5 dB и усилением, подобранным заново `fitLoudness` (`capFilePeak`, `cutSoundGraph`, видео копируется,
+  `+faststart`, ≤ 3 dB, `SoundReport.PeakCut`; громкость не падает под −14,5); его ошибка (не отмена) задание не роняет —
+  файл как есть, `SoundReport.PeakError`; поправка, упёршаяся в ±12 dB, — `SoundReport.CorrectionCapped` → `BurnReport.Sound.Output` → `subtitles.BurnResult.Sound`
+  → строка «Громкость» с итогом и true peak. Скорость: `ffmpeg.groupSegments` (inputs.go) — куски с промежутком < 3 с в
+  группу, группа — свой вход с `-ss` (за 0,5 с, целыми кадрами) и `-t`, `-threads 2`; число входов —
+  `inputLimit(RenderOptions.Source)` по бюджету памяти декодеров `decodeMemoryBudget` (~1,3 ГиБ / (w·h·байт·1,5·16),
+  2…8: 4K 8 бит — 7, 4K 10 бит — 4; `MediaInfo.Frame()` из width/height/pix_fmt), слияние по кратчайшим промежуткам;
+  группа, чья перемотка в первых 2 с, — без перемотки; внутри группы граф прежний (`writeGroup`, время кусков минус
+  `base`, сдвиг `shift`). Проверка — `TestRunnerRenderSeeksGroups` (кадр в кадр через перемотки),
+  `TestRunnerJointsWithoutClicks`, `TestRunnerLoudness` (−14 ± 0,5), `TestRunnerTruePeakBright` (≤ −1,0 dBTP),
+  `TestInputLimit`, `roughcut.TestBuildPlanBySound`/`TestCutGridAroundBreath`/`TestTailKeepsTheDecay`, бенчи
+  `subtitles.TestRenderSpeedLongSource` (4K 4 мин → рилс ~1 мин, разреженная ≤ 100 с и плотная раскладки, пик RSS
+  ffmpeg) и `TestRenderSpeedMemoryHDR` (4K HEVC 10 бит, пик RSS).
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

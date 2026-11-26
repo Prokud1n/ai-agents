@@ -9,9 +9,13 @@ import (
 )
 
 const (
-	// Margins kept around words at every cut, so the attack and the tail of consonants are not clipped.
-	defaultPadBefore = 0.08
-	defaultPadAfter  = 0.12
+	// Margins kept around words at every cut, so the attack and the tail of consonants are not clipped. Whisper's word
+	// times are off by tens of milliseconds, and the endings of Russian words are often cut short in them (the sound
+	// goes on after the word's end): 0.08/0.12 s clipped phrases (T3.19b). Together they fit the default pause
+	// threshold (0.3 s), so the margins are not shrunk. With the sound level (levels.go) they bound where the cut point
+	// is looked for around removed words.
+	defaultPadBefore = 0.12
+	defaultPadAfter  = 0.18
 	// boundaryGap is the pause that starts a new phrase for retake detection.
 	boundaryGap = 0.3
 	// A segment starts at the first word whose middle is no earlier than this before the segment start.
@@ -55,6 +59,18 @@ func BuildPlanEdited(
 	settings Settings,
 	edit *Edit,
 ) (Plan, error) {
+	return buildPlan(transcript, duration, settings, edit, nil)
+}
+
+// buildPlan is BuildPlanEdited with the cut points of a talking head placed by the sound level when grid is set
+// (Service.Cut); the speech share is counted by the margins in either case, as the app counts it.
+func buildPlan(
+	transcript *transcription.Result,
+	duration float64,
+	settings Settings,
+	edit *Edit,
+	grid *cutGrid,
+) (Plan, error) {
 	settings = effectiveSettings(settings)
 	words := transcript.Words
 	duration = planDuration(transcript, duration, settings)
@@ -76,11 +92,11 @@ func BuildPlanEdited(
 
 	mode := edit.Mode.Effective()
 	cuts := &cutPlan{mode: mode, words: words, duration: duration, settings: settings,
-		times: normalizeIntervals(edit.CutTime, duration)}
+		times: normalizeIntervals(edit.CutTime, duration), grid: grid}
 
 	// A workout keeps the fillers and the failed takes: only what the editor chose is cut.
 	automatic := markRetakes(fillers, ph.tokens, retakes)
-	talkKeep, _ := buildIntervals(words, automatic, duration, settings)
+	talkKeep, _ := buildIntervals(words, automatic, duration, settings, nil)
 
 	removed, takes := make([]CutReason, len(words)), []Take{}
 	if mode == TalkMode {
@@ -115,6 +131,7 @@ func BuildPlanEdited(
 		Candidates:     describeCandidates(ph, rest, cutFor),
 		Mode:           planMode(edit.Mode),
 		SpeechShare:    speechShare(talkKeep, duration),
+		SoundCuts:      grid != nil && mode == TalkMode,
 	}, nil
 }
 
@@ -342,6 +359,8 @@ type intervalBuilder struct {
 	open     bool
 	prev     int   // last kept word
 	pending  []int // removed words since the last kept one
+	// grid places the cut points by the sound level; nil: the margins around the words.
+	grid *cutGrid
 }
 
 func buildIntervals(
@@ -349,8 +368,9 @@ func buildIntervals(
 	removed []CutReason,
 	duration float64,
 	settings Settings,
+	grid *cutGrid,
 ) ([]Interval, []Cut) {
-	b := &intervalBuilder{words: words, settings: settings, prev: -1}
+	b := &intervalBuilder{words: words, settings: settings, prev: -1, grid: grid}
 
 	for i := range words {
 		if removed[i] != "" {
@@ -371,9 +391,14 @@ func (b *intervalBuilder) addWord(i int, reasons []CutReason) {
 	w := b.words[i]
 
 	if !b.open {
-		start := max(w.Start-b.settings.PadBefore, 0)
+		from := 0.0
 		if len(b.pending) > 0 {
-			start = min(max(start, b.words[b.pending[len(b.pending)-1]].End), w.Start)
+			from = b.words[b.pending[len(b.pending)-1]].End
+		}
+
+		start := min(max(w.Start-b.settings.PadBefore, from, 0), w.Start)
+		if b.grid != nil {
+			start = min(b.grid.lead(w.Start, from), w.Start)
 		}
 
 		b.cut(0, start, reasons)
@@ -382,19 +407,16 @@ func (b *intervalBuilder) addWord(i int, reasons []CutReason) {
 		return
 	}
 
-	prev := b.words[b.prev]
-	end, next := prev.End+b.settings.PadAfter, w.Start-b.settings.PadBefore
-
-	switch {
-	case len(b.pending) > 0:
-		end = max(min(end, b.words[b.pending[0]].Start), prev.End)
-		next = min(max(next, b.words[b.pending[len(b.pending)-1]].End), w.Start)
-	case w.Start-prev.End <= b.settings.MaxPause:
-		next = end // a short pause stays as it is
-	}
+	end, next := b.joint(b.words[b.prev], w)
 
 	if next > end {
-		b.cur.End = max(b.cur.End, end)
+		if b.grid != nil {
+			// By the sound the tail may end inside a word Whisper stretched into the silence (past its middle).
+			b.cur.End = max(end, b.cur.Start)
+		} else {
+			b.cur.End = max(b.cur.End, end)
+		}
+
 		b.keep = append(b.keep, b.cur)
 		b.cut(b.cur.End, next, reasons)
 		b.cur = Interval{Start: next, End: w.End}
@@ -405,6 +427,34 @@ func (b *intervalBuilder) addWord(i int, reasons []CutReason) {
 	b.pending = b.pending[:0]
 }
 
+// joint is where the kept word prev ends and the kept word w starts in the reel: a cut [end, next) between them,
+// none when next <= end. Removed words between them are cut with the margins (or at the quietest points), a pause
+// longer than MaxPause down to the margins (or to a breath of the silence actually heard).
+func (b *intervalBuilder) joint(prev, w transcription.Word) (end, next float64) {
+	end, next = prev.End+b.settings.PadAfter, w.Start-b.settings.PadBefore
+
+	switch {
+	case len(b.pending) > 0:
+		first, last := b.words[b.pending[0]], b.words[b.pending[len(b.pending)-1]]
+		if b.grid != nil {
+			return b.grid.around(prev, w, first.Start, last.End, b.settings)
+		}
+
+		end = max(min(end, first.Start), prev.End)
+		next = min(max(next, last.End), w.Start)
+	case b.grid != nil:
+		if cutEnd, cutNext, ok := b.grid.pause(prev, w, b.settings.MaxPause); ok {
+			return cutEnd, cutNext
+		}
+
+		return end, end
+	case w.Start-prev.End <= b.settings.MaxPause:
+		next = end // a short pause stays as it is
+	}
+
+	return end, next
+}
+
 func (b *intervalBuilder) finish(duration float64, reasons []CutReason) {
 	if !b.open {
 		b.cut(0, duration, reasons)
@@ -412,12 +462,19 @@ func (b *intervalBuilder) finish(duration float64, reasons []CutReason) {
 		return
 	}
 
-	end := b.words[b.prev].End + b.settings.PadAfter
+	prev := b.words[b.prev]
+	end, to := prev.End+b.settings.PadAfter, max(duration, prev.End)
+
 	if len(b.pending) > 0 {
-		end = max(min(end, b.words[b.pending[0]].Start), b.words[b.prev].End)
+		end = max(min(end, b.words[b.pending[0]].Start), prev.End)
+		to = max(b.words[b.pending[0]].Start, prev.End)
 	}
 
-	b.cur.End = min(max(b.cur.End, end), max(duration, b.words[b.prev].End))
+	if b.grid != nil {
+		end = b.grid.tail(prev.End, to)
+	}
+
+	b.cur.End = min(max(b.cur.End, end), max(duration, prev.End))
 	b.keep = append(b.keep, b.cur)
 	b.cut(b.cur.End, duration, reasons)
 

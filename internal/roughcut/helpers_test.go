@@ -23,11 +23,13 @@ const (
 	testFiller   = "э"
 )
 
+// testSettings are the thresholds the builder tests were written with (the margins before T3.19b): they check how
+// the plan is built from the settings, not the defaults (TestDefaultMargins).
 func testSettings() Settings {
 	return Settings{
 		MaxPause:         0.4,
-		PadBefore:        defaultPadBefore,
-		PadAfter:         defaultPadAfter,
+		PadBefore:        0.08,
+		PadAfter:         0.12,
 		RetakeSimilarity: 0.7,
 		Fillers:          []string{testFiller, "эм", unitFiller, "хм"},
 	}

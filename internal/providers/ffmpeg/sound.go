@@ -34,7 +34,10 @@ const (
 
 	// The limiter after the gain: a lookahead of 5 ms (compensated: latency=1, the sound is not delayed), a release of
 	// 50 ms, no automatic level (it would raise the sound again).
-	limiterOptions    = ":attack=5:release=50:level=false:latency=1"
+	limiterOptions = ":attack=5:release=50:level=false:latency=1"
+	// limiterRate: the limiter works on the sound oversampled 4× (T3.19b), so it holds the peaks between the samples
+	// (the true peak) too: at 48 kHz the review saw +1.5 dBTP after AAC on real speech with sibilants.
+	limiterRate       = "192000"
 	amplitudeDecibels = 20.0 // an amplitude ratio of a level in dB is 10^(dB/20)
 
 	// soundRate is the sample rate of the processed sound: loudnorm works at 192 kHz in its dynamic mode.
@@ -76,15 +79,18 @@ type LoudnessTarget struct {
 	// them over, and loudnorm compresses instead.) Nil: loudnorm in one pass, adjusting the gain as the sound goes (its
 	// dynamic mode, a 3 s window), for a transcript stored before the measurement.
 	Measured *Loudness
+	// Correction (dB) is added to the gain by the measurement: the render measures the processed sound of the cut
+	// before it (Runner.fitLoudness) and corrects the miss the limiter and the cut make.
+	Correction float64
 }
 
-// Gain is the gain of a measured sound, dB; 0 without a measurement.
+// Gain is the gain of a measured sound, dB, with the correction; 0 without a measurement.
 func (l *LoudnessTarget) Gain() float64 {
 	if l.Measured == nil {
 		return 0
 	}
 
-	return l.Integrated - l.Measured.Integrated
+	return l.Integrated - l.Measured.Integrated + l.Correction
 }
 
 // Denoise is the light noise reduction of speech.
@@ -133,7 +139,8 @@ func loudnessFilter(l *LoudnessTarget) string {
 	if l.Measured != nil {
 		limit := math.Pow(decimalBase, l.TruePeak/amplitudeDecibels)
 
-		return "volume=" + formatLevel(l.Gain()) + "dB,alimiter=limit=" + formatPrecise(limit) + limiterOptions
+		return "volume=" + formatLevel(l.Gain()) + "dB,aresample=" + limiterRate + ",alimiter=limit=" +
+			formatPrecise(limit) + limiterOptions
 	}
 
 	return "loudnorm=I=" + formatLevel(l.Integrated) + ":TP=" + formatLevel(l.TruePeak) + ":LRA=" + formatLevel(l.Range)

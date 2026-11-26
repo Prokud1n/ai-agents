@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"os"
@@ -84,7 +85,7 @@ func TestSoundChain(t *testing.T) {
 				Loudness: &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: measured},
 			},
 			expected: "apad=pad_dur=0.025,highpass=f=80,afftdn=nr=10:nf=-64.0,atrim=start=0.025,asetpts=PTS-STARTPTS," +
-				"volume=13.6dB,alimiter=limit=0.794328:attack=5:release=50:level=false:latency=1,aresample=48000",
+				"volume=13.6dB,aresample=192000,alimiter=limit=0.794328:attack=5:release=50:level=false:latency=1,aresample=48000",
 		},
 		{
 			name:     "no measurement (a transcript stored before it): loudnorm in one pass",
@@ -152,9 +153,10 @@ func speechLike(amplitude string) string {
 }
 
 // TestRunnerLoudness: a quiet (about -35 LUFS) and a loud (about -16 LUFS, peaks near full scale) speech-like source
-// come out at -14 ± 1 LUFS with the true peak at most -1.5 dBTP after the AAC encode: by the measurement taken while the
-// audio is extracted (one gain and the limiter, the worker) and without it (loudnorm in one pass); the cut and the
-// subtitles are rendered in the same pass, as the worker does it.
+// (peaks 16–18 dB above its loudness) come out at the target with the true peak at most -1.5 dBTP after the AAC encode:
+// by the measurement taken while the audio is extracted (one gain corrected by the passes over the sound of the cut,
+// and the limiter: the worker) at -14 ± 0.5 LUFS, and without it (loudnorm in one pass) at -14 ± 1; the cut and the
+// subtitles are rendered in the same pass, as the worker does it. The render reports what it measured.
 func TestRunnerLoudness(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
@@ -165,6 +167,8 @@ func TestRunnerLoudness(t *testing.T) {
 		target    = -14.0
 		maxPeak   = -1.5
 		tolerance = 1.0
+		// fitted: the tolerance of the gain fitted by the passes over the sound of the cut (T3.19b).
+		fitted = 0.5
 	)
 
 	tests := []struct {
@@ -210,15 +214,30 @@ func TestRunnerLoudness(t *testing.T) {
 				opts.Denoise = &Denoise{NoiseFloor: NoiseFloorFor(measured)}
 			}
 
-			reel := burnTestReel(ctx, t, r, dir, src, &Cut{
+			reel, report := burnTestReelReport(ctx, t, r, dir, src, &Cut{
 				Segments: []Segment{{Start: 0.5, End: 3.5}, {Start: 4, End: 7.5}}, Options: opts,
 			})
 
+			want := tolerance
+			if tt.measure {
+				want = fitted
+			}
+
 			out := measureLoudness(ctx, t, r, reel)
-			assert.InDelta(t, target, out.Integrated, tolerance, "the reel at the target")
+			assert.InDelta(t, target, out.Integrated, want, "the reel at the target")
 			assert.LessOrEqual(t, out.TruePeak, maxPeak, "the true peak after AAC at most -1.5 dBTP")
-			t.Logf("loudness: source %.1f LUFS (peak %.1f) → reel %.1f LUFS (peak %.1f dBTP)",
-				measured.Integrated, measured.TruePeak, out.Integrated, out.TruePeak)
+			require.NotNil(t, report.Sound)
+			require.NotNil(t, report.Sound.Output, "the render measured its sound")
+			assert.InDelta(t, out.Integrated, report.Sound.Output.Integrated, fitted, "the render's own measurement")
+
+			if tt.measure {
+				assert.Positive(t, report.Sound.Passes, "the gain is fitted by the sound of the cut")
+			}
+
+			t.Logf("loudness: source %.1f LUFS (peak %.1f) → reel %.1f LUFS (peak %.1f dBTP); render: gain %+.1f dB "+
+				"(correction %+.1f dB, %d passes), measured %.1f LUFS", measured.Integrated, measured.TruePeak,
+				out.Integrated, out.TruePeak, report.Sound.Gain, report.Sound.Correction, report.Sound.Passes,
+				report.Sound.Output.Integrated)
 		})
 	}
 }
@@ -301,7 +320,7 @@ func TestRunnerSoundSync(t *testing.T) {
 			}
 
 			pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-				[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, "s16le", "-"}), 1<<21)
+				[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, rawSoundFormat, "-"}), 1<<21)
 			require.NoError(t, err)
 
 			samples := make([]int, 0, len(pcm)/2)
@@ -358,6 +377,15 @@ func roundAll(values []float64) []float64 {
 func burnTestReel(ctx context.Context, t *testing.T, r *Runner, dir, src string, cut *Cut) string {
 	t.Helper()
 
+	reel, _ := burnTestReelReport(ctx, t, r, dir, src, cut)
+
+	return reel
+}
+
+// burnTestReelReport is burnTestReel with the report of the render.
+func burnTestReelReport(ctx context.Context, t *testing.T, r *Runner, dir, src string, cut *Cut) (string, *BurnReport) {
+	t.Helper()
+
 	const emptyASS = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n" +
 		"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 
@@ -365,13 +393,13 @@ func burnTestReel(ctx context.Context, t *testing.T, r *Runner, dir, src string,
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, testFontsName), 0o700))
 
 	reel := filepath.Join(dir, "reel.mp4")
-	_, err := r.BurnSubtitles(ctx, &BurnSubtitlesData{
+	report, err := r.BurnSubtitles(ctx, &BurnSubtitlesData{
 		Input: src, Output: reel, Dir: dir, SubtitlesName: testSubtitlesName, FontsName: testFontsName,
 		Width: 1080, Height: 1920, Fit: CropFitMode, Cut: cut,
 	})
 	require.NoError(t, err)
 
-	return reel
+	return reel, report
 }
 
 // measureLoudness measures the sound of a file as the worker does it (ebur128 with the true peak).
@@ -390,4 +418,191 @@ func measureLoudness(ctx context.Context, t *testing.T, r *Runner, path string) 
 	require.NotNil(t, loudness, log.String())
 
 	return loudness
+}
+
+// TestRunnerTruePeakBright: quiet speech with bright bursts (sibilant-like tones at 7.35 and 11 kHz, whose peaks fall
+// between the samples) pushed into the limiter by the gain: the limiter works oversampled, so after the AAC encode the true peak of the reel is
+// at most -1.0 dBTP; the render reports the true peak of the file.
+func TestRunnerTruePeakBright(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	const maxTruePeak = -1.0
+
+	ctx := t.Context()
+	r := newTestRunner(2 * time.Minute)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "bright.mkv") // PCM: the source is exactly the generated sound
+
+	// Quiet speech (about -35 LUFS) with short bright bursts of 20 ms twice a second, 6 dB under full scale: the gain
+	// of about +20 dB drives the bursts far into the limiter.
+	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
+		lavfiInput("aevalsrc='0.12*(pow(abs(sin(2*PI*2*t)),3)*(0.35*sin(2*PI*150*t)+0.2*sin(2*PI*300*t)))+"+
+			"if(lt(mod(t,0.5),0.02),0.25*sin(2*PI*11025*t+1)+0.25*sin(2*PI*7350*t),0)':s=48000:d=6"),
+		lavfiInput("testsrc=duration=6:size=180x320:rate=30"),
+		[]string{videoCodecFlag, videoCodec, audioCodecFlag, pcmCodec, shortestFlag, src}), nil)
+	require.NoError(t, err)
+
+	measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "bright"+AudioExtension))
+	require.NoError(t, err)
+	require.NotNil(t, measured)
+
+	cut := &Cut{
+		Segments: []Segment{{Start: 0.5, End: 5.5}},
+		Options: RenderOptions{
+			Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1},
+			Loudness: &LoudnessTarget{Integrated: -14, TruePeak: -2, Range: 11, Measured: measured},
+		},
+	}
+
+	// Before the encode: the oversampled limiter holds the true peak at its limit (at 48 kHz it lets the peaks between
+	// the samples through: -1.2 dBTP at the limit of -2 here).
+	in, err := localFile(src)
+	require.NoError(t, err)
+
+	fitted, _, err := r.fitLoudness(ctx, in, cut.Segments, cut.Options)
+	require.NoError(t, err)
+
+	processed, err := r.measureCut(ctx, in, cut.Segments, fitted)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, processed.TruePeak, -2.0+0.2, "the limiter holds the true peak")
+
+	reel, report := burnTestReelReport(ctx, t, r, dir, src, cut)
+
+	out := measureLoudness(ctx, t, r, reel)
+	assert.LessOrEqual(t, out.TruePeak, maxTruePeak, "the true peak after AAC")
+	assert.InDelta(t, -14.0, out.Integrated, 0.5, "the gain is fitted through the limiter too")
+	require.NotNil(t, report.Sound)
+	require.NotNil(t, report.Sound.Output)
+	assert.InDelta(t, out.TruePeak, report.Sound.Output.TruePeak, 0.05, "the render reports the true peak of the file")
+	t.Logf("bright sound: source %.1f LUFS (peak %.1f dBTP) → processed %.1f dBTP → reel %.1f LUFS, true peak %.1f "+
+		"dBTP after AAC; gain %+.1f dB (correction %+.1f dB, %d passes), lowered after AAC by %.1f dB", measured.Integrated,
+		measured.TruePeak, processed.TruePeak, out.Integrated, out.TruePeak, report.Sound.Gain, report.Sound.Correction,
+		report.Sound.Passes, report.Sound.PeakCut)
+}
+
+// TestRunnerCapFilePeak: a rendered reel whose true peak is reported above -1 dBTP (the AAC encoder overshot) gets its
+// sound made again from the source with a lower ceiling of the limiter and the gain fitted again: the loudness stays at
+// the target (not under -14.5 LUFS, as a volume change of the whole sound would make it), the picture is copied, the file
+// starts with its index (+faststart) and the sound is not shifted against the first render.
+func TestRunnerCapFilePeak(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	const (
+		target     = -14.0
+		minLevel   = -14.5
+		overshoot  = 0.0 // dBTP: the true peak the encoder is said to have left
+		sampleRate = 48000
+		maxLag     = 240 // samples (5 ms) the sound is compared at
+	)
+
+	ctx := t.Context()
+	r := newTestRunner(2 * time.Minute)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "speech.mp4")
+
+	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
+		lavfiInput(speechLike("1.0")),
+		lavfiInput("testsrc=duration=8:size=180x320:rate=30"),
+		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
+	require.NoError(t, err)
+
+	measured, err := r.ExtractAudioMeasured(ctx, src, filepath.Join(dir, "speech"+AudioExtension))
+	require.NoError(t, err)
+	require.NotNil(t, measured)
+
+	cut := &Cut{
+		Segments: []Segment{{Start: 0.5, End: 3.5}, {Start: 4, End: 7.5}},
+		Options: RenderOptions{
+			Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}, Denoise: &Denoise{NoiseFloor: NoiseFloorFor(measured)},
+			Loudness: &LoudnessTarget{Integrated: target, TruePeak: -2, Range: 11, Measured: measured},
+		},
+	}
+
+	reel, burned := burnTestReelReport(ctx, t, r, dir, src, cut)
+	require.NotNil(t, burned.Sound)
+	require.NotNil(t, burned.Sound.Output)
+
+	before := decodeSamples(ctx, t, r, reel)
+
+	// The cut as the render used it (the fitted gain), and the overshoot of the encoder.
+	fitted := *cut
+	loudness := *cut.Options.Loudness
+	loudness.Correction = burned.Sound.Correction
+	fitted.Options.Loudness = &loudness
+
+	report := &SoundReport{Output: &Loudness{Integrated: burned.Sound.Output.Integrated, TruePeak: overshoot}}
+
+	in, err := localFile(src)
+	require.NoError(t, err)
+	require.NoError(t, r.capFilePeak(ctx, in, reel, &fitted, report))
+
+	require.NotNil(t, report.Output)
+	assert.InDelta(t, overshoot-maxFilePeak+peakMargin, report.PeakCut, 1e-9, "the ceiling is lower by the overshoot")
+	assert.LessOrEqual(t, report.Output.TruePeak, maxFilePeak)
+	assert.NoFileExists(t, reel+peakSuffix, "the temporary file is removed")
+
+	out := measureLoudness(ctx, t, r, reel)
+	assert.GreaterOrEqual(t, out.Integrated, minLevel, "the loudness stays at the target")
+	assert.InDelta(t, target, out.Integrated, 0.5, "the gain is fitted again under the lower ceiling")
+	assert.Contains(t, probeStreams(t, r, reel), "h264,1080,1920", "the picture is kept")
+
+	data, err := os.ReadFile(reel)
+	require.NoError(t, err)
+
+	moov, mdat := bytes.Index(data, []byte("moov")), bytes.Index(data, []byte("mdat"))
+	require.Positive(t, moov)
+	assert.Less(t, moov, mdat, "+faststart: the index (moov) before the media (mdat)")
+
+	after := decodeSamples(ctx, t, r, reel)
+	assert.InDelta(t, len(before), len(after), sampleRate/100, "the sound is as long as before")
+	assert.Equal(t, 0, bestLag(before, after, maxLag), "the sound is not shifted")
+	t.Logf("capped: %.1f LUFS → %.1f LUFS, true peak %.1f dBTP, the ceiling lower by %.1f dB, gain %+.1f → %+.1f dB "+
+		"(%d passes)", burned.Sound.Output.Integrated, out.Integrated, out.TruePeak, report.PeakCut, burned.Sound.Gain,
+		report.Gain, report.Passes)
+}
+
+// decodeSamples decodes the sound of a file as mono 48 kHz samples.
+func decodeSamples(ctx context.Context, t *testing.T, r *Runner, path string) []float64 {
+	t.Helper()
+
+	in, err := localFile(path)
+	require.NoError(t, err)
+
+	pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
+		[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, rawSoundFormat, "-"}), 1<<22)
+	require.NoError(t, err)
+
+	samples := make([]float64, 0, len(pcm)/2)
+
+	for i := 0; i+1 < len(pcm); i += 2 {
+		v := int(pcm[i]) | int(pcm[i+1])<<8
+		if v >= 1<<15 { // signed 16-bit little-endian
+			v -= 1 << 16
+		}
+
+		samples = append(samples, float64(v))
+	}
+
+	return samples
+}
+
+// bestLag is the shift of b against a (samples, within ±maxLag) at which they match best.
+func bestLag(a, b []float64, maxLag int) int {
+	best, lag := math.Inf(-1), 0
+
+	for d := -maxLag; d <= maxLag; d++ {
+		sum := 0.0
+
+		for i := maxLag; i+maxLag < len(a) && i+maxLag < len(b); i++ {
+			sum += a[i] * b[i+d]
+		}
+
+		if sum > best {
+			best, lag = sum, d
+		}
+	}
+
+	return lag
 }
