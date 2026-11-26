@@ -488,3 +488,63 @@ func checkForgottenIsStale(t *testing.T, board *Board, job *Job) {
 	require.NoError(t, err)
 	assert.False(t, found)
 }
+
+// TestIntegrationBoardLease: the lease of a local edit's job is held by its token while it is refreshed, taken over by
+// a new token, released only by its own token and gone after its TTL; a job without a lease is always held.
+func TestIntegrationBoardLease(t *testing.T) {
+	t.Parallel()
+
+	board := newTestBoard(t)
+	ctx := context.Background()
+
+	plain := testJob(11)
+	held, err := board.LeaseHeld(ctx, plain)
+	require.NoError(t, err)
+	assert.True(t, held, "a job of the app has no lease")
+
+	job := testJob(12)
+	job.Lease = "first"
+
+	submitted, err := board.Submit(ctx, job)
+	require.NoError(t, err)
+	require.True(t, submitted)
+
+	stored, found, err := board.Job(ctx, job.ID)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "first", stored.Lease, "the lease token is stored with the job")
+
+	held, err = board.LeaseHeld(ctx, job)
+	require.NoError(t, err)
+	assert.False(t, held, "no lease taken yet")
+
+	require.NoError(t, board.Lease(ctx, job.ID, "first", integrationTTL))
+	held, err = board.LeaseHeld(ctx, job)
+	require.NoError(t, err)
+	assert.True(t, held)
+
+	require.NoError(t, board.ReleaseLease(ctx, job.ID, "other"))
+	held, err = board.LeaseHeld(ctx, job)
+	require.NoError(t, err)
+	assert.True(t, held, "another token does not release the lease")
+
+	require.NoError(t, board.Lease(ctx, job.ID, "second", integrationTTL))
+	held, err = board.LeaseHeld(ctx, job)
+	require.NoError(t, err)
+	assert.False(t, held, "a new run took the lease over: the old job is not waited for")
+
+	require.NoError(t, board.Lease(ctx, job.ID, "first", integrationTTL))
+	require.NoError(t, board.ReleaseLease(ctx, job.ID, "first"))
+	held, err = board.LeaseHeld(ctx, job)
+	require.NoError(t, err)
+	assert.False(t, held, "released")
+
+	require.NoError(t, board.Lease(ctx, job.ID, "first", integrationTTL))
+	require.Eventually(t, func() bool {
+		held, err := board.LeaseHeld(ctx, job)
+
+		return err == nil && !held
+	}, waitFor, tick, "a lease that is not refreshed expires")
+
+	require.ErrorIs(t, board.Lease(ctx, job.ID, "", integrationTTL), ErrInvalidJob)
+}

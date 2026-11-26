@@ -80,7 +80,8 @@ func newLocalRunner(t *testing.T, speech transcriber, decider localDecider, hook
 	t.Cleanup(func() { require.NoError(t, worker.Stop(context.Background())) })
 
 	return editlocal.NewRunner(&editlocal.Params{
-		Executor: editor.NewExecutor(board, files, decider, noTech{}, cfg, log), Board: board, Store: files,
+		Executor: editor.NewExecutor(editlocal.NewLeaseBoard(board), files, decider, noTech{}, cfg, log), Board: board,
+		Store:    files,
 		Sequence: editlocal.NewRedisSequence(client, prefix+editlocal.SequenceKey),
 		Settings: editlocal.Settings{MaxFileSize: 1 << 30, MaxAttempts: 3, RetryBaseDelay: time.Second,
 			RetryMaxDelay: time.Second, PollInterval: editPoll},

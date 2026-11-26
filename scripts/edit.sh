@@ -12,7 +12,8 @@
 # поэтому файлы в OUT принадлежат ему. `~` в начале FILE и OUT раскрывается в $HOME (zsh на macOS сам этого не делает
 # в `make FILE=~/…`). OUT по умолчанию — ./edits/<имя файла без расширения>. Внутри проекта OUT — только в ./edits/,
 # вне проекта — любая отдельная папка, кроме / и папок, в которых лежат проект или домашняя папка.
-# Ctrl+C останавливает монтаж: задание снимается с очереди воркера.
+# Ctrl+C останавливает монтаж: задание снимается с очереди воркера. Убитый запуск (docker kill) перестаёт продлевать
+# аренду задания, и воркер бросает его сам за ~25 с.
 #
 #   scripts/edit.sh check-out <путь>   # только проверяет OUT и печатает абсолютный путь (проверки в CI)
 set -euo pipefail
@@ -89,6 +90,16 @@ physical() {
 	done
 	path=$(cd -P "$path" && pwd -P)
 	normalize "$path$tail"
+}
+
+# tcc_hint <путь>: на macOS терминал IDE без доступа к Desktop/Documents/Downloads (TCC) не видит файлы там.
+tcc_hint() {
+	[[ $(uname -s) == Darwin ]] || return 0
+	case $1 in
+	"$HOME"/Desktop/* | "$HOME"/Documents/* | "$HOME"/Downloads/*)
+		printf ' (если терминал в IDE — у него может не быть доступа к этой папке на macOS: положите видео в ./edits/src/ или дайте IDE доступ в «Конфиденциальность и безопасность → Файлы и папки»)'
+		;;
+	esac
 }
 
 # check_path <имя> <путь>: путь можно передать в docker -v (без перевода строки и двоеточия).
@@ -192,8 +203,8 @@ cli=(-out "$CONTAINER_OUT")
 if [[ -n $FILE ]]; then
 	check_path FILE "$FILE"
 	file=$(absolute "$FILE")
-	[[ -f $file ]] || die "нет файла $FILE"
-	[[ -r $file ]] || die "файл $FILE не читается"
+	[[ -f $file ]] || die "нет файла $FILE$(tcc_hint "$file")"
+	[[ -r $file ]] || die "файл $FILE не читается$(tcc_hint "$file")"
 	name=$(basename "$file")
 	if [[ -z $OUT ]]; then
 		stem=${name%.*}

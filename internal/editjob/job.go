@@ -123,6 +123,10 @@ type Job struct {
 	// Branding is the trainer's handle over the reel and the end card with it (REELS_HANDLE, REELS_HANDLE_ICON,
 	// REELS_END_CARD of the app); nil: none. The worker checks the handle again and draws nothing with an invalid one.
 	Branding *Branding `json:"branding,omitempty"`
+	// Lease is the token of the local edit (make edit) that waits for the job; empty for the app's jobs. The job is
+	// current only while the token holds the lease (Board.Lease, refreshed by the waiting run): the worker drops the
+	// job of a killed run within seconds instead of rendering it for nobody.
+	Lease string `json:"lease,omitempty"`
 }
 
 // Branding is the trainer's Instagram handle drawn over the reel: small at the right edge with the icon (Icon) and

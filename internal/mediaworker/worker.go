@@ -31,6 +31,9 @@ const (
 	heartbeatMode   = 0o600
 	// lockRefreshes per lock lifetime: a refresh is missed only after several failures in a row.
 	lockRefreshes = 3
+	// boardCheckInterval: how often a running job is checked on the board (forgotten, replaced, its lease expired),
+	// apart from the lock refresh: Ctrl+C of make edit stops the transcription within seconds, not at the next refresh.
+	boardCheckInterval = 3 * time.Second
 	// consumerSuffix: random characters that make the consumer name unique per process.
 	consumerSuffix = 8
 )
@@ -51,6 +54,7 @@ type workerBoard interface {
 	Finish(ctx context.Context, job *editjob.Job, result *editjob.Result) error
 	Started(ctx context.Context, jobID string) (time.Time, bool, error)
 	MarkStarted(ctx context.Context, job *editjob.Job, now time.Time) (time.Time, error)
+	LeaseHeld(ctx context.Context, job *editjob.Job) (bool, error)
 	NotifyDone(ctx context.Context, job *editjob.Job)
 	Heartbeat(ctx context.Context, owner string) error
 	LockTTL() time.Duration
@@ -72,6 +76,11 @@ type jobRunner interface {
 // failure) or replaced (another stage, a new submit under the same ID) is acked and skipped, and a result is stored
 // only while its job is still on the board (Board.Finish checks it at once with the write).
 //
+// A job with a lease (editjob.Job.Lease: a local edit of make edit) counts as forgotten once its lease is gone: the run
+// that waits for it was killed, nobody would download the result.
+//
+// The board is checked every boardCheckInterval while a job runs, so a forgotten job stops within seconds.
+//
 // Stop cancels the running job at once (ffmpeg is killed with its context): the job is not acked and is taken again
 // after the restart.
 type Worker struct {
@@ -82,6 +91,8 @@ type Worker struct {
 	heartbeatFile string
 	log           *slog.Logger
 	now           func() time.Time
+	// checkInterval of the board while a job runs (boardCheckInterval).
+	checkInterval time.Duration
 
 	cancel context.CancelFunc
 	done   sync.WaitGroup
@@ -103,6 +114,7 @@ func NewWorker(board workerBoard, pipeline jobRunner, cfg *config.MediaWorker, l
 		heartbeatFile: HeartbeatFile(cfg),
 		log:           log,
 		now:           time.Now,
+		checkInterval: boardCheckInterval,
 	}
 }
 
@@ -271,6 +283,8 @@ const (
 	// replacedJob: the job on the board is another one than the delivered (a planned job replaced by its render, a
 	// render queued again after a failure, a job submitted anew after Forget): another stage or creation time.
 	replacedJob
+	// abandonedJob: the job of a local edit whose lease is gone (make edit was killed): nobody waits for it.
+	abandonedJob
 )
 
 // state compares the delivered job with the job on the board.
@@ -285,9 +299,20 @@ func (w *Worker) state(ctx context.Context, job *editjob.Job) (jobState, error) 
 		return forgottenJob, nil
 	case !stored.Same(job):
 		return replacedJob, nil
-	default:
+	case job.Lease == "":
 		return currentJob, nil
 	}
+
+	held, err := w.board.LeaseHeld(ctx, job)
+	if err != nil {
+		return currentJob, err
+	}
+
+	if !held {
+		return abandonedJob, nil
+	}
+
+	return currentJob, nil
 }
 
 // skip: a job that is not on the board (forgotten or replaced) is skipped without a result and an announcement; a job
@@ -306,6 +331,11 @@ func (w *Worker) skip(ctx context.Context, job *editjob.Job) (bool, error) {
 		return true, nil
 	case replacedJob:
 		w.log.InfoContext(ctx, "mediaworker: job was replaced, skipping the old delivery", "job_id", job.ID,
+			"stage", job.EffectiveStage())
+
+		return true, nil
+	case abandonedJob:
+		w.log.InfoContext(ctx, "mediaworker: job lease expired, nobody waits for it, skipping", "job_id", job.ID,
 			"stage", job.EffectiveStage())
 
 		return true, nil
@@ -455,30 +485,39 @@ type lockOutcome int32
 const (
 	lockKept lockOutcome = iota // the run ended by itself
 	lockLost                    // the lock expired and another worker took the job: its result counts
-	jobLeft                     // the app forgot or replaced the job: nobody would read the result
+	jobLeft                     // the job left the board (forgotten, replaced, lease gone): nobody would read the result
 )
 
-// keepLock refreshes the job's lock until ctx is done and checks that the job is still on the board. It stops when the
-// lock is lost (so the job is not edited twice at once) or the app forgot or replaced the job (a timeout, the last
-// attempt, a new revision): the run is then cancelled at once instead of running to its timeout for a result that
-// would be dropped.
+// keepLock refreshes the job's lock until ctx is done and checks every checkInterval that the job is still on the
+// board. It stops when the lock is lost (so the job is not edited twice at once) or the job left the board (the app
+// forgot or replaced it: a timeout, the last attempt, a new revision; a local edit was interrupted or killed): the run
+// is then cancelled at once instead of running to its timeout for a result that would be dropped.
 func (w *Worker) keepLock(ctx context.Context, job *editjob.Job) lockOutcome {
-	ticker := time.NewTicker(w.board.LockTTL() / lockRefreshes)
-	defer ticker.Stop()
+	refresh := time.NewTicker(w.board.LockTTL() / lockRefreshes)
+	defer refresh.Stop()
+
+	check := time.NewTicker(w.checkInterval)
+	defer check.Stop()
 
 	for {
+		var outcome lockOutcome
+
 		select {
 		case <-ctx.Done():
 			return lockKept
-		case <-ticker.C:
-			if outcome := w.refresh(ctx, job); outcome != lockKept {
-				return outcome
-			}
+		case <-refresh.C:
+			outcome = w.refresh(ctx, job)
+		case <-check.C:
+			outcome = w.check(ctx, job)
+		}
+
+		if outcome != lockKept {
+			return outcome
 		}
 	}
 }
 
-// refresh extends the lock and checks the board once; a Redis error is only logged (the run goes on).
+// refresh extends the lock once; a Redis error is only logged (the run goes on).
 func (w *Worker) refresh(ctx context.Context, job *editjob.Job) lockOutcome {
 	held, err := w.board.Refresh(ctx, job.ID, w.consumer)
 
@@ -491,13 +530,27 @@ func (w *Worker) refresh(ctx context.Context, job *editjob.Job) lockOutcome {
 		return lockLost
 	}
 
+	return lockKept
+}
+
+// check looks at the board once: jobLeft when the job is not the current one any more; a Redis error is only logged
+// (the run goes on).
+func (w *Worker) check(ctx context.Context, job *editjob.Job) lockOutcome {
 	state, err := w.state(ctx, job)
-	if err != nil || state == currentJob {
+	if err != nil {
+		if ctx.Err() == nil {
+			w.log.WarnContext(ctx, "mediaworker: failed to check the job on the board", "error", err, "job_id", job.ID)
+		}
+
+		return lockKept
+	}
+
+	if state == currentJob {
 		return lockKept
 	}
 
 	w.log.WarnContext(ctx, "mediaworker: job was forgotten while running, cancelled", "job_id", job.ID,
-		"stage", job.EffectiveStage(), "replaced", state == replacedJob)
+		"stage", job.EffectiveStage(), "replaced", state == replacedJob, "lease_expired", state == abandonedJob)
 
 	return jobLeft
 }

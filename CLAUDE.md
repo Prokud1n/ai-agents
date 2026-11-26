@@ -223,8 +223,11 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   доставку и отбрасывает результат, если на доске уже другое задание (стадия или `CreatedAt`) или задания нет вовсе
   (app забыл его: нет воркера, таймаут, провал — запись в stream при этом остаётся). Результат и старт пишутся
   только для задания, которое сейчас на доске (Lua-проверка вместе с записью: `Board.Finish`/`MarkStarted` →
-  `editjob.ErrStale`); задание, исчезнувшее с доски во время работы, отменяется на ближайшем heartbeat блокировки
-  (`keepLock`, ошибка Redis не отменяет). `EDITOR_QUEUE_TIMEOUT` + `EDITOR_JOB_TIMEOUT` < 3,5 суток (TTL записей — 7). Проверка —
+  `editjob.ErrStale`); задание, исчезнувшее с доски во время работы, отменяется на ближайшей проверке доски —
+  отдельный тикер `boardCheckInterval` (3 с) в `keepLock`, продление блокировки — по-прежнему раз в TTL/3; ошибка Redis
+  не отменяет (T3.19c). Аренда: задание с `Job.Lease` (только `make edit`) текущее, пока ключ `<stream>:lease:<id>`
+  хранит этот токен (`Board.Lease`/`LeaseHeld`/`ReleaseLease`); нет ключа или другой токен — воркер считает задание
+  забытым (`abandonedJob`: пропуск доставки или отмена). Задания app аренду не используют. `EDITOR_QUEUE_TIMEOUT` + `EDITOR_JOB_TIMEOUT` < 3,5 суток (TTL записей — 7). Проверка —
   `mediaworker.TestIntegrationForgottenJobIsSkipped`. У правок технические тексты свои — без
   «пришлите исходник». Остановку app ничего не держит.
 - `internal/mediaworker`: `Worker` берёт задания по одному, под блокировкой; ack — только после записи результата;
@@ -276,7 +279,10 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   10^18 + `INCR edit-local:seq`, исходник — чат `editlocal.LocalChatID` 1, имя `local-<8 hex>`; занятый в S3 ключ не
   перезаписывается — следующий ID), `editor.Executor` в цикле как воркеры задач (`DeferredError` — ожидание ≤ 5 с или
   канал `done`, остальное кроме `PermanentError` — ретраи с бэкоффом `TASKS_*`, `LastAttempt`, прогон ≤ `TASKS_TIMEOUT`;
-  отмена контекста — `Board.Forget` задания, воркер его отменяет), файлы версии из S3 → `OUT/v<N>/`, `OUT/state.json`
+  отмена контекста — `Board.Forget` задания, воркер его отменяет; аренда — `editlocal.LeaseBoard` кладёт токен прогона
+  из контекста в `Job.Lease`, `Runner.holdLease` держит ключ с TTL `DefaultLeaseTTL` 20 с и продлевает раз в 5 с, после
+  `docker kill` воркер бросает задание ≤ 20 с + 3 с; задание версии с чужим токеном (убитый прогон) `dropStale` снимает с
+  доски перед прогоном), файлы версии из S3 → `OUT/v<N>/`, `OUT/state.json`
   (`format` 1, `pending` — сделанная, но не скачанная версия; без FILE/REVISION — докачка) и `OUT/.lock`.
   Расход модели — `editlocal.UsageMeter` поверх `agents.Runtime` (decider собирается в модуле, не из `editplan.Module`).
   Makefile экспортирует `FILE`/`CAPTION`/`OUT`/`REVISION` через `$(value …)` (без раскрытия `$`); «образ старше кода» —

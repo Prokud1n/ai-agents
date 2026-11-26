@@ -79,6 +79,8 @@ type board interface {
 	WorkerAlive(ctx context.Context) (bool, error)
 	ListenDone(ctx context.Context, handle func(ctx context.Context, taskID int64)) error
 	Forget(ctx context.Context, id string) error
+	Lease(ctx context.Context, jobID, token string, ttl time.Duration) error
+	ReleaseLease(ctx context.Context, jobID, token string) error
 }
 
 type store interface {
@@ -113,6 +115,10 @@ type Settings struct {
 	// LockStaleAfter: a lock of the output directory older than this is reported as stale (EDITOR_JOB_TIMEOUT: the
 	// longest edit); 0 is never by age.
 	LockStaleAfter time.Duration
+	// LeaseTTL and LeaseRenew of the lease the run holds on its job while it waits (editjob.Job.Lease); 0 is
+	// DefaultLeaseTTL and DefaultLeaseRenew.
+	LeaseTTL   time.Duration
+	LeaseRenew time.Duration
 }
 
 // Params of NewRunner.
@@ -164,6 +170,14 @@ func NewRunner(p *Params) *Runner {
 
 	if r.settings.RunTimeout <= 0 {
 		r.settings.RunTimeout = DefaultRunTimeout
+	}
+
+	if r.settings.LeaseTTL <= 0 {
+		r.settings.LeaseTTL = DefaultLeaseTTL
+	}
+
+	if r.settings.LeaseRenew <= 0 {
+		r.settings.LeaseRenew = DefaultLeaseRenew
 	}
 
 	if r.settings.LockStaleAfter <= 0 {

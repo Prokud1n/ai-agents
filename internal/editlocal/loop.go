@@ -20,14 +20,27 @@ const (
 // execute runs the executor as the task workers do until the version is made or fails: a deferred run waits (the
 // done channel wakes it early), any other failure but a permanent one is retried while attempts are left. Each run
 // is bounded by RunTimeout (TASKS_TIMEOUT). An interrupted edit (Ctrl+C) takes its job off the board: the worker
-// cancels a job that is not there (T3.14), so nothing goes on rendering for nobody.
+// cancels a job that is not there (T3.14), so nothing goes on rendering for nobody. A killed run (docker kill) cannot
+// do that: its job carries the lease of the run (LeaseBoard), refreshed while the run waits, and the worker drops the
+// job once the lease expires; the next run of the version takes the job of the killed one off the board first.
 func (r *Runner) execute(ctx context.Context, data *tasks.ExecuteData, timings *Timings) (tasks.Output, error) {
+	id := editjob.JobID(data.TaskID, data.Version)
+
+	held, err := r.holdLease(ctx, id)
+	if err != nil {
+		return tasks.Output{}, err
+	}
+	defer held.release()
+
+	ctx = withLease(ctx, held.token)
+	r.dropStale(ctx, id, held.token)
+
 	wake, stop := r.listen(ctx, data.TaskID)
 	defer stop()
 
 	output, err := r.loop(ctx, data, timings, wake)
 	if err != nil && ctx.Err() != nil {
-		r.forget(ctx, editjob.JobID(data.TaskID, data.Version))
+		r.forget(ctx, id)
 	}
 
 	return output, err
@@ -100,14 +113,19 @@ func (r *Runner) forget(ctx context.Context, id string) {
 }
 
 func stageText(s stage) string {
-	if s == renderStage {
+	switch s {
+	case renderStage:
 		return "воркер рендерит"
+	case decideStage:
+		return "Монтажёр решает правку"
+	default:
+		return "воркер: очередь, транскрипция и план"
 	}
-
-	return "воркер: очередь, транскрипция и план"
 }
 
-// stage is the stage of the job of the version on the board; before it is submitted, the stage it will have.
+// stage is the stage of the job of the version on the board. Before it is submitted: the plan of the first version
+// (it is submitted at once), the decision of the model for a revision (the render is submitted only after it, and a
+// refused revision has none).
 func (r *Runner) stage(ctx context.Context, run *tasks.ExecuteData) stage {
 	job, found, err := r.board.Job(ctx, editjob.JobID(run.TaskID, run.Version))
 	if err != nil {
@@ -120,7 +138,7 @@ func (r *Runner) stage(ctx context.Context, run *tasks.ExecuteData) stage {
 	case found:
 		return planStage
 	case run.Version > 1:
-		return renderStage
+		return decideStage
 	default:
 		return planStage
 	}

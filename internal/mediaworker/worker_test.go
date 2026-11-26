@@ -3,6 +3,7 @@ package mediaworker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/Prokud1n/ai-agents/internal/config"
 	"github.com/Prokud1n/ai-agents/internal/editjob"
+	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
+	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
 var testNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
@@ -41,6 +44,10 @@ type fakeBoard struct {
 	forgetOnLock bool
 	// jobErr fails reading the job from the board (Redis is down).
 	jobErr error
+	// leaseLost: the lease of a job with Job.Lease is gone (make edit was killed).
+	leaseLost bool
+	// lockTTL of the board; 0 is 30 ms (the board is checked at each refresh too).
+	lockTTL time.Duration
 
 	acked    []string
 	finished []editjob.Result
@@ -191,7 +198,28 @@ func (b *fakeBoard) NotifyDone(context.Context, *editjob.Job) {
 
 func (*fakeBoard) Heartbeat(context.Context, string) error { return nil }
 
-func (*fakeBoard) LockTTL() time.Duration { return 30 * time.Millisecond }
+func (b *fakeBoard) LockTTL() time.Duration {
+	if b.lockTTL > 0 {
+		return b.lockTTL
+	}
+
+	return 30 * time.Millisecond
+}
+
+func (b *fakeBoard) LeaseHeld(_ context.Context, job *editjob.Job) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return job.Lease == "" || !b.leaseLost, nil
+}
+
+// loseLease drops the lease, as when make edit is killed and stops refreshing it.
+func (b *fakeBoard) loseLease() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.leaseLost = true
+}
 
 // fakeRunner returns the result and error; block waits for the context instead (a long job).
 type fakeRunner struct {
@@ -227,8 +255,17 @@ func (r *fakeRunner) Run(ctx context.Context, job *editjob.Job) (*editjob.Result
 func newTestWorker(board *fakeBoard, runner *fakeRunner) *Worker {
 	w := NewWorker(board, runner, &config.MediaWorker{}, slog.New(slog.DiscardHandler))
 	w.now = func() time.Time { return testNow }
+	w.checkInterval = 10 * time.Millisecond
 
 	return w
+}
+
+// leased is the delivery of a local edit's job: it holds a lease.
+func leased(d *editjob.Delivery) *editjob.Delivery {
+	job := *d.Job
+	job.Lease = "lease-token"
+
+	return &editjob.Delivery{MessageID: d.MessageID, Job: &job}
 }
 
 // delivery is a job that may wait in the queue until queueDeadline and runs for an hour.
@@ -333,6 +370,20 @@ func TestWorkerHandle(t *testing.T) {
 			expectedAcks: 1,
 		},
 		{
+			name:  "a job whose lease is gone (make edit was killed) is skipped without a run or a result",
+			board: &fakeBoard{leaseLost: true}, runner: &fakeRunner{result: done}, delivery: leased(delivery(later)),
+			expectedAcks: 1,
+		},
+		{
+			name: "a job with a held lease is run", board: &fakeBoard{}, runner: &fakeRunner{result: done},
+			delivery: leased(delivery(later)), expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
+		},
+		{
+			name:  "a job without a lease does not depend on leases",
+			board: &fakeBoard{leaseLost: true}, runner: &fakeRunner{result: done}, delivery: delivery(later),
+			expectedRuns: 1, expectedAcks: 1, expectedStatus: editjob.DoneStatus,
+		},
+		{
 			name: "a malformed entry is acked", board: &fakeBoard{}, runner: &fakeRunner{},
 			delivery: &editjob.Delivery{MessageID: firstEntry}, expectedAcks: 1,
 		},
@@ -408,6 +459,7 @@ func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
 				b.stored = &replaced
 			},
 		},
+		{name: "the lease is gone", change: (*fakeBoard).loseLease},
 		{name: "the board cannot be read", change: (*fakeBoard).failJobReads, expectedCode: editjob.TimeoutCode},
 	}
 
@@ -422,7 +474,7 @@ func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
 
 			// The job may run for 2 s: a run cancelled by the board ends long before.
 			began := time.Now()
-			w.handle(t.Context(), deliveryWithTimeout(time.Now().Add(time.Hour), 2*time.Second))
+			w.handle(t.Context(), leased(deliveryWithTimeout(time.Now().Add(time.Hour), 2*time.Second)))
 
 			assert.Equal(t, 1, runner.calls)
 			assert.Equal(t, 1, board.unlocked)
@@ -440,6 +492,72 @@ func TestWorkerCancelsJobLeftTheBoard(t *testing.T) {
 			assert.Len(t, board.acked, 1)
 		})
 	}
+}
+
+// blockingTranscriber is Whisper that answers only when its context is done: it signals started and records the
+// context's error.
+type blockingTranscriber struct {
+	started chan struct{}
+	errs    chan error
+}
+
+func newBlockingTranscriber() *blockingTranscriber {
+	return &blockingTranscriber{started: make(chan struct{}, 1), errs: make(chan error, 1)}
+}
+
+func (b *blockingTranscriber) Transcribe(ctx context.Context, _ transcription.TranscribeData) (*transcription.Result, error) {
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+
+	<-ctx.Done()
+	b.errs <- ctx.Err()
+
+	return nil, fmt.Errorf("failed to transcribe: %w", ctx.Err())
+}
+
+// TestWorkerCancelsForgottenJobInSeconds: the board is checked apart from the lock refresh (here once a minute / 3),
+// so a job forgotten during the transcription (Ctrl+C of make edit) is cancelled within seconds: Whisper gets a
+// cancelled context, no result is stored, the entry is acked.
+func TestWorkerCancelsForgottenJobInSeconds(t *testing.T) {
+	t.Parallel()
+
+	fakes := newPipelineFakes(t)
+	speech := newBlockingTranscriber()
+
+	pipeline, err := NewPipeline(&PipelineParams{
+		Store: fakes.store, Prober: fakes.prober, Keys: fakes.keys, Transcriber: speech, Cutter: fakes.cutter,
+		Burner: fakes.burner, Log: slog.New(slog.DiscardHandler),
+		Config: &config.MediaWorker{
+			WorkDir: t.TempDir(), MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 20,
+			Fit: string(ffmpeg.PadFitMode),
+		},
+	})
+	require.NoError(t, err)
+
+	board := &fakeBoard{lockTTL: time.Minute}
+	w := NewWorker(board, pipeline, &config.MediaWorker{}, slog.New(slog.DiscardHandler))
+	require.Equal(t, boardCheckInterval, w.checkInterval)
+
+	forgetAfter := time.AfterFunc(time.Second, board.forget)
+	defer forgetAfter.Stop()
+
+	began := time.Now()
+	w.handle(t.Context(), deliveryWithTimeout(time.Now().Add(time.Hour), time.Hour))
+
+	assert.Less(t, time.Since(began), 5*time.Second, "cancelled at the next check of the board")
+
+	select {
+	case got := <-speech.errs:
+		require.ErrorIs(t, got, context.Canceled, "Whisper is cancelled")
+	default:
+		require.Fail(t, "Whisper was not called")
+	}
+
+	assert.Empty(t, board.finished)
+	assert.Len(t, board.acked, 1, "acked without a result")
+	assert.Equal(t, 1, board.unlocked)
 }
 
 // TestWorkerRunsResubmittedJobOnce: after Forget the app submits the job again under the same ID with a new creation
