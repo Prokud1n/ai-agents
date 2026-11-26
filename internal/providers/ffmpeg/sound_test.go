@@ -320,7 +320,7 @@ func TestRunnerSoundSync(t *testing.T) {
 			}
 
 			pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-				[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, "s16le", "-"}), 1<<21)
+				[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, rawSoundFormat, "-"}), 1<<21)
 			require.NoError(t, err)
 
 			samples := make([]int, 0, len(pcm)/2)
@@ -482,8 +482,8 @@ func TestRunnerTruePeakBright(t *testing.T) {
 }
 
 // TestRunnerCapFilePeak: a rendered reel whose true peak is reported above -1 dBTP (the AAC encoder overshot) gets its
-// sound made again from the source with the same gain and a lower ceiling of the limiter: the loudness stays at the
-// target (not under -14.5 LUFS, as a volume change of the whole sound would make it), the picture is copied, the file
+// sound made again from the source with a lower ceiling of the limiter and the gain fitted again: the loudness stays at
+// the target (not under -14.5 LUFS, as a volume change of the whole sound would make it), the picture is copied, the file
 // starts with its index (+faststart) and the sound is not shifted against the first render.
 func TestRunnerCapFilePeak(t *testing.T) {
 	t.Parallel()
@@ -545,7 +545,8 @@ func TestRunnerCapFilePeak(t *testing.T) {
 
 	out := measureLoudness(ctx, t, r, reel)
 	assert.GreaterOrEqual(t, out.Integrated, minLevel, "the loudness stays at the target")
-	assert.Contains(t, probeStreams(t, r, reel), "h264,180,320", "the picture is kept")
+	assert.InDelta(t, target, out.Integrated, 0.5, "the gain is fitted again under the lower ceiling")
+	assert.Contains(t, probeStreams(t, r, reel), "h264,1080,1920", "the picture is kept")
 
 	data, err := os.ReadFile(reel)
 	require.NoError(t, err)
@@ -557,8 +558,9 @@ func TestRunnerCapFilePeak(t *testing.T) {
 	after := decodeSamples(ctx, t, r, reel)
 	assert.InDelta(t, len(before), len(after), sampleRate/100, "the sound is as long as before")
 	assert.Equal(t, 0, bestLag(before, after, maxLag), "the sound is not shifted")
-	t.Logf("capped: %.1f LUFS → %.1f LUFS, true peak %.1f dBTP, the ceiling lower by %.1f dB",
-		burned.Sound.Output.Integrated, out.Integrated, out.TruePeak, report.PeakCut)
+	t.Logf("capped: %.1f LUFS → %.1f LUFS, true peak %.1f dBTP, the ceiling lower by %.1f dB, gain %+.1f → %+.1f dB "+
+		"(%d passes)", burned.Sound.Output.Integrated, out.Integrated, out.TruePeak, report.PeakCut, burned.Sound.Gain,
+		report.Gain, report.Passes)
 }
 
 // decodeSamples decodes the sound of a file as mono 48 kHz samples.
@@ -569,7 +571,7 @@ func decodeSamples(ctx context.Context, t *testing.T, r *Runner, path string) []
 	require.NoError(t, err)
 
 	pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-		[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, "s16le", "-"}), 1<<22)
+		[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, rawSoundFormat, "-"}), 1<<22)
 	require.NoError(t, err)
 
 	samples := make([]float64, 0, len(pcm)/2)

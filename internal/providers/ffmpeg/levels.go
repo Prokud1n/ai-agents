@@ -36,6 +36,9 @@ type Levels struct {
 	DB     []float64
 }
 
+// rawSoundFormat: signed 16-bit little-endian samples.
+const rawSoundFormat = "s16le"
+
 // AudioLevels measures the level of the first audio stream of src in LevelWindow windows.
 func (r *Runner) AudioLevels(ctx context.Context, src string) (*Levels, error) {
 	in, err := localFile(src)
@@ -59,7 +62,7 @@ func (r *Runner) AudioLevels(ctx context.Context, src string) (*Levels, error) {
 
 	args := append(commonArgs(), inputArgs(in)...)
 	args = append(args, mapFlag, "0:a:0", channelsFlag, audioChannels, sampleRateFlag, audioSampleRate,
-		formatFlag, "s16le", out)
+		formatFlag, rawSoundFormat, out)
 
 	if _, err := r.run(ctx, r.ffmpegPath, args, nil); err != nil {
 		return nil, fmt.Errorf("failed to decode the sound for its levels: %w", err)

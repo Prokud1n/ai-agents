@@ -309,7 +309,7 @@ func TestRunnerJointsWithoutClicks(t *testing.T) {
 	require.NoError(t, err)
 
 	pcm, err := r.runLimited(ctx, r.ffmpegPath, concat(commonArgs(), inputArgs(in),
-		[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, "s16le", "-"}), 1<<20)
+		[]string{noVideoFlag, channelsFlag, "1", sampleRateFlag, "48000", formatFlag, rawSoundFormat, "-"}), 1<<20)
 	require.NoError(t, err)
 
 	steps := make([]float64, 0, len(pcm)/2)

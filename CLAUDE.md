@@ -395,8 +395,8 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   первого — секущая с наклоном ≥ 0,25, ±12 dB); ошибка замера (не отмена) — рендер без поправки, `SoundReport.FitError`
   → лог воркера. Лимитер — на 192 кГц (`aresample` вокруг `alimiter`, предел −2 dBTP → после AAC ≤ −1,0 dBTP).
   Звук черновика — AAC 192k (на 128k кодек поднимал true peak ярких звуков на 4+ dB); готовый файл меряется отдельным
-  проходом (`measureFile`), true peak выше −1,0 dBTP — звук пересобирается из исходника той же склейкой с тем же
-  усилением и потолком лимитера ниже на превышение + 0,5 dB (`capFilePeak`, `cutSoundGraph`, видео копируется,
+  проходом (`measureFile`), true peak выше −1,0 dBTP — звук пересобирается из исходника той же склейкой с потолком
+  лимитера ниже на превышение + 0,5 dB и усилением, подобранным заново `fitLoudness` (`capFilePeak`, `cutSoundGraph`, видео копируется,
   `+faststart`, ≤ 3 dB, `SoundReport.PeakCut`; громкость не падает под −14,5); его ошибка (не отмена) задание не роняет —
   файл как есть, `SoundReport.PeakError`; поправка, упёршаяся в ±12 dB, — `SoundReport.CorrectionCapped` → `BurnReport.Sound.Output` → `subtitles.BurnResult.Sound`
   → строка «Громкость» с итогом и true peak. Скорость: `ffmpeg.groupSegments` (inputs.go) — куски с промежутком < 3 с в

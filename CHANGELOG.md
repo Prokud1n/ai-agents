@@ -517,9 +517,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first, ±12 dB at most); the limiter works oversampled to 192 kHz (the review saw +1.5 dBTP after AAC at 48 kHz); the
   rendered file is measured, and `decisions.log` has that measurement («итог … LUFS, true peak … dBTP»), not the
   target. The sound of a draft is AAC 192k (at 128k the encoder pushed the true peak of bright bursts up by 4+ dB); a
-  file still above −1.0 dBTP gets its sound made again from the source with the same gain and the ceiling of the
-  limiter lower by the overshoot + 0.5 dB (at most 3 dB; the video copied, `+faststart`), so the loudness stays at the
-  target (lowering the whole sound took it under −14.5 LUFS). A failed measuring pass is logged, the draft is rendered
+  file still above −1.0 dBTP gets its sound made again from the source with the ceiling of the limiter lower by
+  the overshoot + 0.5 dB (at most 3 dB) and the gain fitted again by passes over the sound alone (a lower ceiling
+  presses the speech too); the video is copied, `+faststart`; so the loudness stays at the target (lowering the whole
+  sound took it under −14.5 LUFS). A failed measuring pass is logged, the draft is rendered
   with the gain by the measurement of the source; a failed peak pass does not fail the job either: the file is the
   render as it was and `decisions.log` says so («снизить пики после кодека не удалось, файл оставлен как есть»); a
   correction that reached ±12 dB is marked («упёрлась в предел — громкость может не попасть в цель»).

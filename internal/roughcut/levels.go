@@ -152,39 +152,7 @@ func (s *speechLevels) around(t float64) float64 {
 // the silence after them: when nothing is heard right at or after from, the end is the last window above the threshold
 // inside the word, not before inner (from when the word must not be shortened); from if the word is silent there too.
 func (s *speechLevels) speechEnd(from, inner, limit float64) float64 {
-	last := from
-
-scan:
-	for t := math.Floor(from/s.window) * s.window; t < limit; t += s.window {
-		switch {
-		case s.at(t+s.window/2) > s.threshold:
-			last = max(last, min(t+s.window, limit))
-		case t-last >= speechHole:
-			break scan
-		}
-	}
-
-	if last > from {
-		return last
-	}
-
-	return s.heardEndInside(from, inner)
-}
-
-// heardEndInside is speechEnd inside the word: from itself if the sound reaches it, else the end of the last window
-// above the threshold in [inner, from].
-func (s *speechLevels) heardEndInside(from, inner float64) float64 {
-	if inner >= from || s.at(from-s.window/2) > s.threshold {
-		return from
-	}
-
-	for t := math.Floor(from/s.window)*s.window - s.window; t+s.window >= inner-gridEpsilon; t -= s.window {
-		if s.at(t+s.window/2) > s.threshold {
-			return max(min(t+s.window, from), inner)
-		}
-	}
-
-	return from
+	return s.heardEdge(from, inner, limit, forward)
 }
 
 // speechStart is where the sound of a word starting at to (by Whisper) really starts: the start of the first window
@@ -192,39 +160,43 @@ func (s *speechLevels) heardEndInside(from, inner float64) float64 {
 // or before to (Whisper started the word early, in the silence), the start is the first window above the threshold
 // inside the word, not after inner (to when the word must not be shortened); to if the word is silent there too.
 func (s *speechLevels) speechStart(to, inner, limit float64) float64 {
-	first := to
+	return s.heardEdge(to, inner, limit, backward)
+}
+
+// Directions of heardEdge: out of a word past its end, or back past its start.
+const (
+	forward  = 1.0
+	backward = -1.0
+)
+
+// heardEdge is speechEnd (d forward) or speechStart (d backward) of a word edge: times are mirrored by d, so «later»
+// is d*t > d*u for both.
+func (s *speechLevels) heardEdge(edge, inner, limit, d float64) float64 {
+	first := d * math.Floor(d*edge/s.window) * s.window // the grid point at or before the edge, looking out
+	last := edge
 
 scan:
-	for t := math.Ceil(to/s.window) * s.window; t > limit; t -= s.window {
+	for t := first; d*t < d*limit; t += d * s.window {
 		switch {
-		case s.at(t-s.window/2) > s.threshold:
-			first = min(first, max(t-s.window, limit))
-		case first-t >= speechHole:
+		case s.at(t+d*s.window/2) > s.threshold:
+			last = d * max(d*last, min(d*(t+d*s.window), d*limit))
+		case d*(t-last) >= speechHole:
 			break scan
 		}
 	}
 
-	if first < to {
-		return first
+	if d*last > d*edge || d*inner >= d*edge || s.at(edge-d*s.window/2) > s.threshold {
+		return last
 	}
 
-	return s.heardStartInside(to, inner)
-}
-
-// heardStartInside is speechStart inside the word: to itself if the sound starts there, else the start of the first
-// window above the threshold in [to, inner].
-func (s *speechLevels) heardStartInside(to, inner float64) float64 {
-	if inner <= to || s.at(to+s.window/2) > s.threshold {
-		return to
-	}
-
-	for t := math.Ceil(to/s.window)*s.window + s.window; t-s.window <= inner+gridEpsilon; t += s.window {
-		if s.at(t-s.window/2) > s.threshold {
-			return min(max(t-s.window, to), inner)
+	// Nothing heard at the edge or past it: the last sound inside the word.
+	for t := first - d*s.window; d*(t+d*s.window) >= d*inner-gridEpsilon; t -= d * s.window {
+		if s.at(t+d*s.window/2) > s.threshold {
+			return d * max(min(d*(t+d*s.window), d*edge), d*inner)
 		}
 	}
 
-	return to
+	return edge
 }
 
 // innerEnd is how far inside a word its end may be moved by the sound: not before its middle and not more than

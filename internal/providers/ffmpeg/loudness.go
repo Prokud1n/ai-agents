@@ -213,11 +213,13 @@ func cutSoundGraph(segments []Segment, opts RenderOptions, tail, label string) s
 }
 
 // capFilePeak brings the true peak of the rendered file (path) under maxFilePeak when the AAC encoder pushed it over:
-// the sound of the cut is made again from the source (src, a local URL) with the same gain and the ceiling of the
-// limiter lower by the overshoot and peakMargin (by at most maxPeakCut in all), encoded and joined with the picture of
-// the file (copied, +faststart). Only the loudest peaks are pressed, the loudness stays at the target (a volume
-// change of the whole sound would take it under -14.5 LUFS). The report is updated (PeakCut, Output); the file is
-// replaced only by a complete one, the temporary file is removed in any case.
+// the sound of the cut is made again from the source (src, a local URL) with the ceiling of the limiter lower by the
+// overshoot and peakMargin (by at most maxPeakCut in all) and the gain fitted again (fitLoudness, from the gain of the
+// render: a lower ceiling presses the speech too, 1.5 dB of it took 0.9 LU of a dense speech-like sound), encoded and
+// joined with the picture of the file (copied, +faststart). So the loudness stays at the target (a volume change of
+// the whole sound took it under -14.5 LUFS). A failed fitting pass leaves the gain of the render. The report is
+// updated (PeakCut, the gain, Output); the file is replaced only by a complete one, the temporary file is removed in
+// any case.
 func (r *Runner) capFilePeak(ctx context.Context, src, path string, cut *Cut, report *SoundReport) error {
 	if cut == nil || cut.Options.Loudness == nil {
 		return nil
@@ -230,6 +232,8 @@ func (r *Runner) capFilePeak(ctx context.Context, src, path string, cut *Cut, re
 
 	defer func() { _ = os.Remove(path + peakSuffix) }() // best effort: gone after a successful replace
 
+	correction := cut.Options.Loudness.Correction
+
 	for range peakRetries {
 		if report.Output == nil || report.Output.TruePeak <= maxFilePeak {
 			return nil
@@ -240,19 +244,15 @@ func (r *Runner) capFilePeak(ctx context.Context, src, path string, cut *Cut, re
 			return nil
 		}
 
-		opts := cut.Options
-		target := *opts.Loudness
-		target.TruePeak -= report.PeakCut + lower
-		opts.Loudness = &target
-
-		inputs := append(inputArgs(src), inputArgs(out)...)
-
-		err := r.runSoundGraph(ctx, cutSoundGraph(cut.Segments, opts, "", peakLabel), inputs,
-			[]string{mapFlag, "1:v:0", mapFlag, "[" + peakLabel + "]", videoCodecFlag, "copy", audioCodecFlag, renderACodec,
-				"-b:a", outAudioBits, sampleRateFlag, outAudioRate, channelsFlag, outChannels, "-movflags", "+faststart",
-				formatFlag, renderFormat, tmp}, nil)
+		opts, err := r.refitPeak(ctx, src, cut, correction, report.PeakCut+lower, report)
 		if err != nil {
-			return fmt.Errorf("failed to lower the peaks of the sound: %w", err)
+			return err
+		}
+
+		correction = opts.Loudness.Correction
+
+		if err := r.resound(ctx, src, out, tmp, cut.Segments, opts); err != nil {
+			return err
 		}
 
 		if err := os.Rename(path+peakSuffix, path); err != nil {
@@ -261,6 +261,58 @@ func (r *Runner) capFilePeak(ctx context.Context, src, path string, cut *Cut, re
 
 		report.PeakCut += lower
 		report.Output = r.measureFile(ctx, out)
+	}
+
+	return nil
+}
+
+// refitPeak is the options of the cut with the ceiling of the limiter lower by below and the gain fitted again from
+// correction; the report gets the new gain. Only a cancelled context is an error: a failed pass keeps correction.
+func (r *Runner) refitPeak(
+	ctx context.Context,
+	src string,
+	cut *Cut,
+	correction, below float64,
+	report *SoundReport,
+) (RenderOptions, error) {
+	opts := cut.Options
+	target := *opts.Loudness
+	target.TruePeak -= below
+	target.Correction = correction
+	opts.Loudness = &target
+
+	fitted, passes, err := r.fitLoudness(ctx, src, cut.Segments, opts)
+	if err != nil && ctx.Err() != nil {
+		return RenderOptions{}, fmt.Errorf("failed to fit the loudness under the lower ceiling: %w", err)
+	}
+
+	if err == nil {
+		opts = fitted
+		report.Passes += passes
+	}
+
+	report.Gain, report.Correction = opts.Loudness.Gain(), opts.Loudness.Correction
+	report.CorrectionCapped = correctionCapped(opts.Loudness.Correction)
+
+	return opts, nil
+}
+
+// correctionCapped: the correction reached its bound (fitLoudness clamps it to ±maxCorrection).
+func correctionCapped(correction float64) bool {
+	return math.Abs(correction) >= maxCorrection
+}
+
+// resound makes the sound of the cut from the source (src) with opts and joins it with the picture of the rendered
+// file (out, copied) into tmp, +faststart.
+func (r *Runner) resound(ctx context.Context, src, out, tmp string, segments []Segment, opts RenderOptions) error {
+	inputs := append(inputArgs(src), inputArgs(out)...)
+
+	err := r.runSoundGraph(ctx, cutSoundGraph(segments, opts, "", peakLabel), inputs,
+		[]string{mapFlag, "1:v:0", mapFlag, "[" + peakLabel + "]", videoCodecFlag, "copy", audioCodecFlag, renderACodec,
+			"-b:a", outAudioBits, sampleRateFlag, outAudioRate, channelsFlag, outChannels, "-movflags", "+faststart",
+			formatFlag, renderFormat, tmp}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to lower the peaks of the sound: %w", err)
 	}
 
 	return nil

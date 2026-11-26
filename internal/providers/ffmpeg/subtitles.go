@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -245,7 +244,7 @@ func soundReport(cut *Cut, passes int, fitErr error) *SoundReport {
 
 	return &SoundReport{
 		Gain: l.Gain(), Correction: l.Correction, Passes: passes, FitError: fitErr,
-		CorrectionCapped: math.Abs(l.Correction) >= maxCorrection,
+		CorrectionCapped: correctionCapped(l.Correction),
 	}
 }
 
