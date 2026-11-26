@@ -15,6 +15,9 @@ const (
 	planStage stage = "plan"
 	// renderStage: the render job of a decided version waits in the queue and is rendered.
 	renderStage stage = "render"
+	// decideStage: the model decides on a revision; no job is submitted yet. Its time outside the model counts to the
+	// render, as before the stage was told apart.
+	decideStage stage = "decide"
 )
 
 // Timings of a local edit by stage.
@@ -33,7 +36,7 @@ func (t *Timings) add(s stage, elapsed, model time.Duration) {
 	t.Model += model
 
 	switch s {
-	case renderStage:
+	case renderStage, decideStage:
 		t.Render += elapsed - model
 	default:
 		t.Plan += elapsed - model
