@@ -113,7 +113,8 @@ func abbreviation(word string) bool {
 			return false
 		}
 
-		if capitals++; capitals == 2 {
+		capitals++
+		if capitals == 2 {
 			return true
 		}
 	}

@@ -38,7 +38,7 @@ func TestDescribe(t *testing.T) {
 			result:  editjob.Result{SourceDuration: 60, Duration: 45, Candidates: 2},
 			version: 1,
 			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы и оговорки).\n" +
-				"Спорные повторы оставил в ролике: 2.",
+				leftTwoRepeats,
 		},
 		{
 			name:    "the caption applied and the repeats decided",
@@ -54,7 +54,7 @@ func TestDescribe(t *testing.T) {
 			name:    "the caption is not applied",
 			result:  editjob.Result{SourceDuration: 60, Duration: 45},
 			version: 1,
-			caption: "добавь музыку",
+			caption: testMusicCaption,
 			summary: &editjob.Summary{Note: captionCannotNote},
 			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы и оговорки).\n" +
 				captionCannotNote + "\nВаша подпись к исходнику: «добавь музыку»",
@@ -108,7 +108,7 @@ func TestDescribe(t *testing.T) {
 			name:    "a caption declined",
 			result:  editjob.Result{SourceDuration: 60, Duration: 45},
 			version: 1,
-			caption: "добавь музыку",
+			caption: testMusicCaption,
 			summary: &editjob.Summary{Note: testMusicText},
 			expected: "Черновик рилс готов: было 1:00, стало 0:45 — вырезал 0:15 (паузы и оговорки).\n" + testMusicText +
 				"\nВаша подпись к исходнику: «добавь музыку»",
@@ -197,29 +197,29 @@ func TestFirstSummary(t *testing.T) {
 		},
 		{
 			name: "the caption applied, no repeats", caption: "без начала", plan: &roughcut.Plan{},
-			outcome:  editplan.Outcome{Kind: editplan.EditOutcome, Changes: []string{"Обрезал начало: убрал первые 2 с."}},
-			expected: editjob.Summary{Changes: []string{"Обрезал начало: убрал первые 2 с."}},
+			outcome:  editplan.Outcome{Kind: editplan.EditOutcome, Changes: []string{trimmedStartLine}},
+			expected: editjob.Summary{Changes: []string{trimmedStartLine}},
 		},
 		{
-			name: "the caption cannot be applied", caption: "добавь музыку", plan: twoCandidates,
+			name: "the caption cannot be applied", caption: testMusicCaption, plan: twoCandidates,
 			outcome: editplan.Outcome{Kind: editplan.CannotOutcome},
 			expected: editjob.Summary{
-				Changes: []string{"Спорные повторы оставил в ролике: 2."}, Note: captionCannotNote,
+				Changes: []string{leftTwoRepeats}, Note: captionCannotNote,
 			},
 		},
 		{
 			name: "the caption declined, the rest applied", caption: "добавь музыку и убери начало", plan: &roughcut.Plan{},
 			outcome: editplan.Outcome{
-				Kind: editplan.EditOutcome, Changes: []string{"Обрезал начало: убрал первые 2 с."},
+				Kind: editplan.EditOutcome, Changes: []string{trimmedStartLine},
 				Declined: []string{testMusicText},
 			},
-			expected: editjob.Summary{Changes: []string{"Обрезал начало: убрал первые 2 с."}, Note: testMusicText},
+			expected: editjob.Summary{Changes: []string{trimmedStartLine}, Note: testMusicText},
 		},
 		{
-			name: "the caption declined", caption: "добавь музыку", plan: twoCandidates,
+			name: "the caption declined", caption: testMusicCaption, plan: twoCandidates,
 			outcome: editplan.Outcome{Kind: editplan.CannotOutcome, Declined: []string{testMusicText}},
 			expected: editjob.Summary{
-				Changes: []string{"Спорные повторы оставил в ролике: 2."},
+				Changes: []string{leftTwoRepeats},
 				Note:    captionDeclinedNote + " " + testMusicText,
 			},
 		},
@@ -255,7 +255,7 @@ func TestFirstSummary(t *testing.T) {
 		{
 			name: "the model did not decide the repeats", plan: twoCandidates,
 			outcome:  editplan.Outcome{Kind: editplan.NoAnswerOutcome},
-			expected: editjob.Summary{Changes: []string{"Спорные повторы оставил в ролике: 2."}},
+			expected: editjob.Summary{Changes: []string{leftTwoRepeats}},
 		},
 	}
 
@@ -271,11 +271,14 @@ func TestFirstSummary(t *testing.T) {
 }
 
 const (
-	testCleanupLine = "Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с)."
-	testMusicText   = "Музыку добавьте в Instagram при публикации — я её не накладываю."
-	testSpeedText   = "Ускорение и замедление я не делаю — видео идёт с обычной скоростью."
-	droppedHello    = "Не вошло: «привет»."
-	cutNoneOfOne    = "Спорные повторы: вырезал 0, оставил 1."
+	testMusicCaption = "добавь музыку"
+	trimmedStartLine = "Обрезал начало: убрал первые 2 с."
+	leftTwoRepeats   = "Спорные повторы оставил в ролике: 2."
+	testCleanupLine  = "Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с)."
+	testMusicText    = "Музыку добавьте в Instagram при публикации — я её не накладываю."
+	testSpeedText    = "Ускорение и замедление я не делаю — видео идёт с обычной скоростью."
+	droppedHello     = "Не вошло: «привет»."
+	cutNoneOfOne     = "Спорные повторы: вырезал 0, оставил 1."
 )
 
 // The notes of a long talking head only cleaned, for the recommended 30–60 s.

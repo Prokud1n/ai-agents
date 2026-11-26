@@ -46,10 +46,10 @@ func TestRequestCleanupOnly(t *testing.T) {
 		{name: "a first version without a caption", change: func(*Request) {}, expected: true},
 		{name: "the cleanup off", change: func(req *Request) { req.Cleanup = false }},
 		{name: "a caption", change: func(req *Request) { req.Caption = "без начала" }},
-		{name: "a revision", change: func(req *Request) { req.Version = 2 }},
+		{name: "a revision is not cleaned", change: func(req *Request) { req.Version = 2 }},
 		{name: "a long talk is selected", change: func(req *Request) { req.TargetSeconds = 2 }},
 		{
-			name:   "a workout",
+			name:   "a workout is not cleaned",
 			change: func(req *Request) { req.Plan.Edit = &roughcut.Edit{Mode: roughcut.WorkoutMode} },
 		},
 	}

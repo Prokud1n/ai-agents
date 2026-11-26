@@ -43,8 +43,8 @@ const (
 
 // cleanupPhrases: a countdown and a slate before the content.
 var cleanupPhrases = [][]string{
-	{"раз", "два", "три"}, {"это", "последний", "дубль"}, {"планка", "укрепляет", "спину"},
-	{"держите", "локти", "ровно"}, {"дышите", "очень", "спокойно"}, {"сохраняйте", "это", "видео"},
+	{"раз", "два", "три"}, {"вот", "последний", "дубль"}, {"планка", "укрепляет", "спину"},
+	{"держите", "локти", "ровно"}, {"дышите", "очень", "спокойно"}, {"сохраняйте", "наше", "видео"},
 }
 
 // cleanupTranscript is the transcript of the synthetic talking head: a segment per phrase.
@@ -175,7 +175,7 @@ func TestIntegrationCleanupFirstVersion(t *testing.T) {
 	assert.Contains(t, prompts[0], "почисти ролик (раздел «Чистка дублей и подготовки»)")
 	assert.Contains(t, prompts[0], "Похоже на слова про съёмку")
 	assert.Contains(t, prompts[0], "«раз два три»")
-	assert.Contains(t, prompts[0], "«это последний дубль»")
+	assert.Contains(t, prompts[0], "«вот последний дубль»")
 
 	assert.Contains(t, v1.Text, "(паузы, оговорки и неудачные дубли)")
 	assert.Contains(t, v1.Text, editplan.CleanupLinePrefix+": 1 фрагмент (")
@@ -189,7 +189,7 @@ func TestIntegrationCleanupFirstVersion(t *testing.T) {
 
 	decisions := string(env.read(t, files.Decisions))
 	assert.Contains(t, decisions, "Чистка первой версии: отсчёт и слова про дубль")
-	assert.Contains(t, decisions, "Чистка: вырезаны слова 0–5 «раз два три это последний дубль»")
+	assert.Contains(t, decisions, "Чистка: вырезаны слова 0–5 «раз два три вот последний дубль»")
 }
 
 // TestIntegrationCaptionDeclined: the caption «добавь музыку» is declined by its kind: the automatic cut is rendered

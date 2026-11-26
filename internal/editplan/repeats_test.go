@@ -16,6 +16,9 @@ import (
 const repeatSpeech = "ну привет ну привет ну привет || меня зовут настя я тренер || " +
 	"меня зовут настя я тренер по фитнесу. | сегодня про планку и спину."
 
+// straightBack is a phrase compared with others.
+const straightBack = "держите спину ровно"
+
 // wholeRequest is the first version of the speech with a plan that keeps the whole source, so every phrase is in it.
 func wholeRequest(text string) *Request {
 	src := speech(text)
@@ -73,10 +76,10 @@ func TestSimilarity(t *testing.T) {
 	}{
 		{name: "the same words", a: "Ну, привет!", b: "ну привет", expected: 1},
 		{name: "one word is not a repeat", a: "так", b: "так"},
-		{name: "the same thought, other forms", a: "держите спину ровно", b: "держим ровную спину всегда", expected: 2.0 / 3},
+		{name: "the same thought, other forms", a: straightBack, b: "держим ровную спину всегда", expected: 2.0 / 3},
 		{name: "a share of the shorter one", a: "сегодня расскажу про планку и пресс", b: "сегодня про планку", expected: 1},
-		{name: "different thoughts", a: "держите спину ровно", b: "дышите спокойно и не спешите"},
-		{name: "one content word in common", a: "держите спину ровно", b: "спину не сутульте никогда"},
+		{name: "different thoughts", a: straightBack, b: "дышите спокойно и не спешите"},
+		{name: "one content word in common", a: straightBack, b: "спину не сутульте никогда"},
 		{name: "«ё» is «е»", a: "всё ещё болит", b: "все еще болит", expected: 1},
 	}
 
@@ -100,7 +103,7 @@ func TestRepeatsInside(t *testing.T) {
 		{name: "a greeting three times", input: "ну привет ну привет ну привет", expected: true},
 		{name: "a word twice", input: "держим держим спину", expected: true},
 		{name: "short words only", input: "да да конечно"},
-		{name: "no repeat", input: "держите спину ровно"},
+		{name: "no repeat", input: straightBack},
 	}
 
 	for _, tt := range tests {
@@ -124,7 +127,7 @@ func TestAboutShooting(t *testing.T) {
 		{name: "a slate", input: "это последний дубль", expected: true},
 		{name: "a restart", input: "стоп давай заново", expected: true},
 		{name: "the camera", input: "камера пишет", expected: true},
-		{name: "the content", input: "держите спину ровно", expected: false},
+		{name: "the content", input: straightBack, expected: false},
 		{name: "one in a count is not a countdown", input: "раз и два", expected: false},
 	}
 
