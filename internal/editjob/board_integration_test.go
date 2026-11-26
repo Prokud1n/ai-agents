@@ -494,6 +494,12 @@ func checkForgottenIsStale(t *testing.T, board *Board, job *Job) {
 func TestIntegrationBoardLease(t *testing.T) {
 	t.Parallel()
 
+	const (
+		leaseFirst  = "first"
+		leaseSecond = "second"
+		leaseOther  = "other"
+	)
+
 	board := newTestBoard(t)
 	ctx := context.Background()
 
@@ -503,7 +509,7 @@ func TestIntegrationBoardLease(t *testing.T) {
 	assert.True(t, held, "a job of the app has no lease")
 
 	job := testJob(12)
-	job.Lease = "first"
+	job.Lease = leaseFirst
 
 	submitted, err := board.Submit(ctx, job)
 	require.NoError(t, err)
@@ -512,50 +518,50 @@ func TestIntegrationBoardLease(t *testing.T) {
 	stored, found, err := board.Job(ctx, job.ID)
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Equal(t, "first", stored.Lease, "the lease token is stored with the job")
+	assert.Equal(t, leaseFirst, stored.Lease, "the lease token is stored with the job")
 
 	held, err = board.LeaseHeld(ctx, job)
 	require.NoError(t, err)
 	assert.False(t, held, "no lease taken yet")
 
-	require.NoError(t, board.Lease(ctx, job.ID, "first", integrationTTL))
+	require.NoError(t, board.Lease(ctx, job.ID, leaseFirst, integrationTTL))
 	held, err = board.LeaseHeld(ctx, job)
 	require.NoError(t, err)
 	assert.True(t, held)
 
-	require.NoError(t, board.ReleaseLease(ctx, job.ID, "other"))
+	require.NoError(t, board.ReleaseLease(ctx, job.ID, leaseOther))
 	held, err = board.LeaseHeld(ctx, job)
 	require.NoError(t, err)
 	assert.True(t, held, "another token does not release the lease")
 
-	require.NoError(t, board.Lease(ctx, job.ID, "second", integrationTTL))
+	require.NoError(t, board.Lease(ctx, job.ID, leaseSecond, integrationTTL))
 	held, err = board.LeaseHeld(ctx, job)
 	require.NoError(t, err)
 	assert.False(t, held, "a new run took the lease over: the old job is not waited for")
 
-	require.NoError(t, board.Lease(ctx, job.ID, "first", integrationTTL))
-	require.NoError(t, board.ReleaseLease(ctx, job.ID, "first"))
+	require.NoError(t, board.Lease(ctx, job.ID, leaseFirst, integrationTTL))
+	require.NoError(t, board.ReleaseLease(ctx, job.ID, leaseFirst))
 	held, err = board.LeaseHeld(ctx, job)
 	require.NoError(t, err)
 	assert.False(t, held, "released")
 
-	require.NoError(t, board.Lease(ctx, job.ID, "first", integrationTTL))
+	require.NoError(t, board.Lease(ctx, job.ID, leaseFirst, integrationTTL))
 	require.Eventually(t, func() bool {
-		held, err := board.LeaseHeld(ctx, job)
+		leased, err := board.LeaseHeld(ctx, job)
 
-		return err == nil && !held
+		return err == nil && !leased
 	}, waitFor, tick, "a lease that is not refreshed expires")
 
-	renewed, err := board.RenewLease(ctx, job.ID, "first", integrationTTL)
+	renewed, err := board.RenewLease(ctx, job.ID, leaseFirst, integrationTTL)
 	require.NoError(t, err)
 	assert.True(t, renewed, "an expired lease is taken again by its run")
 
-	require.NoError(t, board.Lease(ctx, job.ID, "second", integrationTTL))
-	renewed, err = board.RenewLease(ctx, job.ID, "first", integrationTTL)
+	require.NoError(t, board.Lease(ctx, job.ID, leaseSecond, integrationTTL))
+	renewed, err = board.RenewLease(ctx, job.ID, leaseFirst, integrationTTL)
 	require.NoError(t, err)
 	assert.False(t, renewed, "a refresh does not take the lease of another run over")
 
-	held, err = board.LeaseHeld(ctx, &Job{ID: job.ID, Lease: "second"})
+	held, err = board.LeaseHeld(ctx, &Job{ID: job.ID, Lease: leaseSecond})
 	require.NoError(t, err)
 	assert.True(t, held, "the other run keeps its lease")
 

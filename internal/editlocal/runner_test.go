@@ -698,6 +698,8 @@ func TestRunnerLeasesJob(t *testing.T) {
 func TestRunnerDropsJobOfKilledRun(t *testing.T) {
 	t.Parallel()
 
+	const killedRun = "killed-run"
+
 	id := editjob.JobID(testTaskID, 1)
 
 	doneResult := &editjob.Result{JobID: id, Status: editjob.DoneStatus}
@@ -709,19 +711,19 @@ func TestRunnerDropsJobOfKilledRun(t *testing.T) {
 		result    *editjob.Result
 		forgotten []string
 	}{
-		{name: "a job of a killed run", stored: &editjob.Job{ID: id, Lease: "killed-run"}, forgotten: []string{id}},
+		{name: "a job of a killed run", stored: &editjob.Job{ID: id, Lease: killedRun}, forgotten: []string{id}},
 		{
 			name: "a done job of a killed run for the same caption stays", result: doneResult,
-			stored: &editjob.Job{ID: id, Lease: "killed-run", RevisionHash: editjob.TextHash(testCaption)},
+			stored: &editjob.Job{ID: id, Lease: killedRun, RevisionHash: editjob.TextHash(testCaption)},
 		},
 		{
 			name: "a done job of a killed run for another caption is dropped", result: doneResult,
-			stored:    &editjob.Job{ID: id, Lease: "killed-run", RevisionHash: editjob.TextHash("другая подпись")},
+			stored:    &editjob.Job{ID: id, Lease: killedRun, RevisionHash: editjob.TextHash("другая подпись")},
 			forgotten: []string{id},
 		},
 		{
 			name: "a failed job of a killed run is dropped", result: failedResult,
-			stored:    &editjob.Job{ID: id, Lease: "killed-run", RevisionHash: editjob.TextHash(testCaption)},
+			stored:    &editjob.Job{ID: id, Lease: killedRun, RevisionHash: editjob.TextHash(testCaption)},
 			forgotten: []string{id},
 		},
 		{name: "a job without a lease", stored: &editjob.Job{ID: id}},
