@@ -410,7 +410,7 @@ func TestHideReadingsInDocument(t *testing.T) {
 	assert.Contains(t, ass, ",Main,,0,0,0,,а что если онлайн-тренировка", "the question is shown")
 	assert.Contains(t, ass, ",Section,", "the heading is drawn")
 
-	dropped := append(slices.Clone(notes), Note{Kind: CalloutNote, Text: "6 лет", Start: start + 0.2})
+	dropped := append(slices.Clone(notes), Note{Kind: CalloutNote, Text: calloutYears, Start: start + 0.2})
 
 	ass, _ = buildDocument(&CreateSubtitlesData{Transcript: result, Hook: trainerHook, Notes: dropped}, &style)
 
