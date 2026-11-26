@@ -24,7 +24,8 @@ const (
 	// minContentRunes: shorter words («и», «в», «на») are not compared.
 	minContentRunes = 3
 	// A word is compared without its ending: a word of shortStemRunes letters without the last one, a longer one
-	// without the last two, so the forms of a word match («спину» and «спина», «ноги» and «ногу»).
+	// without the last two, so the forms of a word match («спину» and «спина», «ноги» and «ногу»); words that start
+	// with the same shortStemRunes letters or more match too («держите» and «держим», «ровно» and «ровнее»).
 	shortStemRunes = 4
 	// minSeries similar phrases in a row are an enumeration or a refrain, not a failed take.
 	minSeries = 3
@@ -60,10 +61,11 @@ var numberWords = []string{
 	"один", "одна", "одно", "два", "две", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять",
 	"первый", "первая", "первое", "первую", "второй", "вторая", "второе", "вторую", "третий", "третья", "третье",
 	"третью", "четвертый", "четвертая", "четвертое", "пятый", "пятая", "пятое", "во-первых", "во-вторых", "в-третьих",
+	"первых", "вторых", "третьих",
 }
 
-// normPhrase is a phrase of the prompt kept in the reel with its words normalized: all of them, the stems of the
-// content words, and the numbers.
+// normPhrase is a phrase of the prompt kept in the reel with its words normalized: all of them, the content words
+// (compared by formsOfWord), and the numbers.
 type normPhrase struct {
 	from, to int
 	all      []string
@@ -91,8 +93,8 @@ func writeRepeats(b *strings.Builder, req *Request) {
 		}
 	}
 
-	writeHintList(b, "\nПовтор подряд внутри фразы (оставь одно повторение, если это не счёт и не акцент):\n", words,
-		filterPhrases(list, func(p *normPhrase) bool { return repeatsInside(p.all) }, maxRepeatHints))
+	writeHintList(b, "\nПовтор подряд — внутри фразы или в соседних фразах (оставь одно повторение, если это не счёт и "+
+		"не акцент):\n", words, inRowRepeats(list))
 	writeHintList(b, "\nПохоже на слова про съёмку — отсчёт, «начинаем», «дубль», «заново» (проверь: это не всегда "+
 		"подготовка):\n", words, filterPhrases(list, func(p *normPhrase) bool { return aboutShooting(p.all) },
 		maxShootingHints))
@@ -139,7 +141,7 @@ func normalizedPhrases(transcript *transcription.Result, plan *roughcut.Plan) []
 	return out
 }
 
-// add puts a normalized word into the phrase: a number, a content word by its stem, or only into all.
+// add puts a normalized word into the phrase: a number, a content word, or only into all.
 func (p *normPhrase) add(word string) {
 	if word == "" {
 		return
@@ -151,7 +153,7 @@ func (p *normPhrase) add(word string) {
 	case isNumber(word):
 		p.numbers = append(p.numbers, word)
 	case isContent(word):
-		p.stems = append(p.stems, stem(word))
+		p.stems = append(p.stems, word)
 	}
 }
 
@@ -167,6 +169,23 @@ func stem(word string) string {
 	default:
 		return word
 	}
+}
+
+// formsOfWord: the content words are forms of one word — the same stem, or the same start of shortStemRunes letters or
+// more.
+func formsOfWord(a, b string) bool {
+	if stem(a) == stem(b) {
+		return true
+	}
+
+	ra, rb := []rune(a), []rune(b)
+	n := 0
+
+	for n < len(ra) && n < len(rb) && ra[n] == rb[n] {
+		n++
+	}
+
+	return n >= shortStemRunes
 }
 
 // isNumber: digits, a numeral or an ordinal word.
@@ -227,13 +246,15 @@ func similarPairs(words []transcription.Word, list []normPhrase) [][2]normPhrase
 	return out
 }
 
-// seriesOf marks the phrases of every run of minSeries or more neighbours, each similar to the next one.
+// seriesOf marks the phrases of every run of minSeries or more neighbours, each similar to the next one but not the
+// same: an enumeration or a refrain. The same phrase said again («ну привет» three times, an intro said three times in
+// a row) is a repeat, not a series.
 func seriesOf(list []normPhrase) []bool {
 	marked := make([]bool, len(list))
 
 	for from := 0; from < len(list); {
 		to := from
-		for to+1 < len(list) && similarity(&list[to], &list[to+1]) > 0 {
+		for to+1 < len(list) && similarity(&list[to], &list[to+1]) > 0 && !samePhrase(&list[to], &list[to+1]) {
 			to++
 		}
 
@@ -249,10 +270,21 @@ func seriesOf(list []normPhrase) []bool {
 	return marked
 }
 
-// similarity of two phrases: 0 for phrases with different numbers (the points of a list); 1 for the same words; the
-// share of the shorter phrase's content stems found in the other one when it is at least minRepeatShare; 0 otherwise.
+// samePhrase: the same words, or the same content words.
+func samePhrase(a, b *normPhrase) bool {
+	if len(a.all) > 0 && slices.Equal(a.all, b.all) {
+		return true
+	}
+
+	return len(a.stems) > 0 && len(a.stems) == len(b.stems) && matchCount(a.stems, b.stems, formsOfWord) == len(a.stems)
+}
+
+// similarity of two phrases: 0 for phrases that both have numbers and differ in them (the points of a list); 1 for
+// the same words; the share of the shorter phrase's content words found in the other one when it is at least
+// minRepeatShare; 0 otherwise.
 func similarity(a, b *normPhrase) float64 {
-	if len(a.numbers)+len(b.numbers) > 0 && commonCount(a.numbers, b.numbers) != max(len(a.numbers), len(b.numbers)) {
+	if len(a.numbers) > 0 && len(b.numbers) > 0 &&
+		(len(a.numbers) != len(b.numbers) || matchCount(a.numbers, b.numbers, equalWords) != len(a.numbers)) {
 		return 0
 	}
 
@@ -265,7 +297,7 @@ func similarity(a, b *normPhrase) float64 {
 		return 0
 	}
 
-	common := commonCount(a.stems, b.stems)
+	common := matchCount(a.stems, b.stems, formsOfWord)
 	share := float64(common) / float64(shorter)
 
 	if common < minRepeatWords || share < minRepeatShare {
@@ -275,23 +307,27 @@ func similarity(a, b *normPhrase) float64 {
 	return share
 }
 
-// commonCount is the number of words of a found in b, each word of b matched once.
-func commonCount(a, b []string) int {
-	counts := make(map[string]int, len(b))
-	for _, w := range b {
-		counts[w]++
-	}
-
+// matchCount is the number of words of a that match a word of b, each word of b matched once.
+func matchCount(a, b []string, match func(x, y string) bool) int {
+	used := make([]bool, len(b))
 	n := 0
 
-	for _, w := range a {
-		if counts[w] > 0 {
-			counts[w]--
-			n++
+	for _, x := range a {
+		for k, y := range b {
+			if !used[k] && match(x, y) {
+				used[k] = true
+				n++
+
+				break
+			}
 		}
 	}
 
 	return n
+}
+
+func equalWords(a, b string) bool {
+	return a == b
 }
 
 // repeatsInside: a group of up to maxRunWords words with a content word is said twice in a row («ну привет ну привет»).
@@ -328,6 +364,21 @@ func aboutShooting(all []string) bool {
 	}
 
 	return false
+}
+
+// inRowRepeats are up to maxRepeatHints phrases with words said again in a row inside them or said again as the next
+// phrase with the same words.
+func inRowRepeats(list []normPhrase) []normPhrase {
+	var out []normPhrase
+
+	for i := range list {
+		next := i+1 < len(list) && len(list[i].stems) > 0 && slices.Equal(list[i].all, list[i+1].all)
+		if len(out) < maxRepeatHints && (repeatsInside(list[i].all) || next) {
+			out = append(out, list[i])
+		}
+	}
+
+	return out
 }
 
 // filterPhrases are up to limit phrases that match.

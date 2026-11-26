@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   countdown, «начинаем», «это последний дубль», talking to the operator) through `cleanup_words` — with a caption
   too, the caption's own cuts are described as before (`editplan.Request.Cleaning`). Without a caption
   (`CleanupOnly`) the trim and `remove_words` count as the cleaning; no length, cuts by time, exercise titles or
-  muting; the workout mode without cuts; a cleaning that keeps less than a quarter of the reel or less than 15 s goes
-  back to the model, a second failure renders the automatic cut with a note and the hook if it passed its checks.
+  muting; the workout mode without cuts; a cleaning that keeps less than a quarter of the reel or less than 15 s (a guard against «cut almost
+  everything» only, not a limit of the cleaning) goes back to the model, a second failure renders the automatic cut with a note and the hook if it passed its checks.
   With `EDITOR_CLEANUP=false` the hook-only first version works as before. The prompt lists the hints found by the
   code: similar kept phrases (stems without stop words; a different numeral or a series of three is not a repeat; the
   12 most similar), words said again in a row inside a phrase, phrases about the shooting. The draft says «Убрал

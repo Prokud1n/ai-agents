@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
@@ -40,7 +39,7 @@ func TestWriteRepeats(t *testing.T) {
 
 	assert.Contains(t, hints, "Похожие фразы — подсказка для чистки")
 	assert.Contains(t, hints, "«меня зовут настя я тренер» ↔ слова 11–17 (")
-	assert.Contains(t, hints, "Повтор подряд внутри фразы")
+	assert.Contains(t, hints, "Повтор подряд — внутри фразы или в соседних фразах")
 	assert.Contains(t, hints, "- слова 0–5 (0:00.5) «ну привет ну привет ну привет»")
 	assert.NotContains(t, hints, "Похоже на слова про съёмку", "nothing about the shooting")
 
@@ -81,6 +80,8 @@ func TestSimilarity(t *testing.T) {
 		{name: "ordinal points", a: "первая ошибка в планке", b: "вторая ошибка в планке"},
 		{name: "the same number said again", a: "страх номер один", b: "страх номер один это", expected: 1},
 		{name: "stop words only in common", a: "что это значит для вас", b: "как это работает для вас"},
+		{name: "a number in one of them", a: "про ошибки в планке", b: "про три ошибки в планке", expected: 1},
+		{name: "«во первых» without a hyphen", a: "во первых держите спину", b: "во вторых держите спину"},
 	}
 
 	for _, tt := range tests {
@@ -92,39 +93,74 @@ func TestSimilarity(t *testing.T) {
 	}
 }
 
-func TestStem(t *testing.T) {
+func TestFormsOfWord(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		a, b string
+		a, b     string
+		expected bool
 	}{
-		{a: "спину", b: "спина"},
-		{a: "ноги", b: "ногу"},
-		{a: "планку", b: "планка"},
-		{a: "колени", b: "колено"},
+		{a: "спину", b: "спина", expected: true},
+		{a: "ноги", b: "ногу", expected: true},
+		{a: "планку", b: "планка", expected: true},
+		{a: "держите", b: "держим", expected: true},
+		{a: "ровно", b: "ровной", expected: true},
+		{a: "ровно", b: "ровнее", expected: true},
+		{a: "спину", b: "спокойно"},
+		{a: "ноги", b: "нос"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.a+"/"+tt.b, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, stem(tt.a), stem(tt.b))
+			assert.Equal(t, tt.expected, formsOfWord(tt.a, tt.b))
 		})
 	}
 }
 
-// TestSimilarPairsSkipsSeries: three similar phrases in a row are an enumeration or a refrain, not a failed take.
-func TestSimilarPairsSkipsSeries(t *testing.T) {
+// TestSimilarPairsSeries: a run of three similar but different phrases is an enumeration (no hint), the same phrase
+// said three times in a row is a repeat (hinted), and so are two similar phrases apart.
+func TestSimilarPairsSeries(t *testing.T) {
 	t.Parallel()
 
-	req := wholeRequest("держим спину ровно. | держим спину ровно. | держим спину ровно. || дышите спокойно.")
-	pairs := similarPairs(req.Transcript.Words, normalizedPhrases(req.Transcript, req.Plan))
-	assert.Empty(t, pairs)
+	tests := []struct {
+		name     string
+		speech   string
+		expected int
+	}{
+		{name: "an enumeration", speech: "делаем выпад вперёд. | делаем выпад назад. | делаем выпад вбок. || дышите спокойно."},
+		{name: "the points of a list", speech: "страх номер один. | страх номер два. | страх номер три."},
+		{name: "a greeting three times", speech: "ну привет. | ну привет. | ну привет. || сегодня про планку.", expected: 2},
+		{
+			name: "an intro three times", expected: 2,
+			speech: "меня зовут настя я тренер. | меня зовут настя я тренер. | меня зовут настя я тренер по фитнесу.",
+		},
+		{name: "a repeat apart", speech: "держим спину ровно. | дышите спокойно. | держим спину ровно.", expected: 1},
+	}
 
-	req = wholeRequest("держим спину ровно. | дышите спокойно. | держим спину ровно.")
-	pairs = similarPairs(req.Transcript.Words, normalizedPhrases(req.Transcript, req.Plan))
-	require.Len(t, pairs, 1, "two of them apart are a repeat")
-	assert.Equal(t, 0, pairs[0][0].from)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := wholeRequest(tt.speech)
+			assert.Len(t, similarPairs(req.Transcript.Words, normalizedPhrases(req.Transcript, req.Plan)), tt.expected)
+		})
+	}
+}
+
+// TestInRowRepeats: «ну привет» said as three phrases is a repeat in a row, like inside one phrase.
+func TestInRowRepeats(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+
+	writeRepeats(&b, wholeRequest("ну привет. | ну привет. | ну привет. || сегодня про планку."))
+	hints := b.String()
+
+	assert.Contains(t, hints, "Повтор подряд — внутри фразы или в соседних фразах")
+	assert.Contains(t, hints, "- слова 0–1 (0:00.5) «ну привет»")
+	assert.Contains(t, hints, "«ну привет» ↔ слова 2–3")
 }
 
 func TestRepeatsInside(t *testing.T) {
