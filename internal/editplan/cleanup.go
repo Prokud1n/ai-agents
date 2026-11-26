@@ -31,8 +31,11 @@ type cleaning struct {
 const cleaningTask = " Ещё почисти ролик (раздел «Чистка дублей и подготовки»): неудачные дубли, повторы подряд и " +
 	"подготовку к съёмке вырежи через cleanup_words, а то, о чём просит подпись, — как обычно."
 
-// selectionCleaning is said in the task of the selection: the failed takes go first.
-const selectionCleaning = " Сначала выкинь неудачные дубли и подготовку к съёмке; из дублей оставляй последний полный."
+// selectionCleaning is said in the task of the selection: the failed takes go first, through cleanup_words, and count
+// in the length of the reel.
+const selectionCleaning = " Сначала выкинь неудачные дубли, повторы подряд и подготовку к съёмке через cleanup_words " +
+	"(раздел «Чистка дублей и подготовки»); из дублей оставляй последний полный. Вырезанное через cleanup_words тоже " +
+	"сокращает ролик и считается в его длине."
 
 // cleanupTask is the task of a first version only cleaned by the editor.
 func cleanupTask(req *Request) string {
@@ -50,16 +53,17 @@ func cleanupTask(req *Request) string {
 	return task + "\n"
 }
 
-// checkCleanup checks what a cleaning may do. cleanup_words are for a cleaning of a talking head only. A first
+// checkCleanup checks what a cleaning may do. cleanup_words are for a first talking head cleaned or shortened by the
+// selection (Request.CleansTakes) only: a revision and a workout cut through remove_words. A first
 // version only cleaned (Request.CleanupOnly) refuses what is not a cleaning — a length, cuts by time, exercise titles,
 // muting: the trainer asked for nothing; the workout mode passes, but then nothing is cut. Cutting words, trimming,
 // the disputed repeats, the hook, the screen notes and the corrections of the subtitles pass.
 func checkCleanup(req *Request, in *Input) error {
 	workout := in.Mode == roughcut.WorkoutMode
 
-	if len(in.CleanupWords) > 0 && (!req.Cleaning() || workout) {
-		return checkFailedf("cleanup_words — только для чистки первой версии разговорного ролика; иначе вырезай " +
-			"через remove_words")
+	if len(in.CleanupWords) > 0 && (!req.CleansTakes() || workout) {
+		return checkFailedf("cleanup_words — только для чистки или редакторского отбора первой версии разговорного " +
+			"ролика; иначе вырезай через remove_words")
 	}
 
 	if !req.CleanupOnly() {
@@ -92,7 +96,8 @@ func cutsWords(in *Input) bool {
 
 // cleanupOf counts what the cleaning removed: the runs of words it cut that the reel had without it, and the seconds
 // the reel lost. The cleaning is cleanup_words; a first version only cleaned counts remove_words and the trim too, and
-// must keep enough of the reel without the cleaning (the disputed repeats decided).
+// must keep enough of the reel without the cleaning (the disputed repeats decided). The selection has no such floor:
+// the range of its length is the guard.
 func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan *roughcut.Plan) (cleaning, error) {
 	only := req.CleanupOnly()
 	uncut, baseTrim, cut := *in, trimmed.ranges, in.CleanupWords

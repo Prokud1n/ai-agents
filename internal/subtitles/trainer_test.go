@@ -1,6 +1,7 @@
 package subtitles
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -287,8 +288,8 @@ func TestTrainerSectionsInDocument(t *testing.T) {
 }
 
 // TestSelectEvents: the select animation is the text, the frame and the cursor at its corner, standing small at the
-// right for 0.95 s, then moving and growing together by straight pieces that slow down (the frame never leaves the
-// screen), then the frame goes 0.18 s after the growth and the cursor 0.2 s later; the text stays. The frame is measured
+// right, 30 px lower, for 0.95 s, then moving and growing together by straight pieces that slow down, its right edge
+// held (the frame never leaves the screen), then the frame goes 0.18 s after the growth and the cursor at 1.67 s; the text stays. The frame is measured
 // by the advances of the font: 16 px around the text.
 func TestSelectEvents(t *testing.T) {
 	t.Parallel()
@@ -298,24 +299,24 @@ func TestSelectEvents(t *testing.T) {
 	const lines = `РАЗВЕИВАЮ СТРАХИ ОБ\NОНЛАЙН-ТРЕНИРОВКАХ`
 
 	require.Len(t, events, 3*(1+animSteps+1), "the text, the frame and the cursor: still, growing, still")
-	assert.Equal(t, `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an5\pos(794.9,532)\fscx40\fscy40\fad(150,0)}`+lines,
+	assert.Equal(t, `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an5\pos(857,562)\fscx35\fscy35\fad(150,0)}`+lines,
 		events[0], "two lines as in the trainer's reel at full size, «об» at the end of the first")
-	assert.Equal(t, `Dialogue: 2,0:00:00.95,0:00:00.99,Hook,,0,0,0,,{\an5\move(794.9,532,698.6,532,0,40)\fscx40\fscy40`+
-		`\t(0,40,\fscx62.7\fscy62.7)}`+lines, events[1], "fast at the start of the growth")
+	assert.Equal(t, `Dialogue: 2,0:00:00.95,0:00:00.99,Hook,,0,0,0,,{\an5\move(857,562,737.2,550.7,0,40)\fscx35\fscy35`+
+		`\t(0,40,\fscx59.6\fscy59.6)}`+lines, events[1], "fast at the start of the growth")
 	assert.Equal(t, `Dialogue: 2,0:00:01.23,0:00:04.00,Hook,,0,0,0,,{\an5\pos(540,532)\fscx100\fscy100\fad(0,150)}`+lines,
 		events[animSteps+1])
 
 	frame := events[animSteps+2]
-	assert.True(t, strings.HasPrefix(frame, `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an5\pos(794.9,532)\fscx40\fscy40`+
+	assert.True(t, strings.HasPrefix(frame, `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an5\pos(857,562)\fscx35\fscy35`+
 		`\bord0\shad0\1c&HFFFFFF&\1a&H00&\fad(150,0)\p1}m 6 6 l 981.4 6 `), frame)
 	assert.Equal(t, 6, strings.Count(frame, "m "), "the ring (two contours) and four handles")
 	assert.True(t, strings.HasPrefix(events[2*animSteps+3], `Dialogue: 2,0:00:01.23,0:00:01.41,Hook,`))
 	assert.Contains(t, events[2*animSteps+3], `\fad(0,120)\p1}`)
 
 	assert.True(t, strings.HasPrefix(events[2*animSteps+4], `Dialogue: 2,0:00:00.00,0:00:00.95,Hook,,0,0,0,,{\an7`+
-		`\pos(993,590.2)\bord2\shad0\1c&HFFFFFF&\3c&H000000&`))
+		`\pos(1030.7,613.3)\bord2\shad0\1c&HFFFFFF&\3c&H000000&`))
 	last := events[len(events)-1]
-	assert.True(t, strings.HasPrefix(last, `Dialogue: 2,0:00:01.23,0:00:01.61,Hook,,0,0,0,,{\an7\pos(1030.7,673)`), last)
+	assert.True(t, strings.HasPrefix(last, `Dialogue: 2,0:00:01.23,0:00:01.67,Hook,,0,0,0,,{\an7\pos(1030.7,673)`), last)
 	assert.True(t, strings.HasSuffix(last, `\fad(0,120)\p1}`+cursorPath+`{\p0}`))
 
 	for _, e := range events[2*animSteps+4:] {
@@ -324,7 +325,7 @@ func TestSelectEvents(t *testing.T) {
 
 	short := strings.Split(strings.TrimSuffix(hookEvent(trainerHook, 0.6, &style), "\n"), "\n")
 	require.Len(t, short, 3, "a short hook: the text, the frame and the cursor standing small")
-	assert.Contains(t, short[0], `\fscx40\fscy40\fad(150,150)}`)
+	assert.Contains(t, short[0], `\fscx35\fscy35\fad(150,150)}`)
 
 	plain := style
 	plain.Hook.Animation = NoHookAnimation
@@ -342,20 +343,94 @@ func TestHideUnderHook(t *testing.T) {
 	assert.Equal(t, cues, hideUnderHook(cues, 0), "no hook")
 }
 
-// TestHideReadings: the subtitle that reads a heading out (it starts within 0.3 s of it and ends before min_duration)
-// is not shown; the question after it, a long phrase starting at the heading and the rest are.
+// TestHideReadings: only the words that read a drawn heading out go («страх номер один» for «СТРАХ 1», «во-первых»
+// for «ПЕРВОЕ»), the rest of the phrase stays; a phrase at the heading that does not read it stays whole.
 func TestHideReadings(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
-	sections := []Note{{Kind: SectionNote, Text: fear1, Start: 5}}
-	cues := []cue{
-		{Start: 4.9, End: 6}, {Start: 6.1, End: 9}, {Start: 5.1, End: 8}, {Start: 1, End: 2},
+	tests := []struct {
+		name     string
+		text     string
+		heading  string
+		expected string
+	}{
+		{
+			name: "the reading and the question in one phrase", text: "Страх номер один: а что если не получится?",
+			heading: fear1Caps, expected: "а что если не получится?",
+		},
+		{name: "an ordinal", text: "Страх первый. Дорого.", heading: fear1Caps, expected: "Дорого."},
+		{name: "an adverb", text: "Во-первых, пейте воду.", heading: "ПЕРВОЕ", expected: "пейте воду."},
+		{
+			name: "a phrase that is not the reading", text: "Итак, начнём с простого.", heading: fear1Caps,
+			expected: "Итак, начнём с простого.",
+		},
+		{
+			name: "half of the heading is not enough with other words", text: "Страх мешает начать.",
+			heading: "СТРАХ НОМЕР 1 ОНЛАЙН", expected: "Страх мешает начать.",
+		},
+		{
+			name: "far from the heading", text: "Привет всем. Страх номер один.", heading: fear1Caps,
+			expected: "Привет всем. Страх номер один.",
+		},
 	}
 
-	assert.Equal(t, []cue{{Start: 6.1, End: 9}, {Start: 5.1, End: 8}, {Start: 1, End: 2}},
-		hideReadings(cues, sections, &style))
-	assert.Equal(t, cues, hideReadings(cues, nil, &style))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tokens := tokensFromTranscript(speech(tt.text))
+			heading := noteBlock{start: tokens[0].Start, end: 9, entries: []string{tt.heading}, lines: 1}
+
+			kept := hideReadings(tokens, []noteBlock{heading})
+
+			texts := make([]string, 0, len(kept))
+			for _, k := range kept {
+				texts = append(texts, k.Text)
+			}
+
+			assert.Equal(t, tt.expected, strings.Join(texts, " "))
+			assert.Equal(t, tokens, hideReadings(tokens, nil), "no heading drawn")
+		})
+	}
+}
+
+// TestHideReadingsInDocument: in one phrase without a pause the words reading the heading go and the question is
+// shown; a heading not drawn (a callout replaced it) hides nothing.
+func TestHideReadingsInDocument(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+	result := speech(hookPhrase, "Страх номер один: а что если онлайн-тренировка менее эффективна?")
+	start := wordStart(t, result, "Страх")
+	notes := []Note{{Kind: SectionNote, Text: fear1, Start: start}}
+
+	ass, _ := buildDocument(&CreateSubtitlesData{Transcript: result, Hook: trainerHook, Notes: notes}, &style)
+
+	assert.NotContains(t, strings.ToLower(ass), "номер один", "the reading is hidden")
+	assert.Contains(t, ass, ",Main,,0,0,0,,а что если онлайн-тренировка", "the question is shown")
+	assert.Contains(t, ass, ",Section,", "the heading is drawn")
+
+	dropped := append(slices.Clone(notes), Note{Kind: CalloutNote, Text: "6 лет", Start: start + 0.2})
+
+	ass, _ = buildDocument(&CreateSubtitlesData{Transcript: result, Hook: trainerHook, Notes: dropped}, &style)
+
+	assert.NotContains(t, ass, ",Section,", "the callout replaced the heading")
+	assert.Contains(t, ass, "страх номер один", "a heading not drawn hides nothing")
+}
+
+// wordStart is the start of the first word of the transcript written so.
+func wordStart(t *testing.T, result *transcription.Result, word string) float64 {
+	t.Helper()
+
+	for _, w := range result.Words {
+		if w.Word == word {
+			return w.Start
+		}
+	}
+
+	require.Failf(t, "no word", "%q", word)
+
+	return 0
 }
 
 // TestTrainerDocumentNoDoubles: in the trainer's document nothing of the speech stands under the hook or reads the

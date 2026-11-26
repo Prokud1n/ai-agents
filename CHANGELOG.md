@@ -22,12 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where the trainer goes to the next point; «На экране: 3 раздела.» in the description.
 - Obscene words in the subtitles, the hook, the notes and the exercise titles are shown with one letter masked
   («х*йня», «б*ять», «долбо*б»; «Ебола», «ебонит» stay); the sound is not touched.
-- In the trainer's style the speech is not shown under the hook (`hook.hide_subtitles`; a phrase started under it
-  is shown from its end), the phrase that reads a section heading out («страх номер один») is not shown under the
-  heading, the heading stays to the end of the question after it (2.5–6 s), a callout replaces a heading. The hook
-  is measured by the advances of its font (122 px, the frame 16 px around the text), stands small for 0.95 s, grows in
-  0.28 s slowing down, and stays 1.8–2.5 s. The first word of a sentence is lowered unless it has more capitals (МФЦ,
-  PDF); a name at the start of a sentence is lowered too (Whisper does not tell it apart) — accepted.
+- In the trainer's style the speech is not shown under the hook (`hook.hide_subtitles`; a phrase started under it is
+  shown from its end), only the words that read a section heading out («страх номер один») are not shown under the
+  heading — the rest of the phrase (the question) is, and a phrase at the heading that does not read it stays, the
+  heading stays to the end of the question after it (2.5–6 s), a callout replaces a heading. The hook is measured by
+  the advances of its font (122 px, the frame 16 px around the text), stands small for 0.95 s (35 %, 30 px lower),
+  grows to the left with its right edge held in 0.28 s slowing down, the cursor goes at 1.67 s, and stays 1.8–2.5 s.
+  The first word of a sentence is lowered unless it has more capitals (МФЦ, PDF); a name at the start of a sentence is
+  lowered too (Whisper does not tell it apart) — accepted.
+- The editorial selection of a long first version (longer than the target, 66 s by default) cuts the failed takes
+  through `cleanup_words` too: they count in the length of the reel and get the line about the cleaning in the
+  description, without the floor of a cleaning; a revision and a workout still refuse them.
 - A style file names its base: `base: trainer | words | phrase`; a file without it starts from the phrase style, so the
   files written before keep their look (the full `style.yaml` of T3.17 gives the reference reels' style). The app warns
   at the start when `REELS_HANDLE` is set but the media worker draws the trainer's style, which has no handle.

@@ -19,15 +19,16 @@ const (
 	minSectionDuration = 1.0
 	maxSectionDuration = 10.0
 	// readingWindow: a phrase that starts this close to a heading and ends before its min_duration reads the heading
-	// out («страх номер один»): it is not shown in the subtitles, and the heading stays for the phrase after it.
+	// out («страх номер один»): the heading stays for the phrase after it. The words that read it out start this
+	// close to it too (hideReadings).
 	readingWindow = 0.3
 )
 
 // SectionStyle is the look and the place of the section headings of a talking head («СТРАХ 1», «СТРАХ 2»): one line
 // centered above the subtitles, shown from the start of a section until the end of its first phrase (the question or
-// the thesis; the phrase that reads the heading out is skipped and not shown in the subtitles), MinDuration..MaxDuration
-// seconds; the next heading replaces it. Disabled: the headings are drawn as
-// callouts of the screen notes, in the hook's style at its place.
+// the thesis; the phrase that reads the heading out is skipped, and its words are not shown in the subtitles),
+// MinDuration..MaxDuration seconds; the next heading replaces it. Disabled: the headings are drawn as callouts of the
+// screen notes, in the hook's style at its place.
 type SectionStyle struct {
 	TextStyle `yaml:",inline"`
 
@@ -336,28 +337,6 @@ func hideUnderHook(cues []cue, hookEnd float64) []cue {
 		}
 
 		if c.End-c.Start >= minNoteShown {
-			out = append(out, c)
-		}
-	}
-
-	return out
-}
-
-// hideReadings drops the subtitles that read a section heading out («страх номер один» under «СТРАХ 1»): the heading
-// shows it. cues is not changed.
-func hideReadings(cues []cue, sections []Note, style *Style) []cue {
-	if len(sections) == 0 {
-		return cues
-	}
-
-	out := make([]cue, 0, len(cues))
-
-	for _, c := range cues {
-		reading := slices.ContainsFunc(sections, func(n Note) bool {
-			return readsHeading(c.Start, c.End, n.Start, &style.Section)
-		})
-
-		if !reading {
 			out = append(out, c)
 		}
 	}

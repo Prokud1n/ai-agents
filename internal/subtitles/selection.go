@@ -9,19 +9,23 @@ import (
 // The select animation of the hook (hook.animation select), as in the trainer's reel: the hook appears small at the
 // right in a thin white frame with square handles at its corners and an arrow cursor at its bottom right corner, as an
 // object selected in an editor, stands so for selectHold, then grows to its place and size over selectGrow, slowing
-// down at the end; selectFrameAfter later the frame fades out, the cursor at selectCursorAfter; the hook stays.
+// down at the end, its right edge held where it is (a hook narrower than the screen moves its right edge in from the
+// right); selectFrameAfter later the frame fades out, the cursor at selectCursorAfter (about 1.7 s); the hook stays.
 const (
 	// selectStartScale: the small hook is this share of its size.
-	selectStartScale = 0.4
+	selectStartScale = 0.35
+	// selectDrop: the small hook stands this much lower than the hook in its place, px.
+	selectDrop = 30.0
 	selectHold       = 950 // ms
 	selectGrow       = 280 // ms
 	// selectAccel is the \t acceleration of the growth: below 1 it slows down to the end.
 	selectAccel       = 0.5
 	selectFrameAfter  = 180 // ms
-	selectCursorAfter = 380 // ms
+	selectCursorAfter = 440 // ms
 	// selectFrameFade: the frame and the cursor fade out over it, ms.
 	selectFrameFade = 120
-	// selectRight: the small frame's right edge stands this far from the right edge of the frame, px.
+	// selectRight: the small frame's right edge stands at least this far right: this far from the right edge of the
+	// frame, px.
 	selectRight = 90
 	// selectPad is the frame around the text, selectStroke its width, selectHandleSize the side of a handle, px (of
 	// the full size: the small frame is thinner).
@@ -95,7 +99,9 @@ func selectionOf(words []string, lines [][2]int, style *Style) selection {
 		center.y = float64(FrameHeight-style.hookMargin()) - height/2
 	}
 
-	start := point{x: FrameWidth - selectRight - selectStartScale*frame.x/2, y: center.y}
+	// The right edge of the small frame is the hook's own in its place, so it grows to the left, or further right.
+	right := max(center.x+frame.x/2, FrameWidth-selectRight)
+	start := point{x: right - selectStartScale*frame.x/2, y: center.y + selectDrop}
 
 	return selection{scale: scale, frame: frame, start: start, center: center}
 }

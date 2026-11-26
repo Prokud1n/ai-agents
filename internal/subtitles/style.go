@@ -218,7 +218,7 @@ const (
 //
 // Sizes are ASS font sizes, the height of a line (for Manrope it is 1.37 of the em, for Fira 1.2): 60 is the 44 px
 // letters of her subtitles, 122 the 102 px ones of her hook. While the hook is shown the speech is not (her hook stands
-// alone), and the phrase that reads a section heading out («страх номер один») is not shown under it.
+// alone), and the words that read a section heading out («страх номер один») are not shown under it.
 func DefaultStyle() Style {
 	style := PhraseStyle()
 	style.Text = TextStyle{Font: regularFont, Size: 60, Color: white}
