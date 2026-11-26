@@ -145,6 +145,28 @@ func TestRequestSelecting(t *testing.T) {
 	}
 }
 
+// TestSelectionAndCleaning: with the cleanup on (EDITOR_CLEANUP) a first version longer than the target is selected
+// (the selection drops the failed takes itself, the task says so), one within it is cleaned; never both.
+func TestSelectionAndCleaning(t *testing.T) {
+	t.Parallel()
+
+	long := selectionRequest(t, 1)
+	long.Cleanup = true
+	assert.True(t, long.Selecting())
+	assert.False(t, long.Cleaning())
+	assert.False(t, long.CleanupOnly())
+	assert.Contains(t, Prompt(long), selectionCleaning)
+	assert.Contains(t, Prompt(long), "подготовку к съёмке через cleanup_words",
+		"the selection drops the failed takes through cleanup_words")
+	assert.True(t, long.CleansTakes())
+
+	short := selectionRequest(t, 1)
+	short.Cleanup, short.TargetSeconds = true, 20
+	assert.False(t, short.Selecting())
+	assert.True(t, short.Cleaning())
+	assert.True(t, short.CleanupOnly())
+}
+
 // TestApplySelection: a first version longer than the target must come out within the recommended range (±15 %); the
 // trainer is told how the reel starts and ends and what did not make it, the decisions log has the length and every
 // phrase left out.
@@ -187,6 +209,53 @@ func TestApplySelection(t *testing.T) {
 	workout, err := Apply(req, &Input{Decision: EditDecision, Reason: "тренировка", Mode: roughcut.WorkoutMode})
 	require.NoError(t, err, "a workout is not shortened")
 	assert.False(t, workout.Selected)
+}
+
+// TestApplySelectionWithCleanupWords: the selection of a first version cuts the failed takes through cleanup_words
+// (with the cleanup on or off): they count in the length of the reel and get the line about the cleaning, without the
+// floor of a cleaning; a revision still refuses them.
+func TestApplySelectionWithCleanupWords(t *testing.T) {
+	t.Parallel()
+
+	for _, cleanup := range []bool{true, false} {
+		req := selectionRequest(t, 1)
+		req.Cleanup = cleanup
+
+		_, err := Apply(req, &Input{
+			Decision: EditDecision, Reason: "дубль вступления", CleanupWords: []roughcut.WordRange{introWords},
+		})
+
+		var check *CheckError
+		require.ErrorAs(t, err, &check, "9.75 s with the take cut is still longer than 9.2 s")
+		assert.Contains(t, check.Message, "рилс должен быть 4–8 с", "the length counts the take")
+
+		outcome, err := Apply(req, &Input{
+			Decision: EditDecision, Reason: "дубль вступления и лишняя фраза",
+			Remove: []roughcut.WordRange{lowerWords}, CleanupWords: []roughcut.WordRange{introWords},
+		})
+		require.NoError(t, err)
+
+		assert.True(t, outcome.Selected)
+		assert.InDelta(t, 8.25, outcome.Duration, 0.01, "the take counts in the length")
+		assert.Equal(t, 1, outcome.Cleaned)
+		require.Len(t, outcome.Changes, 3)
+		assert.Equal(t, keptEndLine, outcome.Changes[0])
+		assert.Equal(t, "Не вошло: «не прогибайте поясницу».", outcome.Changes[1], "the take is not «не вошло»")
+		assert.Equal(t, CleanupLinePrefix+": 1 фрагмент (2,4 с).", outcome.Changes[2])
+		assert.Equal(t, []string{"Отбор под рилс: дубль вступления и лишняя фраза"}, outcome.Edit.Notes)
+		assert.Contains(t, outcome.Edit.Details, "Чистка: вырезаны слова 0–4 «привет сегодня расскажу про планку»")
+	}
+
+	revision := selectionRequest(t, 2)
+	revision.Cleanup = true
+
+	_, err := Apply(revision, &Input{
+		Decision: EditDecision, Reason: "дубль", CleanupWords: []roughcut.WordRange{introWords},
+	})
+
+	var check *CheckError
+	require.ErrorAs(t, err, &check)
+	assert.Contains(t, check.Message, "cleanup_words — только")
 }
 
 // TestApplyTargetLength: a length the trainer asked for («сделай 6 секунд») is checked within ±15 % in a revision too.

@@ -103,6 +103,10 @@ type Style struct {
 	// Handle is the trainer's Instagram handle over the whole reel; EndCard the card with it over the last seconds.
 	Handle  HandleStyle  `yaml:"handle"`
 	EndCard EndCardStyle `yaml:"end_card"`
+	// Section is the look of the section headings of a talking head («СТРАХ 1»): one at a time above the subtitles.
+	Section SectionStyle `yaml:"section"`
+	// Topbar is the small line at the top over the whole reel («tg: @ana_prokudina» on the left, «2x» on the right).
+	Topbar TopbarStyle `yaml:"topbar"`
 }
 
 // TitleStyle is the look and the place of the exercise titles. They stand at the edge opposite the subtitles, clear
@@ -177,6 +181,9 @@ type Layout struct {
 	CharWidth    float64 `yaml:"char_width"`
 	// TrimEndPunctuation drops a period, comma, colon or semicolon at the end of a subtitle.
 	TrimEndPunctuation bool `yaml:"trim_end_punctuation"`
+	// LowercaseSentences writes the first word of a sentence with a small letter, as the trainer does in her reels;
+	// names inside a sentence keep their capital («в Москве»).
+	LowercaseSentences bool `yaml:"lowercase_sentences"`
 }
 
 // The accent font and color of the default style: the key words, the exercise titles and the hook's key word.
@@ -185,6 +192,8 @@ const (
 	defaultAccentColor = "#F2B94B"
 	// defaultFont is the font of the speech, the word plate, the handle and the card; white is their light color.
 	defaultFont = "Manrope Medium"
+	// regularFont is Manrope Regular (Manrope-Regular.ttf): the hook of the phrase layout and the trainer's speech.
+	regularFont = "Manrope"
 	white       = "#FFFFFF"
 	// softShadow is the shadow of the phrase layout (40 % black); strongShadow keeps white text without a vignette
 	// readable on a light background (75 % black).
@@ -192,13 +201,78 @@ const (
 	strongShadow = "#000000BF"
 	// wordHookShadow: the hook and the notes of the word layout have no vignette under them.
 	wordHookShadow = 3
+	// peach is the color of the trainer's hook and section headings.
+	peach = "#E8A080"
+	// topbarGray is the translucent light gray of the top line (55 % white).
+	topbarGray = "#FFFFFF8C"
 )
 
-// DefaultStyle is the look of the reference reels the owner chose (T3.17): the speech one word at a time, small black
-// Manrope Medium on a white plate at the left edge right under the hook (about a third of the height), no accents
-// and no vignette; the hook and the screen notes in white Manrope at the top; the handle at the right edge. The
-// phrase layout of PhraseStyle is kept as assets/subtitles/style-phrase.yaml.
+// DefaultStyle is the trainer's own look, measured on the reel she edited and published herself (T3.20): the speech in
+// phrases of one or two lines, small white Manrope Regular in small letters, centered at the top under the top line,
+// without accents, plates or a vignette (a light shadow only); the hook in large peach Fira Sans Extra Condensed
+// ExtraBold capitals that appears as an object selected in an editor (a thin frame with handles and a cursor growing
+// to its size) and stays until the first section; the section headings («СТРАХ 1») in the same peach capitals above
+// the subtitles, one at a time; the top line «tg: @ana_prokudina … 2x» in small translucent gray. No Instagram handle
+// with its icon and no end card. The looks of before are WordsStyle (the reference reels, style-words.yaml) and
+// PhraseStyle (style-phrase.yaml).
+//
+// Sizes are ASS font sizes, the height of a line (for Manrope it is 1.37 of the em, for Fira 1.2): 60 is the 44 px
+// letters of her subtitles, 122 the 102 px ones of her hook. While the hook is shown the speech is not (her hook stands
+// alone), and the words that read a section heading out («страх номер один») are not shown under it.
 func DefaultStyle() Style {
+	style := PhraseStyle()
+	style.Text = TextStyle{Font: regularFont, Size: 60, Color: white}
+	style.Accent.MaxPerCue, style.Accent.LongestWord = 0, false
+	style.Shadow = Border{Color: softShadow, Size: 2}
+	style.Vignette.Enabled = false
+	style.Layout = Layout{
+		Mode:               PhraseMode,
+		Position:           TopPosition,
+		MarginTop:          455,
+		MarginBottom:       440,
+		MarginSide:         SafeZoneRight,
+		MaxLines:           2,
+		MaxLineChars:       30,
+		CharWidth:          0.41,
+		TrimEndPunctuation: true,
+		LowercaseSentences: true,
+	}
+	style.Hook = HookStyle{
+		TextStyle:     TextStyle{Font: defaultAccentFont, Size: 122, Uppercase: true, Color: peach},
+		MinDuration:   1.8,
+		MaxDuration:   2.5,
+		Fade:          150,
+		Gap:           24,
+		CharWidth:     0.41,
+		BoxPadding:    12,
+		Shadow:        Border{Color: softShadow, Size: 2},
+		Margin:        410,
+		MarginSide:    60,
+		MaxLines:      3,
+		Until:         SectionHookUntil,
+		Animation:     SelectHookAnimation,
+		HideSubtitles: true,
+	}
+	style.Handle.Enabled = false
+	style.Section = SectionStyle{
+		TextStyle:   TextStyle{Font: defaultAccentFont, Size: 78, Uppercase: true, Color: peach},
+		Enabled:     true,
+		Margin:      372,
+		MinDuration: 2.5,
+		MaxDuration: 6,
+		Fade:        150,
+	}
+	style.Topbar = defaultTopbar()
+	style.Topbar.Enabled = true
+
+	return style
+}
+
+// WordsStyle is the look of the reference reels the owner chose (T3.17): the speech one word at a time, small black
+// Manrope Medium on a white plate at the left edge right under the hook (about a third of the height), no accents
+// and no vignette; the hook and the screen notes (the section headings among them, as callouts) in white Manrope at
+// the top; the Instagram handle at the right edge. It is assets/subtitles/style-words.yaml.
+func WordsStyle() Style {
 	style := PhraseStyle()
 	style.Layout.Mode = WordMode
 	style.Vignette.Enabled = false
@@ -244,7 +318,7 @@ func PhraseStyle() Style {
 			BoxPadding: 14,
 		},
 		Hook: HookStyle{
-			TextStyle:   TextStyle{Font: "Manrope", Size: 60, Color: white},
+			TextStyle:   TextStyle{Font: regularFont, Size: 60, Color: white},
 			MinDuration: 2.5,
 			MaxDuration: 8,
 			Fade:        150,
@@ -252,10 +326,14 @@ func PhraseStyle() Style {
 			CharWidth:   0.5,
 			BoxPadding:  12,
 			Shadow:      Border{Color: softShadow, Size: 2},
+			Until:       PhraseHookUntil,
+			Animation:   NoHookAnimation,
 		},
 		WordBox: defaultWordBox(),
 		Handle:  defaultHandle(),
 		EndCard: defaultEndCard(),
+		Section: defaultSection(),
+		Topbar:  defaultTopbar(),
 	}
 }
 
@@ -274,17 +352,64 @@ func LoadStyle(path string) (Style, error) {
 	return style, nil
 }
 
-// ParseStyle decodes YAML over DefaultStyle strictly (unknown fields are errors) and validates the result.
+// StyleBase names the built-in style a style file starts from (its field base).
+type StyleBase string
+
+const (
+	// TrainerBase is DefaultStyle, the trainer's own look (assets/subtitles/style.yaml).
+	TrainerBase StyleBase = "trainer"
+	// WordsBase is WordsStyle, the reference reels of T3.17 (style-words.yaml).
+	WordsBase StyleBase = "words"
+	// PhraseBase is PhraseStyle (style-phrase.yaml); a file without base starts from it, so a style file written
+	// before T3.20 keeps its look when the built-in default changes.
+	PhraseBase StyleBase = "phrase"
+)
+
+// styleDocument is a style file: the base it starts from and the fields it changes.
+type styleDocument struct {
+	Base  StyleBase `yaml:"base"`
+	Style `yaml:",inline"`
+}
+
+// ParseStyle decodes YAML strictly (unknown fields are errors) over the built-in style its base names (base: trainer,
+// words or phrase; PhraseStyle without it) and validates the result.
 func ParseStyle(data []byte) (Style, error) {
-	style := DefaultStyle()
+	var head struct {
+		Base StyleBase `yaml:"base"`
+	}
+
+	if err := yaml.Unmarshal(data, &head); err != nil {
+		return Style{}, fmt.Errorf("failed to parse style: %w: %w", ErrInvalidStyle, err)
+	}
+
+	var base Style
+
+	switch head.Base {
+	case TrainerBase:
+		base = DefaultStyle()
+	case WordsBase:
+		base = WordsStyle()
+	case PhraseBase, "":
+		base = PhraseStyle()
+	default:
+		return Style{}, fmt.Errorf("base must be trainer, words or phrase, got %q: %w", head.Base, ErrInvalidStyle)
+	}
+
+	return parseStyleOver(&base, data)
+}
+
+// parseStyleOver decodes YAML over a copy of the base style strictly and validates the result.
+func parseStyleOver(base *Style, data []byte) (Style, error) {
+	file := styleDocument{Style: *base}
 
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 
-	if err := decoder.Decode(&style); err != nil && !errors.Is(err, io.EOF) {
+	if err := decoder.Decode(&file); err != nil && !errors.Is(err, io.EOF) {
 		return Style{}, fmt.Errorf("failed to parse style: %w: %w", ErrInvalidStyle, err)
 	}
 
+	style := file.Style
 	if err := style.Validate(); err != nil {
 		return Style{}, err
 	}
@@ -304,6 +429,8 @@ func (s *Style) Validate() error {
 	errs = append(errs, validateHook(s)...)
 	errs = append(errs, validateWordBox(s)...)
 	errs = append(errs, validateBrand(s)...)
+	errs = append(errs, validateSection(s)...)
+	errs = append(errs, validateTopbar(s)...)
 	errs = append(errs,
 		validateBorder("outline", s.Outline), validateBorder("shadow", s.Shadow),
 		validateColor("karaoke_color", s.KaraokeColor), validateVignette(s))

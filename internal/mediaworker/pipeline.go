@@ -567,13 +567,17 @@ func (p *Pipeline) branding(ctx context.Context, job *editjob.Job) *subtitles.Br
 	}
 
 	if err := job.Branding.Validate(); err != nil {
-		p.log.ErrorContext(ctx, "mediaworker: the handle of the job is invalid, the draft is made without it",
-			"job_id", job.ID, "error", err)
+		p.log.ErrorContext(ctx, "mediaworker: the handle or the top line of the job is invalid, the draft is made "+
+			"without them", "job_id", job.ID, "error", err)
 
 		return nil
 	}
 
-	return &subtitles.Branding{Handle: job.Branding.Handle, Icon: job.Branding.Icon, EndCard: job.Branding.EndCard}
+	b := job.Branding
+
+	return &subtitles.Branding{
+		Handle: b.Handle, Icon: b.Icon, EndCard: b.EndCard, TopbarLeft: b.TopbarLeft, TopbarRight: b.TopbarRight,
+	}
 }
 
 // subtitleTitles are the exercise titles of the cut for the subtitles.

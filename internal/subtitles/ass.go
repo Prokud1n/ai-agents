@@ -59,10 +59,11 @@ func buildASS(
 }
 
 // buildDocument makes the whole subtitle file: the speech (by words or by phrases), the exercise titles, the hook
-// title, the screen notes after it, the handle and the end card. cues counts the speech events.
+// title, the screen notes and the section headings after it, the top line, the handle and the end card. cues counts
+// the speech events.
 func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues int) {
 	result := data.Transcript
-	end := hookEnd(data.Hook, result, style)
+	end := hookEnd(data.Hook, result, data.Notes, style)
 
 	// Under the end card nothing of the speech or the notes is drawn: they end where it starts (limit; 0 without a
 	// card).
@@ -73,9 +74,11 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 		notesEnd = limit
 	}
 
-	blocks := noteBlocks(data.Notes, end, notesEnd, style)
+	notes, sections := splitSections(data.Notes, style)
+	blocks, headings := separateBlocks(noteBlocks(notes, end, notesEnd, style),
+		sectionBlocks(sections, end, notesEnd, result, style))
 	extras := titleEvents(data.Titles, style) + hookEvent(data.Hook, end, style) + noteEvents(blocks, style) +
-		brandEvents(data.Branding, result.Duration, style)
+		sectionEvents(headings, style) + brandEvents(data.Branding, result.Duration, style)
 
 	if style.wordMode() {
 		words := clipWords(wordCues(result, style), limit)
@@ -88,11 +91,20 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 		return b.String() + extras, len(words)
 	}
 
-	tokens := markAccents(tokensFromTranscript(result), data.Accents, style.Accent.Words)
+	tokens := tokensFromTranscript(result)
+	if style.Layout.LowercaseSentences {
+		tokens = lowerSentenceStarts(tokens)
+	}
+
+	tokens = markAccents(hideReadings(tokens, headings), data.Accents, style.Accent.Words)
 	limits := layoutLimits{maxLines: style.Layout.MaxLines, maxLineChars: style.lineChars()}
 	units := buildUnits(tokens, limits.maxLineChars)
 	timed := clipCues(timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(data.Accents)) > 0)), limit)
 	layout := hookLayout{end: end, margin: style.hookSubtitlesMargin(style.hookLineCount(data.Hook)), notes: blocks}
+
+	if style.Hook.HideSubtitles {
+		timed, layout.margin = hideUnderHook(timed, end), 0
+	}
 
 	return renderASS(timed, style, data.Karaoke, layout) + extras, len(timed)
 }
@@ -103,7 +115,7 @@ func titleEvents(titles []Title, style *Style) string {
 	var b strings.Builder
 
 	for _, t := range titles {
-		text := strings.Join(strings.Fields(t.Text), " ")
+		text := censor(strings.Join(strings.Fields(t.Text), " "))
 		if style.Title.Uppercase {
 			text = strings.ToUpper(text)
 		}
@@ -201,6 +213,7 @@ func writeHeader(b *strings.Builder, style *Style, shaded bool) {
 	b.WriteString(hookStyleLine(style) + "\n")
 	b.WriteString(wordStyleLine(style) + "\n")
 	b.WriteString(brandStyleLines(style))
+	b.WriteString(sectionStyleLine(style) + "\n" + topbarStyleLine(style) + "\n")
 
 	if shaded {
 		b.WriteString(shadeStyleLine(style) + "\n")

@@ -126,7 +126,7 @@ func TestIntegrationScreenNotes(t *testing.T) {
 func checkNotesDrawn(t *testing.T, withNotes, plain []byte, duration float64) {
 	t.Helper()
 
-	style := subtitles.DefaultStyle()
+	style := subtitles.WordsStyle()
 	from := style.Layout.MarginTop
 	to := from + int(notesBandLines*float64(style.Hook.Size))
 

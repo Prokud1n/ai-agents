@@ -155,7 +155,7 @@ jobs:
         run: |
           go test -count=1 -v -run 'TestRunner' ./internal/providers/ffmpeg/
           go test -count=1 -v -run 'TestRender' ./internal/roughcut/
-          go test -count=1 -v -run 'TestBurnSubtitlesWithFFmpeg|TestBurnReferenceStyleWithFFmpeg' ./internal/subtitles/
+          go test -count=1 -v -run 'TestBurnSubtitlesWithFFmpeg|TestBurnReferenceStyleWithFFmpeg|TestBurnTrainerStyleWithFFmpeg' ./internal/subtitles/
 
       # The editor's limits (a job waits in the queue, then runs its timeout from the start; no worker → a technical
       # failure) and the environment ffmpeg gets: shown verbosely, they are the proof of the review's points.
@@ -581,14 +581,18 @@ jobs:
 
       # Subtitle rendering against the ffmpeg/libass of the image and the fonts in /app/fonts (SUBTITLES_FONTS_DIR):
       # 1080x1920 output, H.264 + AAC, text outside the Instagram zones, no font fallback; the hook title (T3.15b); the
-      # reference style (T3.17): the word on its white plate, a callout, the handle and the end card, checked by pixels.
+      # reference style (T3.17): the word on its white plate, a callout, the handle and the end card, checked by pixels;
+      # the trainer's style (T3.20, the default): the hook growing from its selection frame, the section heading, the
+      # subtitles and the top line at the places measured on her reel.
       - name: Run subtitle render tests inside the media image
         run: |
           CGO_ENABLED=0 go test -c -o subtitles.test ./internal/subtitles
           docker run --rm -e FFMPEG_TESTS_REQUIRED=1 -v "$PWD/subtitles.test:/app/subtitles.test:ro" \
             --entrypoint /app/subtitles.test ai-agents-media:ci -test.v -test.count=1 \
-            -test.run 'TestBurnSubtitlesWithFFmpeg|TestBurnHookWithFFmpeg|TestBurnReferenceStyleWithFFmpeg' | tee render.txt
-          for test in TestBurnSubtitlesWithFFmpeg TestBurnHookWithFFmpeg TestBurnReferenceStyleWithFFmpeg; do
+            -test.run 'TestBurnSubtitlesWithFFmpeg|TestBurnHookWithFFmpeg|TestBurnReferenceStyleWithFFmpeg|TestBurnTrainerStyleWithFFmpeg' \
+            | tee render.txt
+          for test in TestBurnSubtitlesWithFFmpeg TestBurnHookWithFFmpeg TestBurnReferenceStyleWithFFmpeg \
+            TestBurnTrainerStyleWithFFmpeg; do
             grep -q -- "--- PASS: $test " render.txt || { echo "::error::$test did not pass"; exit 1; }
           done
 
@@ -638,7 +642,10 @@ jobs:
           JSON
             /app/subtitles -transcript /tmp/result.json -out /tmp/subtitles.ass -ass-only
             grep -q "PlayResY: 1920" /tmp/subtitles.ass
-            grep -q ",Word,,0,0,0,,{.q2}3 подхода" /tmp/subtitles.ass
+            grep -q ",Main,,0,0,0,,делаем 3 подхода" /tmp/subtitles.ass
+            if grep -q "ПОДХОДА" /tmp/subtitles.ass; then echo "no accents in the default style"; exit 1; fi
+            /app/subtitles -transcript /tmp/result.json -style /app/subtitles-style-words.yaml -out /tmp/words.ass -ass-only
+            grep -q ",Word,,0,0,0,,{.q2}3 подхода" /tmp/words.ass
             /app/subtitles -transcript /tmp/result.json -style /app/subtitles-style-phrase.yaml -out /tmp/phrase.ass -ass-only
             grep -q "ПОДХОДА" /tmp/phrase.ass
             /app/subtitles -in /tmp/clip.mp4 -transcript /tmp/result.json -out /tmp/reel.mp4 -karaoke

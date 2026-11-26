@@ -72,6 +72,13 @@ func (r *Request) Cleaning() bool {
 		previousEdit(r.Plan).Mode != roughcut.WorkoutMode
 }
 
+// CleansTakes reports whether the decision may cut the failed takes through cleanup_words: a first talking head
+// cleaned (Cleaning) or shortened by the selection (Selecting), which drops the failed takes first. They are cut as
+// remove_words, count in the length of the selection and get the line about the cleaning in the description.
+func (r *Request) CleansTakes() bool {
+	return r.Cleaning() || r.Selecting()
+}
+
 // CleanupOnly reports whether the first version is only cleaned: Cleaning without a caption. The model does not
 // shorten the reel, cut by time, add exercise titles or mute it, and keeps enough of it (Apply refuses it otherwise);
 // without the model the automatic cut is the draft.

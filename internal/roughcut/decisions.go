@@ -332,6 +332,7 @@ var noteKindNames = map[NoteKind]string{
 	ListTitleNote: "заголовок списка",
 	ListItemNote:  "пункт",
 	CalloutNote:   "выноска",
+	SectionNote:   "раздел",
 }
 
 // writeScreenNotes logs the points and numbers on the screen, on the source timeline.

@@ -30,11 +30,11 @@ type Editor struct {
 	// draft (a workout is not shortened) gets a note in its description, it is not refused. Read by the app only.
 	ReelsMaxDuration time.Duration `env:"EDITOR_REELS_MAX_DURATION" envDefault:"3m"`
 	// ReelsTargetDuration is the longest talking-head reel the editor aims at: a first version whose cleaned cut is
-	// longer stops after the plan even without a caption or disputed repeats, and the editor's model picks the best
-	// phrases for a reel of half this length up to it (30–60 s for 60s). 0 (the default: the trainer's reels are 2–3
-	// minutes) turns the selection off; the trainer's caption or revision may still ask for a length. Read by the app;
-	// the worker gets it in the job.
-	ReelsTargetDuration time.Duration `env:"EDITOR_REELS_TARGET_DURATION" envDefault:"0s"`
+	// longer (by more than 10 %) stops after the plan even without a caption or disputed repeats, and the editor's
+	// model picks the main points for a reel of half this length up to it (30–60 s for the default 60s: the trainer's
+	// own reel of the same source is 52 s). 0 turns the selection off; the trainer's caption or revision may still ask
+	// for a length. Read by the app; the worker gets it in the job.
+	ReelsTargetDuration time.Duration `env:"EDITOR_REELS_TARGET_DURATION" envDefault:"60s"`
 	// HookTitle: the editor's model proposes a hook title for the first seconds of every first version, so every
 	// first version stops after the plan for the model's decision (one more call of the model for a short reel that
 	// had nothing else to decide). false: no hook unless the trainer asks for one, and a short reel without a caption
@@ -45,14 +45,24 @@ type Editor struct {
 	// plan for the model's decision. false: only the automatic cut cleans it. Read by the app.
 	Cleanup bool `env:"EDITOR_CLEANUP" envDefault:"true"`
 	// ReelsHandle is the trainer's Instagram handle («@prokudina.ana»: «@» and 1–30 of a-z, 0-9, «.», «_»; anything
-	// else fails the start) drawn small at the right edge over every draft and large on its end card. Empty (the
-	// default): no handle and no card. Read by the app; the worker gets it in the job and checks it again.
+	// else fails the start) drawn small at the right edge over every draft and large on its end card, in a subtitle
+	// style that draws it (style-words.yaml; the trainer's default style does not). Empty (the default): no handle and
+	// no card. Read by the app; the worker gets it in the job and checks it again.
 	ReelsHandle string `env:"REELS_HANDLE"`
 	// ReelsHandleIcon draws a simple Instagram icon (a rounded square, a circle and a dot) before the handle.
 	ReelsHandleIcon bool `env:"REELS_HANDLE_ICON" envDefault:"true"`
 	// ReelsEndCard darkens the last 2 seconds of the draft and shows the icon and the handle large in the middle (the
-	// reel is not made longer, the sound stays).
-	ReelsEndCard bool `env:"REELS_END_CARD" envDefault:"true"`
+	// reel is not made longer, the sound stays); only in a subtitle style that draws the handle (style-words.yaml).
+	ReelsEndCard bool `env:"REELS_END_CARD" envDefault:"false"`
+	// ReelsTopbarLeft and ReelsTopbarRight are the texts of the top line over every draft, as the interface of a
+	// camera («tg: @ana_prokudina» at the left edge, «2x» at the right one): at most 40 printable characters without
+	// { } \ < > (anything else fails the start). Empty (the default): nothing on that side. Drawn by the trainer's
+	// subtitle style (the default). Read by the app; the worker gets them in the job and checks them again.
+	ReelsTopbarLeft  string `env:"REELS_TOPBAR_LEFT"`
+	ReelsTopbarRight string `env:"REELS_TOPBAR_RIGHT"`
+	// SubtitlesStyleFile is the subtitle style of the media worker (SUBTITLES_STYLE_FILE, config.Subtitles there): the
+	// app reads it only to warn at the start that the trainer's style does not draw REELS_HANDLE.
+	SubtitlesStyleFile string `env:"SUBTITLES_STYLE_FILE"`
 }
 
 // MediaWorker configures the media worker (cmd/media-worker): it edits videos with ffmpeg in a container of its

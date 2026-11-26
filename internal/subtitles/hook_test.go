@@ -56,7 +56,7 @@ func TestHookEnd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.InDelta(t, tt.expected, hookEnd(tt.hook, tt.input, &style), 1e-9)
+			assert.InDelta(t, tt.expected, hookEnd(tt.hook, tt.input, nil, &style), 1e-9)
 		})
 	}
 }

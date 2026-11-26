@@ -82,6 +82,11 @@ func tokensFromTranscript(result *transcription.Result) []token {
 		tokens[last].Break = strongBreak
 	}
 
+	// Obscene words are masked on the screen («х*йня»); Norm keeps the word for matching.
+	for i := range tokens {
+		tokens[i].Text = censor(tokens[i].Text)
+	}
+
 	return tokens
 }
 
