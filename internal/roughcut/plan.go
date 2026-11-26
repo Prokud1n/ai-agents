@@ -90,6 +90,12 @@ type Plan struct {
 	// MinSpeechShare is the threshold the media worker compared SpeechShare with (MEDIA_WORKER_MIN_SPEECH_SHARE;
 	// CutData.MinSpeechShare); 0 when unknown or off.
 	MinSpeechShare float64 `json:"min_speech_share,omitempty"`
+	// SoundCuts: the cut points of the talking head were placed by the level of the source sound (the speech found
+	// around the words, the pauses cut at their quietest frame down to a breath); false: by the margins around the words.
+	SoundCuts bool `json:"sound_cuts,omitempty"`
+	// LongPauses counts the pauses longer than 0.3 s left inside the reel: by the sound level when it is known, by the
+	// gaps between the words otherwise (Service.Cut).
+	LongPauses int `json:"long_pauses"`
 }
 
 // Edit is what the editor (the editing agent, by the trainer's caption or revision) changed on top of the

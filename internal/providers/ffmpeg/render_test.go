@@ -91,7 +91,7 @@ func TestRenderSegmentsArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			args := renderSegmentsArgs(testVideo, "file:/out/cut.part", "/tmp/g.txt", tt.input)
+			args := renderSegmentsArgs(inputArgs(testVideo), "file:/out/cut.part", "/tmp/g.txt", tt.input)
 
 			assert.Equal(t, concat(commonArgs(), inputArgs(testVideo)), args[:8])
 			assert.Equal(t, tt.expected, args[8:10])

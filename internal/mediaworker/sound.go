@@ -104,8 +104,14 @@ func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness) *f
 	return cut
 }
 
-// notes are the lines of the decisions log about the sound and the framing of the rendered draft.
-func (s *soundSettings) notes(cut *ffmpeg.Cut, measured *ffmpeg.Loudness, mode roughcut.Mode) []string {
+// notes are the lines of the decisions log about the sound and the framing of the rendered draft; report is what the
+// render did to the loudness (nil if it did not say).
+func (s *soundSettings) notes(
+	cut *ffmpeg.Cut,
+	measured *ffmpeg.Loudness,
+	mode roughcut.Mode,
+	report *ffmpeg.SoundReport,
+) []string {
 	workout := mode.Effective() == roughcut.WorkoutMode
 
 	zoom := fmt.Sprintf("Зумы на склейках: %d (приближение %.0f%%)", cut.Zooms(), s.zoom)
@@ -117,11 +123,12 @@ func (s *soundSettings) notes(cut *ffmpeg.Cut, measured *ffmpeg.Loudness, mode r
 		zoom = "Зумы на склейках: выключены"
 	}
 
-	return []string{s.loudnessNote(cut, measured), s.denoiseNote(cut, workout), zoom}
+	return []string{s.loudnessNote(cut, measured, report), s.denoiseNote(cut, workout), zoom}
 }
 
-// loudnessNote: the loudness before and after and how it was reached.
-func (s *soundSettings) loudnessNote(cut *ffmpeg.Cut, measured *ffmpeg.Loudness) string {
+// loudnessNote: the loudness before, the target, how it was reached and what the render measured (T3.19b: the result
+// is the measurement of the processed sound, not the target).
+func (s *soundSettings) loudnessNote(cut *ffmpeg.Cut, measured *ffmpeg.Loudness, report *ffmpeg.SoundReport) string {
 	l := cut.Options.Loudness
 
 	switch {
@@ -132,12 +139,32 @@ func (s *soundSettings) loudnessNote(cut *ffmpeg.Cut, measured *ffmpeg.Loudness)
 	case l == nil:
 		return fmt.Sprintf("Громкость: исходник %.1f LUFS — почти тишина, оставлена как есть", measured.Integrated)
 	case measured == nil:
-		return fmt.Sprintf("Громкость: исходник не измерен → %.1f LUFS: loudnorm без измерения (в один проход), "+
-			"пики до %.1f dBTP", l.Integrated, l.TruePeak)
-	default:
-		return fmt.Sprintf("Громкость: исходник %.1f LUFS (пики %.1f dBTP) → %.1f LUFS: усиление %+.1f dB, "+
-			"лимитер пиков на %.1f dBTP", measured.Integrated, measured.TruePeak, l.Integrated, l.Gain(), l.TruePeak)
+		return fmt.Sprintf("Громкость: исходник не измерен, цель %.1f LUFS: loudnorm без измерения (в один проход), "+
+			"пики до %.1f dBTP; %s", l.Integrated, l.TruePeak, loudnessResult(report))
 	}
+
+	gain, correction := l.Gain(), ""
+	if report != nil {
+		gain = report.Gain
+		if report.Passes > 0 {
+			correction = fmt.Sprintf(" (поправка %+.1f dB по предварительному замеру склейки, проходов: %d)",
+				report.Correction, report.Passes)
+		}
+	}
+
+	return fmt.Sprintf("Громкость: исходник %.1f LUFS (пики %.1f dBTP), цель %.1f LUFS: усиление %+.1f dB%s, "+
+		"лимитер пиков на %.1f dBTP; %s", measured.Integrated, measured.TruePeak, l.Integrated, gain, correction,
+		l.TruePeak, loudnessResult(report))
+}
+
+// loudnessResult is the loudness of the processed sound as the render measured it.
+func loudnessResult(report *ffmpeg.SoundReport) string {
+	if report == nil || report.Output == nil {
+		return "итог не измерен"
+	}
+
+	return fmt.Sprintf("итог %.1f LUFS, пики %.1f dBTP (замер готового звука)", report.Output.Integrated,
+		report.Output.TruePeak)
 }
 
 func (s *soundSettings) denoiseNote(cut *ffmpeg.Cut, workout bool) string {

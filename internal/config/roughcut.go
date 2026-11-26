@@ -11,7 +11,7 @@ import (
 // RoughCut configures the automatic rough cut (cmd/roughcut); command-line flags override it.
 type RoughCut struct {
 	// Pauses between words longer than this are cut down to short margins around the words.
-	MaxPause time.Duration `env:"ROUGHCUT_MAX_PAUSE"         envDefault:"400ms"`
+	MaxPause time.Duration `env:"ROUGHCUT_MAX_PAUSE"         envDefault:"300ms"`
 	// Share of an earlier phrase's words (0..1) said again, in order, for it to count as a failed take.
 	RetakeSimilarity float64 `env:"ROUGHCUT_RETAKE_SIMILARITY" envDefault:"0.7"`
 	// Fillers cut everywhere; repeated letters are collapsed when compared ("эээ" matches "э").

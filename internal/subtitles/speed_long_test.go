@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Prokud1n/ai-agents/internal/config"
@@ -39,6 +40,9 @@ const (
 	longPhrases     = 3
 	longPhraseWords = 4
 	longPause       = 0.6
+	// maxLongRender (s) of the one-minute draft on 2 CPUs: the goal of T3.19b. Before it the whole source was decoded:
+	// 96.5 s on the CI runner (the trainer's machine took 4.3 min for such an edit).
+	maxLongRender = 100.0
 )
 
 var longWords = []string{"Делаем", "три", "подхода", "держим"}
@@ -93,6 +97,7 @@ func TestRenderSpeedLongSource(t *testing.T) {
 		VideoPath:           source, Fit: ffmpeg.CropFitMode, Cut: draft,
 	})
 	logReel(ctx, t, "talk from a 4-minute 4K source", reel, elapsed, len(cut.Plan.Keep))
+	assert.Less(t, elapsed, maxLongRender, "an edit of a one-minute reel decodes only what it keeps")
 	t.Logf("render speed (long source): a %.1f s reel from a %d s 4K source rendered in %.1f s",
 		cut.Plan.Duration, longDuration, elapsed)
 }
@@ -118,7 +123,7 @@ func makeLongSource(ctx context.Context, t *testing.T, dir, path string) {
 
 // longTranscript: longStretches stretches of speech spread over the source, the rest silent (cut).
 func longTranscript() *transcription.Result {
-	result := &transcription.Result{Language: "ru", Duration: longDuration}
+	result := &transcription.Result{Language: langRu, Duration: longDuration}
 
 	for k := range longStretches {
 		at := longFirst + float64(k)*longStride

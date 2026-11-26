@@ -140,7 +140,8 @@ func TestSegmentsFilterSound(t *testing.T) {
 	got := segmentsFilter([]Segment{{Start: 1, End: 2}, {Start: 3, End: 4}}, opts)
 
 	assert.Contains(t, got, "concat=n=2:v=1:a=1[v][j];[j]apad=pad_dur=0.025,highpass=f=80,afftdn=nr=10:nf=-50.0,"+
-		"atrim=start=0.025,asetpts=PTS-STARTPTS,loudnorm=I=-14.0:TP=-2.0:LRA=11.0,aresample=48000[a]")
+		"atrim=start=0.025,asetpts=PTS-STARTPTS,loudnorm=I=-14.0:TP=-2.0:LRA=11.0,aresample=48000,"+
+		measureFilter+"[a]")
 	assert.Equal(t, 1, strings.Count(got, "afftdn="), "one noise reduction for the whole reel")
 }
 
@@ -152,9 +153,10 @@ func speechLike(amplitude string) string {
 }
 
 // TestRunnerLoudness: a quiet (about -35 LUFS) and a loud (about -16 LUFS, peaks near full scale) speech-like source
-// come out at -14 ± 1 LUFS with the true peak at most -1.5 dBTP after the AAC encode: by the measurement taken while the
-// audio is extracted (one gain and the limiter, the worker) and without it (loudnorm in one pass); the cut and the
-// subtitles are rendered in the same pass, as the worker does it.
+// (peaks 16–18 dB above its loudness) come out at the target with the true peak at most -1.5 dBTP after the AAC encode:
+// by the measurement taken while the audio is extracted (one gain corrected by the passes over the sound of the cut,
+// and the limiter: the worker) at -14 ± 0.5 LUFS, and without it (loudnorm in one pass) at -14 ± 1; the cut and the
+// subtitles are rendered in the same pass, as the worker does it. The render reports what it measured.
 func TestRunnerLoudness(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
@@ -165,6 +167,8 @@ func TestRunnerLoudness(t *testing.T) {
 		target    = -14.0
 		maxPeak   = -1.5
 		tolerance = 1.0
+		// fitted: the tolerance of the gain fitted by the passes over the sound of the cut (T3.19b).
+		fitted = 0.5
 	)
 
 	tests := []struct {
@@ -210,15 +214,30 @@ func TestRunnerLoudness(t *testing.T) {
 				opts.Denoise = &Denoise{NoiseFloor: NoiseFloorFor(measured)}
 			}
 
-			reel := burnTestReel(ctx, t, r, dir, src, &Cut{
+			reel, report := burnTestReelReport(ctx, t, r, dir, src, &Cut{
 				Segments: []Segment{{Start: 0.5, End: 3.5}, {Start: 4, End: 7.5}}, Options: opts,
 			})
 
+			want := tolerance
+			if tt.measure {
+				want = fitted
+			}
+
 			out := measureLoudness(ctx, t, r, reel)
-			assert.InDelta(t, target, out.Integrated, tolerance, "the reel at the target")
+			assert.InDelta(t, target, out.Integrated, want, "the reel at the target")
 			assert.LessOrEqual(t, out.TruePeak, maxPeak, "the true peak after AAC at most -1.5 dBTP")
-			t.Logf("loudness: source %.1f LUFS (peak %.1f) → reel %.1f LUFS (peak %.1f dBTP)",
-				measured.Integrated, measured.TruePeak, out.Integrated, out.TruePeak)
+			require.NotNil(t, report.Sound)
+			require.NotNil(t, report.Sound.Output, "the render measured its sound")
+			assert.InDelta(t, out.Integrated, report.Sound.Output.Integrated, fitted, "the render's own measurement")
+
+			if tt.measure {
+				assert.Positive(t, report.Sound.Passes, "the gain is fitted by the sound of the cut")
+			}
+
+			t.Logf("loudness: source %.1f LUFS (peak %.1f) → reel %.1f LUFS (peak %.1f dBTP); render: gain %+.1f dB "+
+				"(correction %+.1f dB, %d passes), measured %.1f LUFS", measured.Integrated, measured.TruePeak,
+				out.Integrated, out.TruePeak, report.Sound.Gain, report.Sound.Correction, report.Sound.Passes,
+				report.Sound.Output.Integrated)
 		})
 	}
 }
@@ -358,6 +377,15 @@ func roundAll(values []float64) []float64 {
 func burnTestReel(ctx context.Context, t *testing.T, r *Runner, dir, src string, cut *Cut) string {
 	t.Helper()
 
+	reel, _ := burnTestReelReport(ctx, t, r, dir, src, cut)
+
+	return reel
+}
+
+// burnTestReelReport is burnTestReel with the report of the render.
+func burnTestReelReport(ctx context.Context, t *testing.T, r *Runner, dir, src string, cut *Cut) (string, *BurnReport) {
+	t.Helper()
+
 	const emptyASS = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n" +
 		"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 
@@ -365,13 +393,13 @@ func burnTestReel(ctx context.Context, t *testing.T, r *Runner, dir, src string,
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, testFontsName), 0o700))
 
 	reel := filepath.Join(dir, "reel.mp4")
-	_, err := r.BurnSubtitles(ctx, &BurnSubtitlesData{
+	report, err := r.BurnSubtitles(ctx, &BurnSubtitlesData{
 		Input: src, Output: reel, Dir: dir, SubtitlesName: testSubtitlesName, FontsName: testFontsName,
 		Width: 1080, Height: 1920, Fit: CropFitMode, Cut: cut,
 	})
 	require.NoError(t, err)
 
-	return reel
+	return reel, report
 }
 
 // measureLoudness measures the sound of a file as the worker does it (ebur128 with the true peak).

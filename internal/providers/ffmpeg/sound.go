@@ -76,15 +76,18 @@ type LoudnessTarget struct {
 	// them over, and loudnorm compresses instead.) Nil: loudnorm in one pass, adjusting the gain as the sound goes (its
 	// dynamic mode, a 3 s window), for a transcript stored before the measurement.
 	Measured *Loudness
+	// Correction (dB) is added to the gain by the measurement: the render measures the processed sound of the cut
+	// before it (Runner.fitLoudness) and corrects the miss the limiter and the cut make.
+	Correction float64
 }
 
-// Gain is the gain of a measured sound, dB; 0 without a measurement.
+// Gain is the gain of a measured sound, dB, with the correction; 0 without a measurement.
 func (l *LoudnessTarget) Gain() float64 {
 	if l.Measured == nil {
 		return 0
 	}
 
-	return l.Integrated - l.Measured.Integrated
+	return l.Integrated - l.Measured.Integrated + l.Correction
 }
 
 // Denoise is the light noise reduction of speech.

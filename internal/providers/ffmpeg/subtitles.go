@@ -130,6 +130,8 @@ type BurnReport struct {
 	Fonts []FontSelection
 	// MissingGlyphs are libass lines about characters absent in the requested font (e.g. emoji).
 	MissingGlyphs []string
+	// Sound is what the render did to the loudness of a cut; nil without a cut or a loudness target.
+	Sound *SoundReport
 }
 
 // BurnSubtitles renders the ASS subtitles onto the video, bringing it to Width×Height, and encodes H.264 + AAC.
@@ -140,13 +142,19 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 	}
 
 	major := unknownMajor
+	burn, passes := data, 0
+
 	if data.Cut != nil {
 		if major, err = r.majorVersion(ctx); err != nil {
 			return nil, err
 		}
+
+		if burn, passes, err = r.fitCutLoudness(ctx, in, data); err != nil {
+			return nil, err
+		}
 	}
 
-	args, graph, err := burnSubtitlesArgs(in, out, data, major)
+	args, graph, err := burnSubtitlesArgs(in, out, burn, major)
 	if err != nil {
 		return nil, fmt.Errorf("failed to burn subtitles: %w", err)
 	}
@@ -160,8 +168,9 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 
 	fonts := &lineCollector{marker: fontSelectMarker, maxLines: maxFontLines, maxLine: maxLogLine}
 	glyphs := &lineCollector{marker: glyphMarker, maxLines: maxFontLines, maxLine: maxLogLine}
+	tail := newTailBuffer(measureLogTail)
 
-	if _, err := r.runIn(ctx, data.Dir, r.ffmpegPath, args, io.MultiWriter(fonts, glyphs)); err != nil {
+	if _, err := r.runIn(ctx, data.Dir, r.ffmpegPath, args, io.MultiWriter(fonts, glyphs, tail)); err != nil {
 		return nil, fmt.Errorf("failed to burn subtitles: %w", err)
 	}
 
@@ -172,7 +181,35 @@ func (r *Runner) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*B
 		}
 	}
 
-	return &BurnReport{Fonts: parseFontSelections(fonts.String()), MissingGlyphs: missing}, nil
+	return &BurnReport{
+		Fonts: parseFontSelections(fonts.String()), MissingGlyphs: missing, Sound: soundReport(burn.Cut, passes, tail.String()),
+	}, nil
+}
+
+// fitCutLoudness is the data with the gain of the cut corrected (Runner.fitLoudness) and the number of passes it took.
+func (r *Runner) fitCutLoudness(ctx context.Context, in string, data *BurnSubtitlesData) (*BurnSubtitlesData, int, error) {
+	opts, passes, err := r.fitLoudness(ctx, in, data.Cut.Segments, data.Cut.Options)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	cut := *data.Cut
+	cut.Options = opts
+	out := *data
+	out.Cut = &cut
+
+	return &out, passes, nil
+}
+
+// soundReport is the loudness the render of the cut applied and measured; nil without a cut or a loudness target.
+func soundReport(cut *Cut, passes int, log string) *SoundReport {
+	if cut == nil || cut.Options.Mute || cut.Options.Loudness == nil {
+		return nil
+	}
+
+	l := cut.Options.Loudness
+
+	return &SoundReport{Gain: l.Gain(), Correction: l.Correction, Passes: passes, Output: parseLoudness(log)}
 }
 
 // burnSubtitlesArgs returns the arguments and the filter graph. Without a cut the graph is an argument; with one
@@ -187,7 +224,12 @@ func burnSubtitlesArgs(input, output string, data *BurnSubtitlesData, ffmpegMajo
 	args = commonArgs()
 	// libass reports the chosen fonts ("fontselect") at the info level: the fallback check depends on it.
 	args = append(args, "-loglevel", "info")
-	args = append(args, inputArgs(input)...)
+
+	if data.Cut != nil {
+		args = append(args, cutInputArgs(input, groupSegments(data.Cut.Segments, data.Cut.Options))...)
+	} else {
+		args = append(args, inputArgs(input)...)
+	}
 
 	// The first video stream is required; without a cut audio is encoded when there is one ("?"), a cut has it.
 	audio := "0:a:0?"

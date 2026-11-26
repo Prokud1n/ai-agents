@@ -298,7 +298,7 @@ func TestBuildPlanCandidates(t *testing.T) {
 	assert.Equal(t, "держим спину ровно.", first.Earlier.Text, "the text keeps its punctuation")
 	assert.Equal(t, WordRange{From: 0, To: 2}, first.EarlierWords)
 	// The cut runs from the start of the clip to the margin before the repeat.
-	assert.Equal(t, Interval{Start: 0, End: roundTime(src.Words[3].Start - defaultPadBefore)}, first.Cut)
+	assert.Equal(t, Interval{Start: 0, End: roundTime(src.Words[3].Start - testSettings().PadBefore)}, first.Cut)
 
 	tests := []struct {
 		name               string

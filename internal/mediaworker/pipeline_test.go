@@ -569,16 +569,29 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 		{
 			// The floor of the noise reduction is 36 dB under the speech: -27.6 - 36 ≈ -64 dBFS.
 			name: "a talking head", measured: measured, loudness: true, noiseFloor: -64, zoom: true,
-			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP) → -14.0 LUFS: усиление +13.6 dB, " +
-				"лимитер пиков на -2.0 dBTP\n- Шумодав: лёгкий (речь), порог шума -64 dBFS\n" +
+			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP), цель -14.0 LUFS: усиление +13.6 dB, " +
+				"лимитер пиков на -2.0 dBTP; итог не измерен\n- Шумодав: лёгкий (речь), порог шума -64 dBFS\n" +
 				"- Зумы на склейках: 0 (приближение 9%)\n",
+		},
+		{
+			// The render fitted the gain by the sound of the cut and measured what it gave: the log has the measurement.
+			name: "a talking head with the render's report",
+			change: func(f *pipelineFakes) {
+				f.burner.result.Sound = &ffmpeg.SoundReport{
+					Gain: 14.9, Correction: 1.3, Passes: 2, Output: &ffmpeg.Loudness{Integrated: -14.1, TruePeak: -2.4},
+				}
+			},
+			measured: measured, loudness: true, noiseFloor: -64, zoom: true,
+			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP), цель -14.0 LUFS: усиление +14.9 dB " +
+				"(поправка +1.3 dB по предварительному замеру склейки, проходов: 2), лимитер пиков на -2.0 dBTP; " +
+				"итог -14.1 LUFS, пики -2.4 dBTP (замер готового звука)\n",
 		},
 		{
 			name:     "a transcript without a measurement: one pass",
 			change:   func(f *pipelineFakes) { f.transcriber.result.Loudness = nil },
 			loudness: true, noiseFloor: -50, zoom: true,
-			decisions: "- Громкость: исходник не измерен → -14.0 LUFS: loudnorm без измерения (в один проход), " +
-				"пики до -2.0 dBTP\n- Шумодав: лёгкий (речь), порог шума -50 dBFS\n",
+			decisions: "- Громкость: исходник не измерен, цель -14.0 LUFS: loudnorm без измерения (в один проход), " +
+				"пики до -2.0 dBTP; итог не измерен\n- Шумодав: лёгкий (речь), порог шума -50 dBFS\n",
 		},
 		{
 			name:     "a workout: the loudness only",

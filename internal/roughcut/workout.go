@@ -19,6 +19,8 @@ type cutPlan struct {
 	settings Settings
 	// times are the editor's cuts by time (Edit.CutTime): sorted, merged and within the source.
 	times []Interval
+	// grid places the cut points of a talking head by the sound level; nil: by the margins.
+	grid *cutGrid
 }
 
 // build: a talking head is cut at the pauses and the removed words, a workout only at the removed words; the cuts by
@@ -28,7 +30,7 @@ func (c *cutPlan) build(removed []CutReason) ([]Interval, []Cut) {
 		return c.workout(removed)
 	}
 
-	keep, cuts := buildIntervals(c.words, removed, c.duration, c.settings)
+	keep, cuts := buildIntervals(c.words, removed, c.duration, c.settings, c.grid)
 
 	return c.cutTimes(keep, cuts)
 }

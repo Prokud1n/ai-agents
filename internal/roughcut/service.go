@@ -58,6 +58,7 @@ var (
 
 type mediaProcessor interface {
 	Probe(ctx context.Context, path string) (ffmpeg.MediaInfo, error)
+	AudioLevels(ctx context.Context, path string) (*ffmpeg.Levels, error)
 	RenderSegments(ctx context.Context, src, dst string, segments []ffmpeg.Segment, opts ffmpeg.RenderOptions) error
 }
 
@@ -148,8 +149,9 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 	}
 
 	fps := rate.Float()
+	levels := s.levels(ctx, data.Source)
 
-	plan, err := s.plan(data, sourceDuration(&info))
+	plan, err := s.plan(data, sourceDuration(&info), &cutGrid{levels: levels, fps: fps})
 	if err != nil {
 		return nil, err
 	}
@@ -160,10 +162,13 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 		return nil, err
 	}
 
+	transcript := SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit)
+	plan.LongPauses = countLongPauses(&plan, levels, transcript.Words)
+
 	s.logPlan(ctx, &plan, data.Plan != nil)
 
 	result := &Result{
-		Plan: plan, Transcript: SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit), Log: DecisionsLog(&plan),
+		Plan: plan, Transcript: transcript, Log: DecisionsLog(&plan),
 		Render: ffmpeg.RenderOptions{
 			Fade: junctionFade, FrameRate: rate, Offset: audioOffset(&info), Mute: plan.Edit != nil && plan.Edit.Mute,
 		},
@@ -341,7 +346,43 @@ func validateCutData(data *CutData) error {
 	return nil
 }
 
-func (s *Service) plan(data *CutData, duration float64) (Plan, error) {
+// levels reads the sound level of the source for the cut points; nil (the margins around the words) if it cannot be
+// read or tells speech from silence nothing: the cut is made without it.
+func (s *Service) levels(ctx context.Context, src string) *speechLevels {
+	levels, err := s.media.AudioLevels(ctx, src)
+	if err != nil {
+		s.log.WarnContext(ctx, "roughcut: no sound levels, cutting by the margins around the words", "error", err)
+
+		return nil
+	}
+
+	speech := newSpeechLevels(levels)
+	if speech == nil && levels != nil {
+		s.log.InfoContext(ctx, "roughcut: the sound level does not tell speech from silence, cutting by the margins")
+	}
+
+	return speech
+}
+
+// countLongPauses counts the pauses longer than longPause inside the reel: by the sound level, or by the gaps between
+// the words of the reel without it.
+func countLongPauses(p *Plan, levels *speechLevels, reelWords []transcription.Word) int {
+	if levels != nil {
+		return levels.longPauses(p.Keep)
+	}
+
+	count := 0
+
+	for i := 1; i < len(reelWords); i++ {
+		if reelWords[i].Start-reelWords[i-1].End > longPause {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (s *Service) plan(data *CutData, duration float64, grid *cutGrid) (Plan, error) {
 	if data.Plan != nil {
 		plan, err := checkPlan(data.Plan, duration)
 		if err != nil {
@@ -368,7 +409,11 @@ func (s *Service) plan(data *CutData, duration float64) (Plan, error) {
 		edit.Accept = append(edit.Accept, data.AcceptCandidates...)
 	}
 
-	plan, err := BuildPlanEdited(data.Transcript, duration, settings, edit)
+	if grid.levels == nil {
+		grid = nil
+	}
+
+	plan, err := buildPlan(data.Transcript, duration, settings, edit, grid)
 	if err != nil {
 		return Plan{}, err
 	}

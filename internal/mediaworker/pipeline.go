@@ -518,7 +518,7 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		return err
 	}
 
-	notes := p.sound.notes(cut, w.transcript.Loudness, w.cut.Plan.Mode)
+	notes := p.sound.notes(cut, w.transcript.Loudness, w.cut.Plan.Mode, burn.Sound)
 	p.log.InfoContext(ctx, "mediaworker: sound and framing", "job_id", w.job.ID, "notes", notes)
 
 	if err := appendDecisions(w.cut.Files.Log, notes); err != nil {

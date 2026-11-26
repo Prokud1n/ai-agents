@@ -1,0 +1,133 @@
+package ffmpeg
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+// The loudness of a draft is fitted before the render (T3.19b): the gain by the measurement of the source misses the
+// target, because the limiter after it cuts the peaks (phone speech peaks 13–20 dB above its loudness) and the cut
+// leaves out pauses and noise. A pass over the sound of the cut alone — the same segments, fades and chain, no
+// picture: seconds — measures what the chain gives, and the gain is corrected by the miss; the limiter takes a part of
+// a correction too, so it is repeated while the miss is above loudnessTolerance.
+const (
+	// loudnessTolerance (LU): a miss this small is not corrected.
+	loudnessTolerance = 0.1
+	// maxLoudnessPasses of the sound alone before the render.
+	maxLoudnessPasses = 3
+	// maxCorrection (dB) of the gain by the measurement: a larger miss is not the limiter, the measurement is wrong.
+	maxCorrection = 12.0
+	measuredLabel = "m"
+)
+
+var errNoSummary = errors.New("ffmpeg reported no loudness summary")
+
+// SoundReport is what the render did to the loudness of the sound.
+type SoundReport struct {
+	// Gain is the gain applied, dB, of which Correction came from the passes over the sound of the cut (Passes).
+	Gain       float64
+	Correction float64
+	Passes     int
+	// Output is the loudness of the processed sound as the render measured it (before the AAC encode, which changes it
+	// by hundredths); nil if ffmpeg reported no summary.
+	Output *Loudness
+}
+
+// fitLoudness returns the options with the gain corrected so that the processed sound of the cut is at the target,
+// and the number of passes it took. Without a measured target (loudnorm adjusts itself) or with a muted sound the
+// options are returned as they are, with no pass.
+func (r *Runner) fitLoudness(ctx context.Context, in string, segments []Segment, opts RenderOptions) (RenderOptions, int, error) {
+	if opts.Mute || opts.Loudness == nil || opts.Loudness.Measured == nil {
+		return opts, 0, nil
+	}
+
+	out := opts
+	target := *opts.Loudness
+	passes := 0
+
+	for passes < maxLoudnessPasses {
+		attempt := target
+		out.Loudness = &attempt
+
+		measured, err := r.measureCut(ctx, in, segments, out)
+		if err != nil {
+			return opts, passes, err
+		}
+
+		passes++
+
+		miss := target.Integrated - measured.Integrated
+		if measured.Integrated <= minLevel || math.Abs(miss) <= loudnessTolerance {
+			break
+		}
+
+		target.Correction = min(max(target.Correction+miss, -maxCorrection), maxCorrection)
+	}
+
+	out.Loudness = &target
+
+	return out, passes, nil
+}
+
+// measureCut measures the loudness of the processed sound of the cut: the audio of the source alone, decoded whole
+// (cheap next to the picture), cut, joined and processed as the render does it.
+func (r *Runner) measureCut(ctx context.Context, in string, segments []Segment, opts RenderOptions) (*Loudness, error) {
+	dir, err := os.MkdirTemp("", filterDirPattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filter dir: %w", err)
+	}
+
+	defer func() { _ = os.RemoveAll(dir) }() // best effort: a few bytes in the temp dir
+
+	graph := filepath.Join(dir, filterFileName)
+	if err := os.WriteFile(graph, []byte(soundGraph(segments, opts)), filterFileMode); err != nil {
+		return nil, fmt.Errorf("failed to write filter graph: %w", err)
+	}
+
+	major, err := r.majorVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	args := append(commonArgs(), inputArgs(in)...)
+	args = append(args, filterFileArgs(graph, major)...)
+	args = append(args, mapFlag, "["+measuredLabel+"]", formatFlag, "null", "-")
+
+	log := newTailBuffer(measureLogTail)
+	if _, err := r.run(ctx, r.ffmpegPath, args, log); err != nil {
+		return nil, fmt.Errorf("failed to measure the sound of the cut: %w", err)
+	}
+
+	measured := parseLoudness(log.String())
+	if measured == nil {
+		return nil, fmt.Errorf("failed to measure the sound of the cut: %w", errNoSummary)
+	}
+
+	return measured, nil
+}
+
+// soundGraph is the sound of segmentsGraph from one input (the whole source), processed and measured:
+//
+//	[0:a:0]asetpts=PTS,asplit=2[t0][t1];[t0]atrim=…[a0];[t1]atrim=…[a1];[a0][a1]concat=n=2:v=0:a=1[j];
+//	[j]<soundChain>,ebur128=peak=true:framelog=verbose[m]
+func soundGraph(segments []Segment, opts RenderOptions) string {
+	var b strings.Builder
+
+	whole := inputGroup{first: 0, last: len(segments) - 1, shift: opts.Offset}
+	writeAudioBranches(&b, whole, segments, opts)
+
+	for i := range segments {
+		b.WriteString("[a" + strconv.Itoa(i) + "]")
+	}
+
+	b.WriteString("concat=n=" + strconv.Itoa(len(segments)) + ":v=0:a=1[" + soundLabel + "];[" + soundLabel + "]")
+	b.WriteString(soundChain(opts) + "," + measureFilter + "[" + measuredLabel + "]")
+
+	return b.String()
+}

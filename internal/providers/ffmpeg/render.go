@@ -92,6 +92,10 @@ func (r *Runner) RenderSegments(ctx context.Context, src, dst string, segments [
 		return err
 	}
 
+	if opts, _, err = r.fitLoudness(ctx, in, segments, opts); err != nil {
+		return err
+	}
+
 	dir, err := os.MkdirTemp("", filterDirPattern)
 	if err != nil {
 		return fmt.Errorf("failed to create filter dir: %w", err)
@@ -109,7 +113,8 @@ func (r *Runner) RenderSegments(ctx context.Context, src, dst string, segments [
 		return err
 	}
 
-	if _, err := r.run(ctx, r.ffmpegPath, renderSegmentsArgs(in, out, graph, major), nil); err != nil {
+	inputs := cutInputArgs(in, groupSegments(segments, opts))
+	if _, err := r.run(ctx, r.ffmpegPath, renderSegmentsArgs(inputs, out, graph, major), nil); err != nil {
 		return fmt.Errorf("failed to render segments: %w", err)
 	}
 
@@ -182,9 +187,10 @@ func parseRational(s string) (Rational, error) {
 	return Rational{Num: n, Den: d}, nil
 }
 
-// renderSegmentsArgs reads the filter graph from a local file; graph is our own temporary file.
-func renderSegmentsArgs(src, dst, graph string, ffmpegMajor int) []string {
-	args := append(commonArgs(), inputArgs(src)...)
+// renderSegmentsArgs reads the filter graph from a local file; graph is our own temporary file. inputs are the
+// inputs of the cut (cutInputArgs).
+func renderSegmentsArgs(inputs []string, dst, graph string, ffmpegMajor int) []string {
+	args := append(commonArgs(), inputs...)
 
 	args = append(args, filterFileArgs(graph, ffmpegMajor)...)
 	args = append(args,
@@ -207,9 +213,10 @@ func filterFileArgs(graph string, ffmpegMajor int) []string {
 	return []string{"-filter_complex_script", graph}
 }
 
-// segmentsFilter builds a filter graph that decodes each stream once, splits it into one branch per
+// segmentsFilter builds a filter graph that decodes each stream of every input once (an input per group of
+// neighbouring segments, groupSegments; one input for segments near one another), splits it into one branch per
 // segment, trims every branch, resets its timestamps, fades its audio edges and concatenates the pieces
-// (30 fps, fade 0.01, audio starting at 0.1 s):
+// (one input, 30 fps, fade 0.01, audio starting at 0.1 s):
 //
 //	[0:v:0]setpts=PTS-0.104167/TB,fps=fps=30/1:start_time=0:round=up,settb=1/30,split=1[s0];
 //	[0:a:0]asetpts=PTS-0.100000/TB,asplit=1[t0];
@@ -231,48 +238,84 @@ func segmentsFilter(segments []Segment, opts RenderOptions) string {
 	return segmentsGraph(segments, opts, "v", "a")
 }
 
-// segmentsGraph is segmentsFilter with the given labels of the concatenated video and audio.
+// segmentsGraph is segmentsFilter with the given labels of the concatenated video and audio. Each group of
+// segments (groupSegments) is read from its own input; one group is the graph of the whole source.
 func segmentsGraph(segments []Segment, opts RenderOptions, videoOut, audioOut string) string {
 	var b strings.Builder
 
-	n := strconv.Itoa(len(segments))
-
-	if rate := opts.FrameRate.Float(); rate > 0 {
-		inverse := Rational{Num: opts.FrameRate.Den, Den: opts.FrameRate.Num}
-		b.WriteString("[0:v:0]" + shiftExpr("setpts", opts.Offset+frameTolerance/rate))
-		b.WriteString(",fps=fps=" + opts.FrameRate.String() + ":start_time=0:round=up,settb=" + inverse.String())
-	} else {
-		b.WriteString("[0:v:0]" + shiftExpr("setpts", opts.Offset))
-	}
-
-	b.WriteString(",split=" + n + labels("s", len(segments)) + ";")
-	b.WriteString("[0:a:0]" + shiftExpr("asetpts", opts.Offset))
-
-	if opts.Mute {
-		b.WriteString(",volume=0")
-	}
-
-	b.WriteString(",asplit=" + n + labels("t", len(segments)) + ";")
-
-	for i, s := range segments {
-		k := strconv.Itoa(i)
-		d := min(opts.Fade, (s.End-s.Start)/2)
-
-		b.WriteString("[s" + k + "]" + videoTrim(s, opts.FrameRate) + ",setpts=PTS-STARTPTS[v" + k + "];")
-		b.WriteString("[t" + k + "]atrim=start=" + formatPrecise(s.Start) + ":end=" + formatPrecise(s.End))
-		b.WriteString(",asetpts=PTS-STARTPTS")
-
-		if d > 0 {
-			b.WriteString(",afade=t=in:st=0:d=" + formatPrecise(d))
-			b.WriteString(",afade=t=out:st=" + formatPrecise(s.End-s.Start-d) + ":d=" + formatPrecise(d))
-		}
-
-		b.WriteString("[a" + k + "];")
+	for input, g := range groupSegments(segments, opts) {
+		writeGroup(&b, input, g, segments, opts)
 	}
 
 	writeConcat(&b, len(segments), opts, videoOut, audioOut)
 
 	return b.String()
+}
+
+// writeGroup decodes the streams of one input once, splits them into a branch per segment of the group and trims,
+// resets and fades every branch. Segment times are moved by the group's base, its input's timestamps by its shift.
+func writeGroup(b *strings.Builder, input int, g inputGroup, segments []Segment, opts RenderOptions) {
+	n := g.last - g.first + 1
+	count := strconv.Itoa(n)
+
+	if rate := opts.FrameRate.Float(); rate > 0 {
+		inverse := Rational{Num: opts.FrameRate.Den, Den: opts.FrameRate.Num}
+		b.WriteString(streamLabel(input, "v") + shiftExpr("setpts", g.shift+frameTolerance/rate))
+		b.WriteString(",fps=fps=" + opts.FrameRate.String() + ":start_time=0:round=up,settb=" + inverse.String())
+	} else {
+		b.WriteString(streamLabel(input, "v") + shiftExpr("setpts", g.shift))
+	}
+
+	b.WriteString(",split=" + count + rangeLabels("s", g.first, n) + ";")
+	writeAudioHead(b, input, g, opts)
+
+	for i := g.first; i <= g.last; i++ {
+		s := Segment{Start: segments[i].Start - g.base, End: segments[i].End - g.base}
+		k := strconv.Itoa(i)
+
+		b.WriteString("[s" + k + "]" + videoTrim(s, opts.FrameRate) + ",setpts=PTS-STARTPTS[v" + k + "];")
+		writeAudioSegment(b, i, s, opts)
+	}
+}
+
+// writeAudioBranches is the sound of a group of the first input alone: its audio split and every branch trimmed and
+// faded.
+func writeAudioBranches(b *strings.Builder, g inputGroup, segments []Segment, opts RenderOptions) {
+	writeAudioHead(b, 0, g, opts)
+
+	for i := g.first; i <= g.last; i++ {
+		writeAudioSegment(b, i, Segment{Start: segments[i].Start - g.base, End: segments[i].End - g.base}, opts)
+	}
+}
+
+// writeAudioHead decodes the audio of an input once, moves it by the group's shift and splits it into the branches
+// [t<first>]…[t<last>].
+func writeAudioHead(b *strings.Builder, input int, g inputGroup, opts RenderOptions) {
+	n := g.last - g.first + 1
+
+	b.WriteString(streamLabel(input, "a") + shiftExpr("asetpts", g.shift))
+
+	if opts.Mute {
+		b.WriteString(",volume=0")
+	}
+
+	b.WriteString(",asplit=" + strconv.Itoa(n) + rangeLabels("t", g.first, n) + ";")
+}
+
+// writeAudioSegment trims the branch [t<i>] to s (times of the group's graph), resets it and fades its edges: [a<i>].
+func writeAudioSegment(b *strings.Builder, i int, s Segment, opts RenderOptions) {
+	k := strconv.Itoa(i)
+	d := min(opts.Fade, (s.End-s.Start)/2)
+
+	b.WriteString("[t" + k + "]atrim=start=" + formatPrecise(s.Start) + ":end=" + formatPrecise(s.End))
+	b.WriteString(",asetpts=PTS-STARTPTS")
+
+	if d > 0 {
+		b.WriteString(",afade=t=in:st=0:d=" + formatPrecise(d))
+		b.WriteString(",afade=t=out:st=" + formatPrecise(s.End-s.Start-d) + ":d=" + formatPrecise(d))
+	}
+
+	b.WriteString("[a" + k + "];")
 }
 
 // writeConcat joins the pieces and processes the joined sound (soundChain), so it is denoised and normalized as one
@@ -284,6 +327,11 @@ func writeConcat(b *strings.Builder, n int, opts RenderOptions, videoOut, audioO
 	}
 
 	sound := soundChain(opts)
+	if sound != "" && opts.Loudness != nil {
+		// The loudness the render actually gives is measured on the way (the summary at the end of the log).
+		sound += "," + measureFilter
+	}
+
 	joined := audioOut
 
 	if sound != "" {
@@ -323,10 +371,11 @@ func shiftExpr(filter string, offset float64) string {
 	return filter + "=PTS-" + formatPrecise(offset) + "/TB"
 }
 
-func labels(prefix string, n int) string {
+// rangeLabels are n labels of the prefix numbered from first: "[s3][s4]".
+func rangeLabels(prefix string, first, n int) string {
 	var b strings.Builder
 	for i := range n {
-		b.WriteString("[" + prefix + strconv.Itoa(i) + "]")
+		b.WriteString("[" + prefix + strconv.Itoa(first+i) + "]")
 	}
 
 	return b.String()

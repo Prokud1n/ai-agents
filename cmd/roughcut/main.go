@@ -237,7 +237,7 @@ func parseFlags(args []string, output io.Writer) (options, error) {
 	fs.StringVar(&opts.out, "out", defaultOutDir, "output directory")
 	fs.StringVar(&opts.lang, "lang", "", "speech language for transcription, ISO 639-1 (default WHISPER_LANGUAGE)")
 	fs.BoolVar(&opts.planOnly, "plan-only", false, "write the plan, transcript and log without rendering the video")
-	fs.DurationVar(&opts.maxPause, "max-pause", 0, "longest pause kept between words (default ROUGHCUT_MAX_PAUSE, 400ms)")
+	fs.DurationVar(&opts.maxPause, "max-pause", 0, "longest pause kept between words (default ROUGHCUT_MAX_PAUSE, 300ms)")
 	fs.Float64Var(&opts.similarity, "similarity", -1,
 		"share of words (0..1) repeated for a phrase to be a failed take (default ROUGHCUT_RETAKE_SIMILARITY, 0.7)")
 	fs.StringVar(&opts.fillers, "fillers", "", "comma-separated fillers to cut (default ROUGHCUT_FILLERS)")

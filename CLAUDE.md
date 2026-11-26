@@ -341,6 +341,24 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   Строки «Звук и кадр» дописываются в `decisions.log` после рендера. Проверка с ffmpeg — `TestRunnerLoudness`,
   `TestRunnerSoundSync` (вспышка и щелчок через склейки), `TestRunnerZoom` (кадры на стыках); скорость —
   `TestRenderSpeed` (talk с T3.15 и без на одном раннере).
+- Склейка, громкость, скорость правок (T3.19b). Точки разреза — по уровню звука (`ffmpeg.Runner.AudioLevels`: моно
+  16 кГц PCM во временный файл, RMS по 10 мс; `roughcut/levels.go`: `newSpeechLevels` — порог речи 40 % от шумового
+  пола (p10) к громкой речи (p95), не ниже пола + 10 dB, без контраста 15 dB — `nil` и поля вокруг слов 0,12/0,18):
+  `Service.Cut` → `buildPlan(…, cutGrid)` (у `BuildPlanEdited`, которым пользуется app, сетки нет — его план
+  проверочный, точки ставит воркер; `SpeechShare` всегда по полям). Пауза, слышимая длиннее `MaxPause` (0,3 с),
+  сжимается до `breathPause` 0,12 с (`cutGrid.pause`: хвост — в самой тихой точке первого вдоха, остальное — перед
+  следующей фразой, точки на сетке кадров), вокруг вырезанных слов — `cutGrid.around`, края ролика — `lead`/`tail`;
+  в workout не применяется. `Plan.SoundCuts`, `Plan.LongPauses` (паузы > 0,3 с в ролике) — строки в `decisions.log`.
+  Громкость: `Runner.fitLoudness` перед рендером (`BurnSubtitles`/`RenderSegments`, только с измерением исходника)
+  гоняет звук склейки без картинки (`soundGraph`, один вход) с той же цепочкой и `ebur128`, поправляет
+  `LoudnessTarget.Correction` (≤ 3 прохода, допуск 0,1 LU, ±12 dB); финальный граф тоже меряет (`ebur128` после
+  цепочки) → `BurnReport.Sound`/`subtitles.BurnResult.Sound` → строка «Громкость» с итогом. Скорость:
+  `ffmpeg.groupSegments` (inputs.go) — куски с промежутком < 3 с в группу, группа — свой вход с `-ss` (за 0,5 с,
+  целыми кадрами) и `-t`, `-threads 2`, ≤ 8 входов (слияние по кратчайшим промежуткам), группа в первых 2 с — без
+  перемотки; внутри группы граф прежний (`writeGroup`, время кусков минус `base`, сдвиг `shift`). Проверка —
+  `TestRunnerRenderSeeksGroups` (кадр в кадр через перемотки), `TestRunnerJointsWithoutClicks`, `TestRunnerLoudness`
+  (−14 ± 0,5), `roughcut.TestBuildPlanBySound`, бенч `subtitles.TestRenderSpeedLongSource` (4K 4 мин → рилс ~1 мин,
+  ≤ 100 с на 2 CPU).
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

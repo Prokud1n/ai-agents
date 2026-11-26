@@ -43,6 +43,10 @@ func (f *fakeMedia) Probe(context.Context, string) (ffmpeg.MediaInfo, error) {
 	return ffmpeg.MediaInfo{Duration: f.duration, HasVideo: true, HasAudio: true, AvgFrameRate: testRate}, nil
 }
 
+func (*fakeMedia) AudioLevels(context.Context, string) (*ffmpeg.Levels, error) {
+	return nil, nil
+}
+
 func (f *fakeMedia) RenderSegments(
 	_ context.Context,
 	_, dst string,
