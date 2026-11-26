@@ -186,6 +186,24 @@ func TestCutGridPauseStretchedWords(t *testing.T) {
 			prev:  word("раз", 0.2, 1.0), next: word("два", 2.1, 3), heardEnd: 1.0, heardStart: 2.4,
 		},
 		{
+			// A short word (its sound 0.3 s) stretched by 0.35 s: its middle is in the silence.
+			name:  "a short word late by 0.35 s",
+			input: soundOf(4, [3]float64{0.8, 1.1, testSpeech}, [3]float64{2.4, 3, testSpeech}),
+			prev:  word("раз", 0.8, 1.45), next: word("два", 2.4, 3), heardEnd: 1.1, heardStart: 2.4,
+		},
+		{
+			// The sound 0.8–1.1 and from 1.9, Whisper says 0.8–1.5 | 1.5–2.2: the pause is not seen by the margins at all.
+			name:  "the edges meet in the middle of a pause of 0.8 s",
+			input: soundOf(4, [3]float64{0.8, 1.1, testSpeech}, [3]float64{1.9, 3, testSpeech}),
+			prev:  word("раз", 0.8, 1.5), next: word("два", 1.5, 2.2), heardEnd: 1.1, heardStart: 1.9,
+		},
+		{
+			// A short word (0.3 s of sound) late by 0.35 s, the next one early by 0.4 s: they almost meet.
+			name:  "a short word stretched, the edges meet inside a pause of 0.8 s",
+			input: soundOf(4, [3]float64{1.0, 1.3, testSpeech}, [3]float64{2.1, 3, testSpeech}),
+			prev:  word("раз", 1.0, 1.65), next: word("два", 1.7, 2.6), heardEnd: 1.3, heardStart: 2.1,
+		},
+		{
 			// Whisper puts no pause between the words at all, the sound has 0.8 s of silence.
 			name:  "the edges meet inside a pause of 0.8 s",
 			input: soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{1.8, 3, testSpeech}),
@@ -211,6 +229,27 @@ func TestCutGridPauseStretchedWords(t *testing.T) {
 			assert.Less(t, next, (tt.next.Start+tt.next.End)/2, "the next word keeps its middle")
 		})
 	}
+}
+
+// TestQuietEndingKept: a fricative ending (-48 dBFS: under the threshold of speech, -44, well over the floor, -60)
+// that Whisper ends with is not silence: the edge is not moved inside the word, the ending keeps its tail.
+func TestQuietEndingKept(t *testing.T) {
+	t.Parallel()
+
+	const fricative = -48.0
+
+	levels := soundOf(4, [3]float64{0.2, 0.9, testSpeech}, [3]float64{0.9, 1.0, fricative},
+		[3]float64{2.4, 3, testSpeech})
+	grid := &cutGrid{levels: newSpeechLevels(levels), fps: testFPS}
+	require.NotNil(t, grid.levels)
+	require.Less(t, fricative, grid.levels.threshold, "the ending is under the threshold of speech")
+
+	assert.InDelta(t, 1.0, grid.levels.speechEnd(1.0, innerEnd(word("раз", 0.2, 1.0)), 1.3), 1e-9,
+		"the end stays at the end of the ending")
+
+	end, _, ok := grid.pause(word("раз", 0.2, 1.0), word("два", 2.4, 3), 0.3)
+	require.True(t, ok)
+	assert.GreaterOrEqual(t, end, 1.0+tailMin-1e-6, "the ending and its tail are kept")
 }
 
 // TestBuildPlanStretchedPause: the plan cuts a pause Whisper hid inside the words, and the subtitles keep both words.
@@ -295,7 +334,7 @@ func TestCutGridAroundBreath(t *testing.T) {
 	settings := testSettings()
 	settings.PadBefore, settings.PadAfter = defaultPadBefore, defaultPadAfter
 
-	end, next := grid.around(1.0, 1.51, 1.12, 1.38, settings)
+	end, next := grid.around(word("раз", 0.2, 1.0), word("два", 1.51, 2), 1.12, 1.38, settings)
 
 	assert.InDelta(t, 33.0/testFPS, end, 1e-6, "the tail: the latest quiet frame 0.06–0.10 s after the sound")
 	assert.InDelta(t, 43.0/testFPS, next, 1e-6, "one frame earlier than the quietest, into the breath")

@@ -532,9 +532,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (no clicks, the length unchanged). `decisions.log` has the levels (noise p10, loud speech p95, the threshold of
   speech, dBFS), how the cut points were placed and how many pauses longer than 0.3 s are left (`plan.json`:
   `sound_levels`, `sound_cuts`, `long_pauses`). Whisper also stretches words into the silence (an end late by 0.35 s,
-  a start early by 0.3 s, both edges meeting inside a real pause): when nothing is heard at Whisper's edge, the sound
-  is looked for inside the word too (not past its middle, at most 0.4 s), so such a pause is compressed to the breath
-  as well; the endings are still kept (the search goes inside only when the edge is silent). The noise floor is taken
+  a start early by 0.3 s, both edges meeting inside a real pause): when nothing is heard at Whisper's edge, the silence
+  inside the word is cut off too (at most 0.4 s, at least 0.08 s of the word left; a word silent all that way goes to
+  that bound), so such a pause is compressed to the breath as well, also for short words and edges that meet; only
+  real silence counts inside a word (at most 5 dB over the floor), so a quiet ending under the threshold of speech (a
+  fricative) is kept; a cut never passes the middle of a kept word (the subtitles keep it); the same holds around
+  removed words. The noise floor is taken
   from the windows above −100 dBFS (digital silence of a gate no longer drags the threshold under the room noise of
   the other pauses), or held at −90 dBFS when those windows are only speech. The editor's length check (±15 %) and
   «Длина рилс» in `decisions.log` estimate the worker's reel (the plan here × the worker's plan / the same edit counted

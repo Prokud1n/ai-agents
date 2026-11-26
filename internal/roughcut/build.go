@@ -437,7 +437,7 @@ func (b *intervalBuilder) joint(prev, w transcription.Word) (end, next float64) 
 	case len(b.pending) > 0:
 		first, last := b.words[b.pending[0]], b.words[b.pending[len(b.pending)-1]]
 		if b.grid != nil {
-			return b.grid.around(prev.End, w.Start, first.Start, last.End, b.settings)
+			return b.grid.around(prev, w, first.Start, last.End, b.settings)
 		}
 
 		end = max(min(end, first.Start), prev.End)
