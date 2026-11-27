@@ -25,6 +25,12 @@ const (
 	// trainer's 98; a flat grey of our frame (130) gets −0.30 EV and the shadow of 30 % as in T3.25.
 	reelLevel    = 99.0
 	exposureStep = 0.01
+	// reelFloor: the shadow of the top never takes the estimated mean of the reel under this (the criterion is 95, one
+	// code value over it for the estimate).
+	reelFloor = 96.0
+	// verticalAspect of the reel's frame, 9:16, and the tolerance of a source "as tall" as it.
+	verticalAspect  = 9.0 / 16
+	aspectTolerance = 0.02
 	// topGap: the upper third of the reel is estimated this much darker than its lower third (the criterion is 10, the
 	// trainer's 15; 3 code values over 10 for the estimate and the encoding). The shadow of the top grows to it from
 	// MEDIA_WORKER_GRADE_TOP, to maxFittedTop at most.
@@ -67,32 +73,64 @@ func parseGradeSettings(cfg *config.MediaWorker) (gradeSettings, error) {
 	return gradeSettings{on: cfg.Grade, exposure: cfg.GradeExposure, top: cfg.GradeTop / percent}, nil
 }
 
-// forSource is the grade of a source of the luma (Mean 0: not measured — the grade as configured). The shadow of the
-// top (topFor) is the configured one, stronger when the top of the source is light over a darker bottom; the exposure
-// curve (ffmpeg.Grade.Exposure: x → x^(1 − EV)) of a bright source is the weakest that, with that shadow, brings the
-// reel to reelLevel, at most the configured EV — the bottom is never darker than under the configured curve. A source
-// at brightSource or darker keeps its exposure; the shadow fades out from brightSource to darkSource, under which
-// only the warmth is left.
-func (g *gradeSettings) forSource(luma ffmpeg.Luma) *ffmpeg.Grade {
-	if luma.Mean <= 0 {
+// sourceLight is the measured brightness of the source (zero: not measured) and whether its thirds are the thirds of
+// the frame of the reel.
+type sourceLight struct {
+	luma ffmpeg.Luma
+	// thirds: false when the frame pads a source wider than 9:16 with bars above and below it, or the shape of the
+	// source is unknown with the pad — the shadow of the top is then the configured one, as in T3.25.
+	thirds bool
+}
+
+// measured: the brightness of the source is known (a mean above 0, no NaN).
+func (l *sourceLight) measured() bool {
+	return l.luma.Mean > 0 && !math.IsNaN(l.luma.Mean+l.luma.Top+l.luma.Bottom)
+}
+
+// framedThirds: the thirds of a source of the display aspect (width over height, 0 unknown) are the thirds of the
+// reel's frame of the fit. The crop fills the frame (a wider source loses its sides, not its top), the pad of a source
+// as tall as 9:16 or taller adds bars at the sides; only a wider padded source gets bars above and below.
+func framedThirds(fit ffmpeg.FitMode, aspect float64) bool {
+	return fit != ffmpeg.PadFitMode || (aspect > 0 && aspect <= verticalAspect*(1+aspectTolerance))
+}
+
+// Why the shadow of the top stops short of topGap (topFor).
+const (
+	noTopLimit = iota
+	// meanTopLimit: a stronger shadow would take the estimated mean of the reel under reelFloor.
+	meanTopLimit
+	// strengthTopLimit: the shadow is maxFittedTop.
+	strengthTopLimit
+)
+
+// forSource is the grade of a source of the light (not measured — the grade as configured). The shadow of the top
+// (topFor) is the configured one, stronger when the top of the source is light over a darker bottom, never so strong
+// that the reel is estimated darker than reelFloor; the exposure curve (ffmpeg.Grade.Exposure: x → x^(1 − EV)) of a
+// bright source is the weakest that, with that shadow, brings the reel to reelLevel, at most the configured EV — the
+// bottom is never darker than under the configured curve. A source at brightSource or darker keeps its exposure; the
+// shadow fades out from brightSource to darkSource, under which only the warmth is left.
+func (g *gradeSettings) forSource(light *sourceLight) *ffmpeg.Grade {
+	if !light.measured() {
 		return &ffmpeg.Grade{Exposure: g.exposure, Warmth: gradeWarmth, Top: g.top}
 	}
 
-	share := math.Min(1, math.Max(0, (luma.Mean-darkSource)/(brightSource-darkSource)))
+	luma := light.luma
 	grade := &ffmpeg.Grade{Warmth: gradeWarmth}
 
-	// A mean at or under the black (superblack, noise) or at or over the white has no curve to fit: the exposure stays,
-	// as it does in a source not brighter than brightSource.
+	// A mean at or over the white has no curve to fit: the exposure stays, as it does in a source not brighter than
+	// brightSource.
 	if luma.Mean <= brightSource || luma.Mean >= lumaBlack+lumaRange {
-		grade.Top = roundEV(share * g.topFor(grade, luma))
+		top, _ := g.topFor(grade, light)
+		grade.Top = roundHundredths(top)
 
 		return grade
 	}
 
 	steps := int(math.Round(-g.exposure / exposureStep))
 	for i := range steps + 1 {
-		grade.Exposure = roundEV(float64(-i) * exposureStep)
-		grade.Top = roundEV(share * g.topFor(grade, luma))
+		grade.Exposure = roundHundredths(float64(-i) * exposureStep)
+		top, _ := g.topFor(grade, light)
+		grade.Top = roundHundredths(top)
 
 		if grade.Graded(luma).Mean <= reelLevel {
 			break
@@ -102,35 +140,57 @@ func (g *gradeSettings) forSource(luma ffmpeg.Luma) *ffmpeg.Grade {
 	return grade
 }
 
-// topFor is the shadow of the top under the exposure of the grade: the configured one (none if it is 0), stronger when
-// without it the upper third of the reel would not be topGap darker than its lower third, at most maxFittedTop. The
-// upper third of the estimate darkens in proportion to the shadow, from no shadow to the full one.
-func (g *gradeSettings) topFor(grade *ffmpeg.Grade, luma ffmpeg.Luma) float64 {
-	if g.top == 0 {
-		return 0
+// topFor is the shadow of the top under the exposure of the grade and why it stops short of topGap. It is the
+// configured one (none if it is 0), stronger when without it the upper third of the reel would not be topGap darker
+// than its lower third, at most maxFittedTop, faded by the brightness of the source (shadowShare); and never so strong
+// that the estimated mean of the reel falls under reelFloor (the configured shadow neither). Both the upper third and
+// the mean of the estimate darken in proportion to the shadow, from no shadow to the full one. A source whose thirds
+// are not the frame's gets the configured shadow.
+func (g *gradeSettings) topFor(grade *ffmpeg.Grade, light *sourceLight) (top float64, limit int) {
+	share := shadowShare(light.luma.Mean)
+	if g.top == 0 || !light.thirds {
+		return share * g.top, noTopLimit
 	}
 
-	open := (&ffmpeg.Grade{Exposure: grade.Exposure}).Graded(luma)
-	dark := (&ffmpeg.Grade{Exposure: grade.Exposure, Top: 1}).Graded(luma)
+	open := (&ffmpeg.Grade{Exposure: grade.Exposure}).Graded(light.luma)
+	dark := (&ffmpeg.Grade{Exposure: grade.Exposure, Top: 1}).Graded(light.luma)
 
-	need := 0.0
+	need, limit := g.top, noTopLimit
 	if open.Top > dark.Top {
-		need = (open.Top - (open.Bottom - topGap)) / (open.Top - dark.Top)
+		need = math.Max(g.top, (open.Top-(open.Bottom-topGap))/(open.Top-dark.Top))
 	}
 
-	return math.Min(maxFittedTop, math.Max(g.top, need))
+	if need > maxFittedTop {
+		need, limit = maxFittedTop, strengthTopLimit
+	}
+
+	need *= share
+
+	if open.Mean > dark.Mean {
+		if floor := math.Max(0, (open.Mean-reelFloor)/(open.Mean-dark.Mean)); need > floor {
+			return floor, meanTopLimit
+		}
+	}
+
+	return need, limit
 }
 
-// roundEV keeps two decimals of the exposure and of the shadow: the log and the graph show the same numbers.
-func roundEV(v float64) float64 {
+// shadowShare of the shadow of the top a source of the mean gets: none at darkSource, all of it from brightSource.
+func shadowShare(mean float64) float64 {
+	return math.Min(1, math.Max(0, (mean-darkSource)/(brightSource-darkSource)))
+}
+
+// roundHundredths keeps two decimals of the exposure and of the shadow: the log and the graph show the same numbers.
+func roundHundredths(v float64) float64 {
 	const hundredths = 100
 
 	return math.Round(v*hundredths) / hundredths
 }
 
 // note is the line of the decisions log about the colour of the draft: what was measured in the source (the mean, the
-// upper and the lower third), the grade and what it is estimated to give the reel.
-func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, luma ffmpeg.Luma) string {
+// upper and the lower third), the grade, what it is estimated to give the reel and, when the top is not topGap darker
+// than the bottom, what held the shadow back.
+func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, light *sourceLight) string {
 	switch {
 	case workout:
 		return "Цвет кадра: как в исходнике (тренировка)"
@@ -138,21 +198,50 @@ func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, luma ffmpeg.Luma
 		return "Цвет кадра: как в исходнике (пресет выключен)"
 	}
 
-	if luma.Mean > 0 && luma.Mean < darkSource {
+	luma := light.luma
+	if light.measured() && luma.Mean < darkSource {
 		return fmt.Sprintf("Цвет кадра: исходник уже тёмный (средняя яркость исходника %.0f) — без затемнения, только "+
 			"тепло +%d", luma.Mean, grade.Warmth)
 	}
 
 	source := "яркость исходника не измерена — пресет как задан"
-	if luma.Mean > 0 {
+	if light.measured() {
 		graded := grade.Graded(luma)
 		source = fmt.Sprintf("средняя яркость исходника %.0f, верхняя/нижняя треть %.0f/%.0f; в рилсе ожидается "+
-			"средняя %.0f, верх/низ %.0f/%.0f", luma.Mean, luma.Top, luma.Bottom, graded.Mean, graded.Top, graded.Bottom)
+			"средняя %.0f, верх/низ %.0f/%.0f", luma.Mean, luma.Top, luma.Bottom, graded.Mean, graded.Top, graded.Bottom) +
+			g.topNote(grade, light, graded)
 	}
 
 	return fmt.Sprintf("Цвет кадра: как у тренера — экспозиция %.2f EV, тепло +%d, верх кадра темнее на %.0f%% "+
 		"(%s; задано %.2f EV и %.0f%%)", grade.Exposure, grade.Warmth, grade.Top*percent, source, g.exposure,
 		g.top*percent)
+}
+
+// topNote says why the shadow of the top did not take the top topGap under the bottom ("" — it did, or it was not
+// fitted).
+func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded ffmpeg.Luma) string {
+	if !light.thirds {
+		return "; кадр с полями сверху и снизу — тень как задана"
+	}
+
+	_, limit := g.topFor(grade, light)
+
+	var why string
+
+	switch limit {
+	case meanTopLimit:
+		why = "тень на пределе по средней"
+	case strengthTopLimit:
+		why = fmt.Sprintf("тень на пределе (%.0f%%)", maxFittedTop*percent)
+	default:
+		return ""
+	}
+
+	if gap := graded.Bottom - graded.Top; gap >= 0 {
+		return fmt.Sprintf("; %s, верх темнее низа на %.0f", why, gap)
+	}
+
+	return fmt.Sprintf("; %s, верх светлее низа на %.0f", why, graded.Top-graded.Bottom)
 }
 
 // lumaMeter measures the brightness of the source, its mean and its thirds (ffmpeg.Runner.MeanLuma).
@@ -162,31 +251,36 @@ type lumaMeter interface {
 
 // sourceLuma is the brightness of the picture of the source (the mean and the upper and the lower third): key frames
 // at gradeSamples moments spread evenly over the whole source, so every version of a draft (a revision cuts
-// differently) gets the grade of the first one. Zero (the grade as configured) without a meter, with the grade off, in
-// a workout or when the measurement fails (logged: the draft is still made); only a cancelled context is an error.
-func (p *Pipeline) sourceLuma(ctx context.Context, w *jobWork) (ffmpeg.Luma, error) {
+// differently) gets the grade of the first one, and whether its thirds are the frame's (framedThirds). Not measured (the
+// grade as configured) without a meter, with the grade off, in a workout or when the measurement fails (logged: the
+// draft is still made); only a cancelled context is an error.
+func (p *Pipeline) sourceLuma(ctx context.Context, w *jobWork) (*sourceLight, error) {
+	light := &sourceLight{thirds: framedThirds(p.fit, w.aspect)}
 	if p.meter == nil || !p.sound.grade.on || w.cut.Plan.Mode.Effective() != roughcut.TalkMode {
-		return ffmpeg.Luma{}, nil
+		return light, nil
 	}
 
 	started := p.now()
 
 	luma, err := p.meter.MeanLuma(ctx, w.source, sampleMoments(w.result.SourceDuration), w.hdr)
 	if ctx.Err() != nil {
-		return ffmpeg.Luma{}, ctx.Err()
+		return nil, ctx.Err()
 	}
 
 	if err != nil {
 		p.log.ErrorContext(ctx, "mediaworker: failed to measure the brightness of the source, graded as configured",
 			"job_id", w.job.ID, "error", err)
 
-		return ffmpeg.Luma{}, nil
+		return light, nil
 	}
 
 	p.log.InfoContext(ctx, "mediaworker: brightness of the source", "job_id", w.job.ID, "mean_luma", luma.Mean,
-		"top_luma", luma.Top, "bottom_luma", luma.Bottom, "seconds", roundTime(p.now().Sub(started).Seconds()))
+		"top_luma", luma.Top, "bottom_luma", luma.Bottom, "thirds", light.thirds,
+		"seconds", roundTime(p.now().Sub(started).Seconds()))
 
-	return luma, nil
+	light.luma = luma
+
+	return light, nil
 }
 
 // sampleMoments are gradeSamples moments in the middles of equal parts of a source of the duration, seconds.

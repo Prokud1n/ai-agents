@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -37,6 +38,30 @@ type MediaInfo struct {
 	Width       int
 	Height      int
 	PixelFormat string
+	// Rotation of the picture as shown, degrees (the display matrix of a phone, or the old rotate tag); 0 if none.
+	Rotation int
+}
+
+// The turns of a picture, degrees.
+const (
+	fullTurn         = 360
+	quarterTurn      = 90
+	threeQuarterTurn = 270
+)
+
+// DisplayAspect is the width over the height of the picture as it is shown (a quarter turn swaps them); 0 if the size
+// is unknown.
+func (m *MediaInfo) DisplayAspect() float64 {
+	if m.Width <= 0 || m.Height <= 0 {
+		return 0
+	}
+
+	w, h := float64(m.Width), float64(m.Height)
+	if turn := (m.Rotation%fullTurn + fullTurn) % fullTurn; turn == quarterTurn || turn == threeQuarterTurn {
+		w, h = h, w
+	}
+
+	return w / h
 }
 
 // highDepthMarks are in the names of the pixel formats with more than 8 bits a sample: yuv420p10le, p010le, yuv422p12.
@@ -90,17 +115,26 @@ func (r Rational) String() string {
 	return strconv.FormatInt(r.Num, decimalBase) + frameRateDivider + strconv.FormatInt(r.Den, decimalBase)
 }
 
+// probeSideData is a side data of a stream: the display matrix of a phone video has the rotation.
+type probeSideData struct {
+	Rotation float64 `json:"rotation"`
+}
+
 type probeOutput struct {
 	Streams []struct {
-		CodecType      string `json:"codec_type"`
-		AvgFrameRate   string `json:"avg_frame_rate"`
-		RFrameRate     string `json:"r_frame_rate"`
-		StartTime      string `json:"start_time"`
-		ColorTransfer  string `json:"color_transfer"`
-		ColorPrimaries string `json:"color_primaries"`
-		Width          int    `json:"width"`
-		Height         int    `json:"height"`
-		PixelFormat    string `json:"pix_fmt"`
+		CodecType      string          `json:"codec_type"`
+		AvgFrameRate   string          `json:"avg_frame_rate"`
+		RFrameRate     string          `json:"r_frame_rate"`
+		StartTime      string          `json:"start_time"`
+		ColorTransfer  string          `json:"color_transfer"`
+		ColorPrimaries string          `json:"color_primaries"`
+		Width          int             `json:"width"`
+		Height         int             `json:"height"`
+		PixelFormat    string          `json:"pix_fmt"`
+		SideData       []probeSideData `json:"side_data_list"`
+		Tags           struct {
+			Rotate string `json:"rotate"`
+		} `json:"tags"`
 	} `json:"streams"`
 	Format struct {
 		Duration  string `json:"duration"`
@@ -130,7 +164,7 @@ func (r *Runner) Probe(ctx context.Context, path string) (MediaInfo, error) {
 
 func probeArgs(input string) []string {
 	return probeEntriesArgs(input, "stream=codec_type,avg_frame_rate,r_frame_rate,start_time,color_transfer,color_primaries,width,height,pix_fmt:"+
-		"format=duration,start_time", "json")
+		"stream_side_data=rotation:stream_tags=rotate:format=duration,start_time", "json")
 }
 
 func parseProbe(s string) (MediaInfo, error) {
@@ -158,6 +192,7 @@ func parseProbe(s string) (MediaInfo, error) {
 			info.VideoStart = parseStart(st.StartTime)
 			info.ColorTransfer, info.ColorPrimaries = st.ColorTransfer, st.ColorPrimaries
 			info.Width, info.Height, info.PixelFormat = st.Width, st.Height, st.PixelFormat
+			info.Rotation = streamRotation(st.SideData, st.Tags.Rotate)
 
 			if info.AvgFrameRate, err = parseRational(st.AvgFrameRate); err != nil {
 				return MediaInfo{}, err
@@ -173,6 +208,22 @@ func parseProbe(s string) (MediaInfo, error) {
 	}
 
 	return info, nil
+}
+
+// streamRotation is the rotation of the display matrix (the first side data that has one), else of the rotate tag.
+func streamRotation(sideData []probeSideData, tag string) int {
+	for _, d := range sideData {
+		if d.Rotation != 0 {
+			return int(math.Round(d.Rotation))
+		}
+	}
+
+	rotate, err := strconv.Atoi(strings.TrimSpace(tag))
+	if err != nil {
+		return 0
+	}
+
+	return rotate
 }
 
 // parseStart reads start_time; "N/A" or a missing value is 0.

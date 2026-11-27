@@ -271,6 +271,8 @@ type jobWork struct {
 	reel       string
 	// hdr: the source is HLG/PQ and is tone mapped to SDR bt709.
 	hdr bool
+	// aspect of the picture of the source as shown, width over height (0 unknown).
+	aspect float64
 	// planned: the job stops after the plan, the editor decides on it (no reel).
 	planned bool
 }
@@ -305,6 +307,7 @@ func (p *Pipeline) check(ctx context.Context, w *jobWork) error {
 
 	w.result.SourceDuration = roundTime(info.Duration)
 	w.hdr = info.HDR()
+	w.aspect = info.DisplayAspect()
 
 	if w.hdr {
 		p.log.InfoContext(ctx, "mediaworker: HDR source, tone mapping to SDR", "job_id", w.job.ID,
@@ -504,12 +507,12 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		speech = &transcription.Result{Language: w.cut.Transcript.Language, Duration: w.cut.Transcript.Duration}
 	}
 
-	luma, err := p.sourceLuma(ctx, w)
+	light, err := p.sourceLuma(ctx, w)
 	if err != nil {
 		return err
 	}
 
-	cut := p.sound.cut(w.cut, w.transcript.Loudness, luma)
+	cut := p.sound.cut(w.cut, w.transcript.Loudness, light)
 
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
 		CreateSubtitlesData: subtitles.CreateSubtitlesData{
@@ -531,7 +534,7 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 			"by the measurement of the source", "job_id", w.job.ID, "error", burn.Sound.FitError)
 	}
 
-	notes := p.sound.notes(cut, w.transcript.Loudness, luma, w.cut.Plan.Mode, burn.Sound)
+	notes := p.sound.notes(cut, w.transcript.Loudness, light, w.cut.Plan.Mode, burn.Sound)
 	p.log.InfoContext(ctx, "mediaworker: sound and framing", "job_id", w.job.ID, "notes", notes)
 
 	if err := appendDecisions(w.cut.Files.Log, notes); err != nil {

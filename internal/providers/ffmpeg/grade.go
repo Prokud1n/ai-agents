@@ -133,7 +133,9 @@ func (l Luma) Middle() float64 {
 // Graded estimates the luma of a picture after the grade, as gradeGraph renders it: the exposure curve of the mean of
 // each third, then the shadow of the top by its share in the third (overlay of black: Y' → 16 + (Y' − 16)·(1 − α)).
 // The curve is nearly straight over the light of a third, so the estimate is within a couple of code values of the
-// render (TestRunnerGradeThirds). The warmth does not change the luma.
+// render: about ±1 on a grey, up to ±3 on untagged synthetic sources (TestRunnerGradeThirds). The warmth does not
+// change the luma. It is the frame without the zoom: the 1.3× zoom of some pieces (Zoom) moves the thirds of the
+// picture under the fixed shadow a little — the margin of the worker's gap over the criterion covers it.
 func (g *Grade) Graded(l Luma) Luma {
 	top := shaded(g.curve(l.Top), g.Top*topShadowTop)
 	middle := shaded(g.curve(l.Middle()), g.Top*topShadowMiddle)

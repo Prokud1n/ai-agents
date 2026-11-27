@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shadow (up to 70 %) and a weaker exposure curve, so the upper third of the reel is darker than the lower third (the
   estimate aims at 13 code values; the trainer's 78.5 / 93.5) and the mean stays at about 99; the bottom is never darker
   than before. `MEDIA_WORKER_GRADE_TOP` is now the least shadow (0 — none). The warmth is ±2 instead of ±3 (warmer than
-  the trainer's). The «Цвет кадра» line of `decisions.log` shows the thirds of the source and the estimated reel.
+  the trainer's). The shadow never takes the estimated mean of the reel under 96 (the line says «тень на пределе по
+  средней»); a source wider than 9:16 padded to the frame (the rotation of a phone video counted) keeps the configured
+  shadow. The «Цвет кадра» line of `decisions.log` shows the thirds of the source and the estimated reel.
 
 - The picture of a talking head as in the trainer's own reels (T3.25): darker and slightly warmer, the top of the frame
   (the light wall under the subtitles) in a soft shadow, so the white subtitles read; a source that is already dark is
