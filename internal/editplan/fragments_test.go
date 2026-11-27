@@ -24,7 +24,7 @@ func revisionStory(t *testing.T) *Request {
 func TestCheckFragments(t *testing.T) {
 	t.Parallel()
 
-	const detail = "Обрывок фразы в правке: слова 13 «километров»"
+	const detail = "Обрывок фразы в правке: слово 13 «километров»"
 
 	tests := []struct {
 		name     string
@@ -36,8 +36,8 @@ func TestCheckFragments(t *testing.T) {
 		{
 			name: "all but the last word", version: 2, remove: []roughcut.WordRange{{From: 7, To: 12}},
 			hint: []string{
-				"от предложения «через месяц она пробежала первые десять километров» (слова 7–13) осталось только " +
-					"слово 13 «километров»",
+				"от предложения «через месяц она пробежала первые десять…» (слова 7–13) осталось только слово 13 " +
+					"«километров»",
 				"вырежи и эти слова или верни предложение целиком",
 			},
 			expected: []string{detail},

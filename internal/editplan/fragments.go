@@ -22,7 +22,7 @@ const (
 )
 
 // fragmentDetailFormat is the line of the decisions log.
-const fragmentDetailFormat = "Обрывок фразы в правке: слова %s «%s»"
+const fragmentDetailFormat = "Обрывок фразы в правке: %s %s «%s»"
 
 // fragment is what a revision left of a sentence it cut: the sentence and the words left.
 type fragment struct {
@@ -49,7 +49,7 @@ func checkFragments(req *Request, edit *roughcut.Edit, plan *roughcut.Plan) stri
 	for _, f := range found {
 		left := indexList(f.left)
 		text := joinIndexed(words, f.left)
-		edit.Details = append(edit.Details, fmt.Sprintf(fragmentDetailFormat, left, text))
+		edit.Details = append(edit.Details, fmt.Sprintf(fragmentDetailFormat, wordsLabel(len(f.left)), left, text))
 		refs = append(refs, fmt.Sprintf("от предложения «%s» (слова %s) осталось только %s «%s»",
 			truncate(quote(words, f.sentence), maxDroppedRunes), indexRange(f.sentence.From, f.sentence.To),
 			wordsLabel(len(f.left))+" "+left, text))

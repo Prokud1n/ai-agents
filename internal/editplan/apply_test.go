@@ -216,6 +216,7 @@ func TestApplyRevision(t *testing.T) {
 			input: Input{Decision: EditDecision, TrimEnd: 1.5},
 			expectedEdit: roughcut.Edit{
 				Remove: []roughcut.WordRange{{From: 8, To: 10}}, Notes: []string{noReasonNote},
+				Details: []string{"Обрывок фразы в правке: слово 7 «делаем»"}, // T3.29: the filler before it is cut
 			},
 			expectedChanges: []string{"Обрезал конец: убрал последние 1,4 с."},
 		},
