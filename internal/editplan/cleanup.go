@@ -167,8 +167,9 @@ func cutsRepeats(req *Request, cut func(i int) bool) bool {
 	list := normalizedPhrases(req.Transcript, req.Plan)
 	repeated := inRowRepeats(list)
 
-	for _, pair := range similarPairs(req.Transcript.Words, list) {
-		repeated = append(repeated, pair[0], pair[1])
+	pairs := similarPairs(req.Transcript.Words, list)
+	for k := range pairs {
+		repeated = append(repeated, pairs[k][0], pairs[k][1])
 	}
 
 	for k := range repeated {
