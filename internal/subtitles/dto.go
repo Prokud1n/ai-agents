@@ -26,6 +26,10 @@ type CreateSubtitlesData struct {
 	Notes []Note
 	// Branding is the trainer's handle over the reel and the end card with it; nil or an empty handle: none.
 	Branding *Branding
+	// SentenceJoints are the times on the timeline of the transcript where words were cut out before a fragment
+	// (roughcut.WordCutJoints): a word the speech recognition capitalized right after one starts a sentence
+	// (lowercase_sentences). Nil: none.
+	SentenceJoints []float64
 
 	// joints are the starts of the fragments of the cut on its timeline (BurnSubtitlesData.Cut, cutJoints): the
 	// question under a heading is timed from the joint it starts at (leadUnderSections). Nil without a cut.

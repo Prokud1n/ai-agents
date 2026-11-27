@@ -117,12 +117,17 @@ func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, h
 	}
 
 	if style.Layout.LowercaseSentences {
-		tokens = lowerSentenceStarts(tokens)
+		tokens = lowerSentenceStarts(sentencesAtJoints(tokens, data.SentenceJoints))
 	}
 
+	said := tokens // with the readings of the headings: the question is not shown while one is said
 	tokens = hideReadings(tokens, headings)
 	if style.Layout.Orthography {
 		tokens = sectionQuestions(tokens, headings)
+	}
+
+	if style.Layout.Phrases.Enabled {
+		tokens = markLeaningSubjects(tokens)
 	}
 
 	tokens = markAccents(tokens, data.Accents, style.Accent.Words)
@@ -151,7 +156,7 @@ func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, h
 		timed = hideUnderHook(timed, hookEnd)
 	}
 
-	return leadUnderSections(timed, headings, style.Section.Lead, data.joints)
+	return leadUnderSections(timed, headings, style.Section.Lead, sectionJoints{joints: data.joints, said: said})
 }
 
 // glueBarriers are the moments no phrase is glued across: the end of the hook (a piece under it and one after it are
