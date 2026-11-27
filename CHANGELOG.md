@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zoom too (the same key frames, the same pass), and the zoomed pieces get a shadow of the top of their own: under the
   shadow of the frame their thirds came out equal (88 / 88, almost half of the reel zoomed: −6 over the reel against
   −10). Now the plain pieces, the zoomed ones and the whole reel are estimated 13 darker at the top than at the bottom,
-  the mean of the reel at about 99 (a zoomed piece may be darker, down to 90, when the plain ones keep the reel at 96).
+  the mean of the reel at about 99 (a zoomed piece may be darker when the plain ones keep the reel at 96, but never
+  more than 6 darker than a plain one: the light does not jump at a joint; the line then says so).
   The «Цвет кадра» line shows the share of the zoom, the estimates with and without it and the shadow of the zoomed
   pieces. At a joint around removed words the cut stops where their sound starts and starts where it ends, not where
   the speech recognition says: no cut-off start of the next phrase at the end of a piece and no tail of a removed word

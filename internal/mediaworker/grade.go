@@ -28,9 +28,10 @@ const (
 	// reelFloor: the shadow of the top never takes the estimated mean of the reel under this (the criterion is 95, one
 	// code value over it for the estimate).
 	reelFloor = 96.0
-	// minZoomedLevel: the shadow of the zoomed pieces may take them under reelFloor when the plain ones make up for it
-	// in the mean of the reel (T3.30), never under this.
-	minZoomedLevel = 90.0
+	// maxZoomedDrop: the shadow of the zoomed pieces may take them under reelFloor when the plain ones make up for it
+	// in the mean of the reel (T3.30), but their mean is never more than this under the mean of the plain pieces — the
+	// light does not jump at a joint where the framing changes.
+	maxZoomedDrop = 6.0
 	// verticalAspect of the reel's frame, 9:16, and the tolerance of a source "as tall" as it.
 	verticalAspect  = 9.0 / 16
 	aspectTolerance = 0.02
@@ -172,11 +173,13 @@ func (g *gradeSettings) forSource(light *sourceLight, zoomShare float64) *ffmpeg
 }
 
 // zoomedFloor is the mean the shadow of the zoomed pieces may take them down to: what keeps the estimated mean of the
-// reel at reelFloor with the plain pieces under the shadow of the grade's Top, at least minZoomedLevel.
-func zoomedFloor(grade *ffmpeg.Grade, light *sourceLight, zoomShare float64) float64 {
+// reel at reelFloor with the plain pieces under the shadow of the grade's Top, and not more than maxZoomedDrop under
+// the plain pieces; jump: the latter holds it.
+func zoomedFloor(grade *ffmpeg.Grade, light *sourceLight, zoomShare float64) (floor float64, jump bool) {
 	plain := grade.Graded(light.luma).Mean
+	reel, joint := (reelFloor-(1-zoomShare)*plain)/zoomShare, plain-maxZoomedDrop
 
-	return math.Max(minZoomedLevel, (reelFloor-(1-zoomShare)*plain)/zoomShare)
+	return math.Max(reel, joint), joint > reel
 }
 
 // fitTops sets the shadows of the top under the exposure of the grade: of the frame (topFor of the source) and, when
@@ -192,7 +195,8 @@ func (g *gradeSettings) fitTops(grade *ffmpeg.Grade, light *sourceLight, zoomSha
 		return
 	}
 
-	zoomTop, _ := g.topFor(grade, light, zoomed, zoomedFloor(grade, light, zoomShare))
+	floor, _ := zoomedFloor(grade, light, zoomShare)
+	zoomTop, _ := g.topFor(grade, light, zoomed, floor)
 	if zoomTop = roundHundredths(zoomTop); zoomTop != grade.Top {
 		grade.ZoomTop = new(zoomTop)
 	}
@@ -310,19 +314,25 @@ func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded 
 	}
 
 	_, limit := g.topFor(grade, light, &light.luma, reelFloor)
-	top, where := grade.Top, ""
+	top, where, jump := grade.Top, "", false
 
 	if window := light.zoomed(zoomShare); limit == noTopLimit && window != nil {
-		_, limit = g.topFor(grade, light, window, zoomedFloor(grade, light, zoomShare))
+		var floor float64
+
+		floor, jump = zoomedFloor(grade, light, zoomShare)
+		_, limit = g.topFor(grade, light, window, floor)
 		top, where = grade.Zoomed().Top, " на кусках с зумом"
 	}
 
 	var why string
 
-	switch limit {
-	case meanTopLimit:
+	switch {
+	case limit == meanTopLimit && jump:
+		why = fmt.Sprintf("тень на кусках с зумом на пределе: они не темнее кусков без зума больше чем на %.0f "+
+			"(свет на стыке не скачет)", maxZoomedDrop)
+	case limit == meanTopLimit:
 		why = "тень" + where + " на пределе по средней"
-	case strengthTopLimit:
+	case limit == strengthTopLimit:
 		why = fmt.Sprintf("тень%s на пределе (%.0f%%)", where, top*percent)
 	default:
 		return ""

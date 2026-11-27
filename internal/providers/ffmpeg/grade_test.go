@@ -524,16 +524,20 @@ func TestRenderSpeedGrade(t *testing.T) {
 
 	opts := RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}}
 	before := &Cut{Segments: segments, Options: opts, Zoom: &Zoom{Factor: 1.09, MinSegment: 1.2}}
+	// After T3.30: the zoomed pieces have a shadow of their own — two overlays with enable.
 	after := &Cut{
-		Segments: segments, Options: opts, Grade: testGrade,
-		Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{5.7, 15.2}},
+		Segments: segments, Options: opts,
+		Grade: &Grade{Exposure: testGrade.Exposure, Warmth: testGrade.Warmth, Top: testGrade.Top, ZoomTop: new(0.6)},
+		Zoom:  &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{5.7, 15.2}},
 	}
 
 	started = time.Now()
-	luma, err := r.MeanLuma(ctx, src, []float64{1, 6, 11, 16, 21, 26}, false, 0)
+	luma, err := r.MeanLuma(ctx, src, []float64{1, 6, 11, 16, 21, 26}, false, 1.3)
 	require.NoError(t, err)
-	t.Logf("render speed: the brightness of the 4K source (6 key frames) measured in %.2f s: mean luma %.1f",
-		time.Since(started).Seconds(), luma.Mean)
+	require.NotNil(t, luma.Zoomed, "the zoom window measured in the same pass")
+	t.Logf("render speed: the brightness of the 4K source (6 key frames, with the zoom window) measured in %.2f s: "+
+		"mean luma %.1f, zoomed %.1f; zoomed share of the reel %.2f", time.Since(started).Seconds(), luma.Mean,
+		luma.Zoomed.Mean, after.ZoomShare())
 
 	best := map[string]float64{}
 

@@ -30,6 +30,8 @@ const (
 	maxQuietEnding = 0.15
 	// speechHole: a quieter stretch this short inside the sound (the closure of a stop: «т», «к», «п») does not end it.
 	speechHole = 0.12
+	// minBorderQuiet: windows of a quiet stretch between removed and kept words (removedBorder); one is a dip.
+	minBorderQuiet = 2
 	// breathPause is the silence a pause is compressed to (the tail of one phrase and the lead of the next), so the
 	// phrases do not run together: 0.15 s, ± half a frame of the grid the cut points stand on (0.13–0.17 s at 30 fps).
 	breathPause = 0.15
@@ -412,13 +414,14 @@ func (g *cutGrid) aroundBy(
 // removedBorder is where the sound of removed words really stops on the side of a kept word (T3.30). edge is Whisper's
 // edge of the removed words (the start of the first, the end of the last), limit Whisper's edge of the kept word next
 // to them, d the direction from the removed words to it (backward: the kept word is before them). Whisper is off by
-// tens of milliseconds: a removed word may sound up to 0.1 s before its start (ana4b, ana5: a cut piece of the next
-// phrase at the end of a piece) or after its end (ana5b: 20 ms of its sound at the start of the next piece), and the
+// tens of milliseconds: a removed word may sound up to 0.1 s before its start (live checks 4 and 5: a cut piece of the
+// next phrase at the end of a piece) or after its end (20 ms of its sound at the start of the next piece), and the
 // sound of the joint is then taken for the kept word's. The border is the edge when the window past it is quiet (at or
 // under the threshold of speech); otherwise the removed side of the first quiet stretch longer than speechHole (the
-// closure of a stop inside the removed word does not end it), failing that of the longest quiet stretch, failing
-// that — the sound unbroken to the kept word — the middle of its quietest window. It is never past limit: the kept word
-// keeps all Whisper gives it.
+// closure of a stop inside the removed word does not end it), failing that of the quiet stretch of at least
+// minBorderQuiet nearest to the removed words (a farther one may be the closure of a stop in the kept word's ending),
+// failing that — the sound unbroken to the kept word — the middle of its quietest window. It is never past limit: the
+// kept word keeps all Whisper gives it.
 func (s *speechLevels) removedBorder(edge, limit, d float64) float64 {
 	half := d * s.window / 2
 	if d*(limit-edge) <= 0 || s.at(edge+half) <= s.threshold {
@@ -426,16 +429,16 @@ func (s *speechLevels) removedBorder(edge, limit, d float64) float64 {
 	}
 
 	var (
-		runStart, longestStart float64
-		run, longest           float64
-		quietest, quietestAt   = math.Inf(1), edge
+		runStart, run        float64
+		nearest              = math.NaN()
+		quietest, quietestAt = math.Inf(1), edge
 	)
 
 	for t := edge; d*(limit-t) > gridEpsilon; t += d * s.window {
 		level := s.at(t + half)
 		if level > s.threshold {
 			if level < quietest {
-				quietest, quietestAt = level, t+half
+				quietest, quietestAt = level, d*min(d*(t+half), d*limit)
 			}
 
 			run = 0
@@ -452,13 +455,13 @@ func (s *speechLevels) removedBorder(edge, limit, d float64) float64 {
 			return runStart
 		}
 
-		if run > longest {
-			longest, longestStart = run, runStart
+		if math.IsNaN(nearest) && run > minBorderQuiet*s.window-gridEpsilon {
+			nearest = runStart
 		}
 	}
 
-	if longest > 0 {
-		return longestStart
+	if !math.IsNaN(nearest) {
+		return nearest
 	}
 
 	return quietestAt

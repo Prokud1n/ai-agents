@@ -20,7 +20,6 @@ const (
 	testTopGap        = 13.0
 	testTopStep       = 0.01
 	reelRate          = 30
-	jointSkipped      = 3 // frames around a joint are not measured (the fade of the joint)
 )
 
 // TestLumaZoomRect: the zoom window on the small frame of MeanLuma — the middle 1/1.3 across, its fixed point 40 %
@@ -161,6 +160,21 @@ func TestRunnerGradeZoomThirds(t *testing.T) {
 	assert.InDelta(t, estimate.Mean, whole.Mean, zoomEstimateError)
 	assert.InDelta(t, estimate.Top, whole.Top, zoomEstimateError)
 	assert.InDelta(t, estimate.Bottom, whole.Bottom, zoomEstimateError)
+
+	// The joint where the framing changes: the last frame before it has the shadow of the frame, the first after it the
+	// shadow of the zoomed pieces — the shadow changes with the zoom, on the same frame.
+	joint := len(frames) / 2
+	before := planeLuma(frames[joint-1], lumaRect{bottom: lumaHeight, right: lumaWidth})
+	after := planeLuma(frames[joint], lumaRect{bottom: lumaHeight, right: lumaWidth})
+	plainEstimate, zoomedEstimate := grade.Graded(source), grade.Zoomed().Graded(window)
+
+	t.Logf("joint: before %.1f / %.1f (estimated %.1f / %.1f), after %.1f / %.1f (estimated %.1f / %.1f)", before.Top,
+		before.Bottom, plainEstimate.Top, plainEstimate.Bottom, after.Top, after.Bottom, zoomedEstimate.Top,
+		zoomedEstimate.Bottom)
+	assert.InDelta(t, plainEstimate.Top, before.Top, zoomEstimateError, "the shadow of the frame before the joint")
+	assert.InDelta(t, plainEstimate.Bottom, before.Bottom, zoomEstimateError)
+	assert.InDelta(t, zoomedEstimate.Top, after.Top, zoomEstimateError, "the shadow of the zoomed pieces after it")
+	assert.InDelta(t, zoomedEstimate.Bottom, after.Bottom, zoomEstimateError)
 }
 
 // fitTestTop is the weakest shadow of the top (no exposure curve) that takes the upper third of the picture topGap
@@ -200,16 +214,13 @@ func reelFrames(ctx context.Context, t *testing.T, r *Runner, path string) [][]b
 	return frames
 }
 
-// framesLuma is the mean luma of the frames [from, to), but jointSkipped at each end.
+// framesLuma is the mean luma of the frames [from, to).
 func framesLuma(frames [][]byte, from, to int) Luma {
 	var sum Luma
 
-	n := 0
-
-	for _, plane := range frames[from+jointSkipped : to-jointSkipped] {
+	for _, plane := range frames[from:to] {
 		sum = sum.plus(planeLuma(plane, lumaRect{bottom: lumaHeight, right: lumaWidth}))
-		n++
 	}
 
-	return sum.scaled(1 / float64(n))
+	return sum.scaled(1 / float64(to-from))
 }

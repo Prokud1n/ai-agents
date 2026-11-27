@@ -9,7 +9,8 @@ import (
 
 // TestRemovedBorder (T3.30): where the sound of removed words stops on the side of a kept word. Whisper's edge stays
 // when it is quiet next to it; a removed word sounding past its edge ends at the quiet stretch before the kept word
-// (the closure of a stop inside it does not end it), and with the sound unbroken at its quietest window.
+// (the closure of a stop inside it does not end it, a closure in the kept word's ending is not taken for the border),
+// and with the sound unbroken at its quietest window, within the kept word's edge.
 func TestRemovedBorder(t *testing.T) {
 	t.Parallel()
 
@@ -49,6 +50,20 @@ func TestRemovedBorder(t *testing.T) {
 			name:  "the sound unbroken: the quietest window",
 			spans: [][3]float64{{0.2, 1.02, testSpeech}, {1.02, 1.03, dip}, {1.03, 1.6, testSpeech}},
 			edge:  1.15, limit: 1.0, d: backward, expected: 1.025,
+		},
+		{
+			// «раз» sounds 0.1 s longer than Whisper says (to 1.05, the closure of a stop at 0.95–1.01), the removed word
+			// 40 ms after it: the quiet stretch nearest to the removed word, not the longer closure.
+			name: "the kept word sounds 0.1 s longer, with a closure; the removed one 40 ms after it",
+			spans: [][3]float64{
+				{0.2, 0.95, testSpeech}, {1.01, 1.05, testSpeech}, {1.09, 1.6, testSpeech},
+			},
+			edge: 1.15, limit: 0.95, d: backward, expected: 1.09,
+		},
+		{
+			name:  "the quietest window at the kept word: never past its edge",
+			spans: [][3]float64{{0.2, 1.0, testSpeech}, {1.0, 1.01, dip}, {1.01, 1.6, testSpeech}},
+			edge:  1.15, limit: 1.008, d: backward, expected: 1.008,
 		},
 		{
 			name:  "the kept word overlaps the removed one: Whisper's edge",
