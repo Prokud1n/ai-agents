@@ -127,7 +127,8 @@ func cueString(c cue) string {
 // leadUnderSections shows the question under a heading that has just appeared a moment after it (section.lead), so the
 // heading is read first, without delaying the speech: a subtitle whose speech starts with the heading (from
 // leadTolerance before it — the editor may have cut its reading out of the sound, the heading then starts on the
-// question) is shown from lead after the heading at the earliest and never dropped; a subtitle that runs into the
+// question) is shown from lead after the heading at the earliest, up to the next subtitle at the latest (dropped only
+// when the next one starts there too); a subtitle that runs into the
 // heading from before ends at its start (one left shorter than minNoteShown is not shown). cues is not changed.
 func leadUnderSections(cues []cue, headings []noteBlock, lead float64) []cue {
 	out := cues
@@ -143,7 +144,11 @@ func leadUnderSections(cues []cue, headings []noteBlock, lead float64) []cue {
 func leadAfter(cues []cue, start, lead float64) []cue {
 	out := make([]cue, 0, len(cues))
 
-	for _, c := range cues {
+	shown := func(c cue) float64 { // where a subtitle of the section starts on the screen
+		return max(c.Start, start+lead)
+	}
+
+	for i, c := range cues {
 		if c.Start < start-leadTolerance {
 			c.End = min(c.End, max(start, c.Start))
 			if c.End-c.Start >= minNoteShown {
@@ -156,6 +161,16 @@ func leadAfter(cues []cue, start, lead float64) []cue {
 		if c.Start < start+lead {
 			c.Start = start + lead
 			c.End = max(c.End, c.Start+minNoteShown)
+
+			// Not over the next subtitle: one shifted up to it is a scrap.
+			if i+1 < len(cues) {
+				next := shown(cues[i+1])
+				if c.Start >= next {
+					continue
+				}
+
+				c.End = min(c.End, next)
+			}
 		}
 
 		out = append(out, c)

@@ -8,7 +8,7 @@ import (
 )
 
 // Whisper writes the speech of the trainer without the hyphens of «кто-то» and «онлайн-тренировки» and without «ё»,
-// and capitalizes the start of a sentence it did not end with a period («что-то скажет Да не скажет»). fixOrthography
+// and capitalizes the start of a sentence it did not end with a period («что-то спросит Ну тогда поедем»). fixOrthography
 // (layout.orthography) fixes the frequent cases by a dictionary, in the subtitles only: the hook and the headings are
 // written by the editor's model.
 

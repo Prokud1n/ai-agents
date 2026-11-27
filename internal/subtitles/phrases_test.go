@@ -425,7 +425,7 @@ func TestFixOrthography(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{name: "кто-то", input: "Кто то скажет так.", expected: "Кто-то скажет так."},
+		{name: "кто-то", input: "Кто то позвонит завтра.", expected: "Кто-то позвонит завтра."},
 		{name: "что-нибудь", input: "Скажите что нибудь.", expected: "Скажите что-нибудь."},
 		{name: "то, что stays", input: "Лучше, чем то, что было.", expected: "Лучше, чем то, что было."},
 		{name: "онлайн-тренировки", input: "Онлайн тренировки работают.", expected: "Онлайн-тренировки работают."},
@@ -549,6 +549,16 @@ func TestLeadUnderSections(t *testing.T) {
 			name:     "a short question is not lost",
 			input:    []cue{{Start: 10, End: 10.5}, {Start: 12, End: 13}},
 			expected: []cue{{Start: 10.35, End: 10.85}, {Start: 12, End: 13}},
+		},
+		{
+			name:     "the next subtitle close to the heading",
+			input:    []cue{{Start: 10, End: 10.4}, {Start: 10.6, End: 12}},
+			expected: []cue{{Start: 10.35, End: 10.6}, {Start: 10.6, End: 12}},
+		},
+		{
+			name:     "two subtitles start in the lead",
+			input:    []cue{{Start: 10, End: 10.1}, {Start: 10.1, End: 12}},
+			expected: []cue{{Start: 10.35, End: 12}},
 		},
 		{
 			name:     "a phrase left too short before the heading goes",
