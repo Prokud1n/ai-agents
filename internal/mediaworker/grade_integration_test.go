@@ -57,8 +57,9 @@ func TestIntegrationGradeDefaults(t *testing.T) {
 		{name: "a flat grey", video: stillColor(greyColor, verticalSize), top: greySourceLuma, bottom: greySourceLuma},
 		{
 			name: "a light top over a dark bottom",
-			video: stillColor(lightTopColor, "720x427") + "[a];" + stillColor(lightMiddleColor, "720x426") + "[b];" +
-				stillColor(darkBottomColor, "720x427") + "[c];[a][b][c]vstack=inputs=3",
+			// One source with two boxes: three sources stacked in one lavfi graph crash the ffmpeg of the media image.
+			video: stillColor(lightMiddleColor, verticalSize) + ",drawbox=x=0:y=0:w=720:h=427:color=" + lightTopColor +
+				":t=fill,drawbox=x=0:y=853:w=720:h=427:color=" + darkBottomColor + ":t=fill",
 			top: lightTopLuma, bottom: darkBottomLuma,
 		},
 	}
@@ -93,7 +94,7 @@ func TestIntegrationGradeDefaults(t *testing.T) {
 
 // renderDefaultGrade runs the worker of the defaults of the grade on the source and returns the luma of the first
 // frame of its reel and the line of the colour in its decisions log.
-func renderDefaultGrade(t *testing.T, defaults *config.MediaWorker, source string) (ffmpeg.Luma, string) {
+func renderDefaultGrade(t *testing.T, defaults *config.MediaWorker, source string) (luma ffmpeg.Luma, grade string) {
 	t.Helper()
 
 	store := newLocalStore(map[string]string{testSourceKey: source})
@@ -114,7 +115,7 @@ func renderDefaultGrade(t *testing.T, defaults *config.MediaWorker, source strin
 	reel := filepath.Join(t.TempDir(), "reel.mp4")
 	require.NoError(t, os.WriteFile(reel, store.results[files.Reel].data, 0o600))
 
-	luma, err := ffmpeg.NewRunner(&config.FFmpeg{Timeout: 2 * time.Minute}).MeanLuma(t.Context(), reel, []float64{0}, false)
+	luma, err = ffmpeg.NewRunner(&config.FFmpeg{Timeout: 2 * time.Minute}).MeanLuma(t.Context(), reel, []float64{0}, false)
 	require.NoError(t, err)
 
 	log := string(store.results[files.Decisions].data)

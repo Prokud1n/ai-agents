@@ -184,9 +184,8 @@ func TestRunnerGrade(t *testing.T) {
 // 100), synthetic: Y' 150 over a middle of 160 and a bottom of 80, the mean 130 as ours (RGB 160 / 172 / 79: the
 // encoded colour lands a few code values under its BT.709 luma, as the grey does).
 const (
-	lightTopSource = "color=c=0xa0a0a0:size=540x320:rate=30:duration=4[a];" +
-		"color=c=0xacacac:size=540x320:rate=30:duration=4[b];color=c=0x4f4f4f:size=540x320:rate=30:duration=4[c];" +
-		"[a][b][c]vstack=inputs=3"
+	lightTopSource = "color=c=0xacacac:size=540x960:rate=30:duration=4," +
+		"drawbox=x=0:y=0:w=540:h=320:color=0xa0a0a0:t=fill,drawbox=x=0:y=640:w=540:h=320:color=0x4f4f4f:t=fill"
 	lightTopLuma   = 150.0
 	darkBottomLuma = 80.0
 	// minTopGap: the upper third of the graded frame is at least this much darker than its lower third (T3.28).
