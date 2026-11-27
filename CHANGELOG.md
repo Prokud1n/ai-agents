@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Selection and joints (T3.26): the cleaning keeps the end of a kept sentence — when cleanup_words cut the last words
+  of a sentence whose start stays (the end of the climax), the editor is asked once to bring them back (the same
+  decision again is accepted), a link or reaction said as a line of its own is still cut whole; the failed takes and
+  repeats the cleaning cuts no longer count against its floor, so a short video is not left with a broken take; a
+  joint where the speech recognition stretched a word over the room noise or a breath is cut by the sound, so no
+  long silence is heard there (a quiet stretch of more than 0.15 s after the last speech of a word is not its ending).
 - The picture of a talking head as in the trainer's own reels (T3.25): darker and slightly warmer, the top of the frame
   (the light wall under the subtitles) in a soft shadow, so the white subtitles read; a source that is already dark is
   darkened less or not at all (its brightness is measured on a few key frames). `MEDIA_WORKER_GRADE`,

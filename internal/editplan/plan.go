@@ -166,4 +166,6 @@ type Outcome struct {
 	// endingHint: a selection cut the end of the last section and kept the introduction after the call (checkEnding);
 	// the session gives it back to the model once before it accepts the decision.
 	endingHint string
+	// tailHint: the cleaning cut the end of a kept sentence (checkPhraseEnds); given back once, like endingHint.
+	tailHint string
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/Prokud1n/ai-agents/internal/agents"
@@ -38,6 +39,8 @@ type Session struct {
 	outcome  *Outcome
 	// endingHinted: the hint about the ending of a selection was given (once; the same decision again is accepted).
 	endingHinted bool
+	// tailHinted: the hint about the end of a sentence cut by the cleaning was given (once, like endingHinted).
+	tailHinted bool
 }
 
 func NewSession(req *Request) *Session {
@@ -82,12 +85,11 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 
 	outcome, err := s.apply(decoder, &in)
 	if err == nil {
-		if outcome.endingHint != "" && !s.endingHinted && s.attempts < maxAttempts {
+		if hint := s.hint(outcome); hint != "" {
 			// A hint, not a failed check: it does not take an attempt.
-			s.endingHinted = true
 			s.attempts--
 
-			return "", agents.NewToolError("Проверь " + outcome.endingHint + "." + endingRetryHint)
+			return "", agents.NewToolError(hint)
 		}
 
 		s.outcome = outcome
@@ -108,6 +110,28 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 	}
 
 	return "", agents.NewToolError("План не прошёл проверку: " + check.Message + "." + retryHint)
+}
+
+// hint is the text of the hints of the outcome not given yet (each once), marked as given; "" without one, or on the
+// last attempt.
+func (s *Session) hint(outcome *Outcome) string {
+	if s.attempts >= maxAttempts {
+		return ""
+	}
+
+	var parts []string
+
+	if outcome.endingHint != "" && !s.endingHinted {
+		s.endingHinted = true
+		parts = append(parts, "Проверь "+outcome.endingHint+"."+endingRetryHint)
+	}
+
+	if outcome.tailHint != "" && !s.tailHinted {
+		s.tailHinted = true
+		parts = append(parts, "Проверь "+outcome.tailHint+"."+tailRetryHint)
+	}
+
+	return strings.Join(parts, " ")
 }
 
 func (s *Session) apply(decoder *json.Decoder, in *Input) (*Outcome, error) {

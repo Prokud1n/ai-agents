@@ -25,6 +25,9 @@ const (
 	// silenceAboveFloor: inside a word only the windows at most this far over the floor are silence (half of
 	// minSpeechAboveFloor); a quieter ending between it and the threshold of speech is kept.
 	silenceAboveFloor = minSpeechAboveFloor / 2
+	// maxQuietEnding: a quiet ending (under the threshold of speech, over the silence) is at most this long after the
+	// last window of speech of a word; a longer quiet stretch inside a word Whisper stretched is the room or a breath.
+	maxQuietEnding = 0.15
 	// speechHole: a quieter stretch this short inside the sound (the closure of a stop: «т», «к», «п») does not end it.
 	speechHole = 0.12
 	// breathPause is the silence a pause is compressed to (the tail of one phrase and the lead of the next), so the
@@ -194,19 +197,42 @@ scan:
 		}
 	}
 
-	if d*last > d*edge || d*inner >= d*edge || s.at(edge-d*s.window/2) > s.silence {
+	if d*last > d*edge || d*inner >= d*edge {
 		return last
 	}
 
-	// Nothing heard at the edge or past it, silence inside: the edge goes back to the last window above the silence,
-	// to inner if the word is silent all the way there.
-	for t := first - d*s.window; d*(t+d*s.window) >= d*inner-gridEpsilon; t -= d * s.window {
-		if s.at(t+d*s.window/2) > s.silence {
-			return d * max(min(d*(t+d*s.window), d*edge), d*inner)
+	return s.silentEdge(edge, inner, first, d)
+}
+
+// silentEdge is heardEdge of a word edge with nothing heard at it or past it: the edge goes back inside the word to the
+// last window above the silence level (a quiet ending — a fricative, a decay — stays), to inner if the word is silent
+// all the way there. A quiet stretch longer than maxQuietEnding after the last window of speech is not an ending but
+// the room or a breath Whisper stretched the word over (T3.26: «a late end by 0.8 s over the room noise» left 0.9 s of
+// silence at a joint): the edge goes back to the speech then. first is the grid point at or before the edge, looking
+// out.
+func (s *speechLevels) silentEdge(edge, inner, first, d float64) float64 {
+	clamp := func(t float64) float64 { return d * max(min(d*t, d*edge), d*inner) }
+	quiet, spoken, quietFound := inner, inner, false
+
+	for t := first; d*(t+d*s.window) >= d*inner-gridEpsilon; t -= d * s.window {
+		level := s.at(t + d*s.window/2)
+
+		if !quietFound && level > s.silence {
+			quiet, quietFound = clamp(t+d*s.window), true
+		}
+
+		if level > s.threshold {
+			spoken = clamp(t + d*s.window)
+
+			break
 		}
 	}
 
-	return inner
+	if d*(quiet-spoken) > maxQuietEnding+gridEpsilon {
+		return spoken
+	}
+
+	return quiet
 }
 
 // innerEnd is how far inside a word its end may be moved by the sound: minWordSound after its start, and not more

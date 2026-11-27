@@ -387,6 +387,113 @@ func TestCutGridAroundStretchedWords(t *testing.T) {
 	assert.Equal(t, "два", reel[1].Word)
 }
 
+// TestCutGridAroundRoomInStretchedWords (T3.26): Whisper stretched the kept words of a joint over the room noise or a
+// breath (over the silence level, under the threshold of speech), not over silence: the word before the cut, the first
+// word of the next piece, or both. The joint is cut by the sound still — no more than MaxPause of quiet between the
+// speech on both sides — and a sound of speech inside a stretched word is never cut off.
+func TestCutGridAroundRoomInStretchedWords(t *testing.T) {
+	t.Parallel()
+
+	const (
+		room      = -52.0 // over the silence level (-55), under the threshold of speech (-44)
+		speechEnd = 1.0
+		firstFrom = 4.4
+		inWordEnd = 1.6 // the end of a sound of speech inside the stretched word
+	)
+
+	tests := []struct {
+		name       string
+		spans      [][3]float64
+		heardEnd   float64
+		heardStart float64
+	}{
+		{
+			name:     "the word before the cut stretched over the room",
+			spans:    [][3]float64{{speechEnd, 2.6, room}},
+			heardEnd: speechEnd, heardStart: firstFrom,
+		},
+		{
+			name:     "the first word of the piece stretched over the room",
+			spans:    [][3]float64{{3.0, firstFrom, room}},
+			heardEnd: speechEnd, heardStart: firstFrom,
+		},
+		{
+			name:     "both stretched over the room",
+			spans:    [][3]float64{{speechEnd, 2.6, room}, {3.0, firstFrom, room}},
+			heardEnd: speechEnd, heardStart: firstFrom,
+		},
+		{
+			name: "a sound of speech inside the stretched word is kept",
+			spans: [][3]float64{
+				{speechEnd, 1.5, room}, {1.5, inWordEnd, testSpeech}, {inWordEnd, 2.6, room}, {3.0, firstFrom, room},
+			},
+			heardEnd: inWordEnd, heardStart: firstFrom,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			spans := append([][3]float64{{0.2, speechEnd, testSpeech}, {2.6, 3.0, testSpeech}, {firstFrom, 5.2, testSpeech}},
+				tt.spans...)
+			grid := &cutGrid{levels: newSpeechLevels(soundOf(6, spans...)), fps: testFPS}
+			require.NotNil(t, grid.levels)
+			require.Greater(t, room, grid.levels.silence, "the room is not silence")
+			require.Less(t, room, grid.levels.threshold, "the room is not speech")
+
+			settings := testSettings()
+			settings.MaxPause, settings.PadBefore, settings.PadAfter = 0.3, defaultPadBefore, defaultPadAfter
+
+			end, next := grid.around(word("раз", 0.2, 2.0), word("два", 3.8, 4.6), 2.6, 3.0, settings)
+
+			silence := (end - tt.heardEnd) + (tt.heardStart - next)
+			assert.LessOrEqual(t, silence, settings.MaxPause+1e-6, "no long pause at the joint")
+			assert.GreaterOrEqual(t, end-tt.heardEnd, tailMin-1e-6, "the speech of «раз» and its tail are kept")
+			assert.GreaterOrEqual(t, tt.heardStart-next, leadMin-1e-6, "the speech of «два» and its lead are kept")
+			assert.GreaterOrEqual(t, next, 3.0, "never into the removed word")
+
+			src := words(word("раз", 0.2, 2.0), word("лишнее", 2.6, 3.0), word("два", 3.8, 4.6))
+
+			plan, err := buildPlan(src, 6, settings, &Edit{Remove: []WordRange{{From: 1, To: 1}}}, grid)
+			require.NoError(t, err)
+			require.Len(t, plan.Keep, 2)
+
+			reel := RemapTranscript(trimSilentEdges(src, plan.Keep, grid.levels), plan.Keep).Words
+			require.Len(t, reel, 2, "both words stay in the subtitles")
+		})
+	}
+}
+
+// TestSilentEdgeQuietEnding (T3.26): a quiet ending up to maxQuietEnding after the last speech of a word is kept; a
+// longer quiet stretch Whisper put into the word is the room, and the edge goes back to the speech.
+func TestSilentEdgeQuietEnding(t *testing.T) {
+	t.Parallel()
+
+	const room = -52.0
+
+	tests := []struct {
+		name     string
+		quietTo  float64
+		expected float64
+	}{
+		{name: "a short quiet ending stays", quietTo: 1.1, expected: 1.1},
+		{name: "a long quiet stretch is the room", quietTo: 1.8, expected: 1.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			levels := newSpeechLevels(soundOf(4, [3]float64{0.2, 1.0, testSpeech}, [3]float64{1.0, tt.quietTo, room},
+				[3]float64{2.4, 3, testSpeech}))
+			require.NotNil(t, levels)
+
+			assert.InDelta(t, tt.expected, levels.speechEnd(1.8, 0.28, 2.0), 1e-9)
+		})
+	}
+}
+
 // TestTrimSilentEdges: only a silent edge cut off a kept word is trimmed; a word cut through its sound (a trim by
 // time), a word with its middle kept and a word with less than minWordSound kept stay as they are.
 func TestTrimSilentEdges(t *testing.T) {

@@ -512,6 +512,17 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `TestTrimSilentEdges`, `TestRemapScreenNotesShift`, `TestNoteShownSlack`, `TestServiceCutSectionOnCutReading`,
   `TestServiceCutNoteOnQuietStart`, `editplan.TestSubmitEndingHint`, `TestApplySectionOnCutReading`, `TestCleanedTakes`,
   `TestRolePromptSelectionLikeTrainer`.
+- Отбор и склейка (T3.26). `editplan.checkPhraseEnds` (`phraseend.go`, первая версия при `CleansTakes`): `cleanup_words`
+  вырезали конец предложения (до знака `roughcut.SentenceEnds`, паузы > `phraseGap` или конца речи), чьё начало
+  осталось, — строка «Конец фразы в чистке: …» в `Edit.Details` и `Outcome.tailHint` (`Session.hint`: каждая подсказка
+  — `endingHint`, `tailHint` — один раз, без траты попытки); предложение целиком (связка, реакция) и повтор подряд в
+  конце — не подсказка. `cleanupFloor` (`checkCleanupFloor`): план меряется с возвращёнными словами фраз из подсказок
+  повторов (`takeWords`: пара `similarPairs`, чья вторая фраза осталась, и `inRowRepeats`, оставшиеся частью) —
+  вырезанные дубли не в счёт пола. Стык (`speechLevels.silentEdge`): внутри растянутого слова тихий отрезок под порогом
+  речи (комната, вдох — выше уровня тишины) длиннее `maxQuietEnding` 0,15 с после последнего окна речи — не окончание,
+  край слова уходит к речи (раньше одно окно выше пола + 5 dB у края Whisper оставляло слово целиком: 0,93 и 0,65 с
+  тишины на стыках). Проверка — `roughcut.TestCutGridAroundRoomInStretchedWords`, `TestSilentEdgeQuietEnding`,
+  `editplan.TestCheckPhraseEnds`, `TestSubmitTailHint`, `TestApplyCleanupFloorWithoutTakes`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).
