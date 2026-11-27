@@ -313,6 +313,50 @@ func lowerSentenceStarts(tokens []token) []token {
 	return out
 }
 
+// sentencesAtJoints ends a sentence before a word with one capital that starts a fragment of the cut right after a word
+// of another one without punctuation (T3.31): Whisper capitalized it as the start of a sentence but put no mark before
+// it, and the editor cut what was said between them («…этот ролик | Разбираю…»); after a preposition or a
+// conjunction it is a name and stays in the sentence («в | Москве»). joints are the starts of the fragments of the
+// cut (cutJoints); tokens is not changed.
+func sentencesAtJoints(tokens []token, joints []float64) []token {
+	if len(joints) == 0 {
+		return tokens
+	}
+
+	out := slices.Clone(tokens)
+
+	for i := 1; i < len(out); i++ {
+		prev, t := out[i-1], out[i]
+		if prev.Break != noBreak || isProclitic(prev.Norm) || capitals(t.Text) != 1 || !startsWithCapital(t.Text) {
+			continue
+		}
+
+		if jointBetween(joints, prev, t) {
+			out[i-1].Break, out[i-1].open = strongBreak, false
+		}
+	}
+
+	return out
+}
+
+// startsWithCapital: the first letter of the text is a capital.
+func startsWithCapital(text string) bool {
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			return unicode.IsUpper(r)
+		}
+	}
+
+	return false
+}
+
+// jointBetween: a fragment of the cut starts between the words (a word belongs to the fragment its middle is in).
+func jointBetween(joints []float64, prev, next token) bool {
+	from, to := (prev.Start+prev.End)/2, (next.Start+next.End)/2
+
+	return slices.ContainsFunc(joints, func(j float64) bool { return j > from && j <= to })
+}
+
 // capitals counts the capital letters of the text.
 func capitals(text string) int {
 	n := 0

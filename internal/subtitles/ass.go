@@ -117,12 +117,16 @@ func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, h
 	}
 
 	if style.Layout.LowercaseSentences {
-		tokens = lowerSentenceStarts(tokens)
+		tokens = lowerSentenceStarts(sentencesAtJoints(tokens, data.joints))
 	}
 
 	tokens = hideReadings(tokens, headings)
 	if style.Layout.Orthography {
 		tokens = sectionQuestions(tokens, headings)
+	}
+
+	if style.Layout.Phrases.Enabled {
+		tokens = markLeaningSubjects(tokens)
 	}
 
 	tokens = markAccents(tokens, data.Accents, style.Accent.Words)

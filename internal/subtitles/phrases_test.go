@@ -136,7 +136,7 @@ func TestSyntheticTalkPhrases(t *testing.T) {
 			assert.LessOrEqual(t, lineWidth(lineWidths(line)), 30, text)
 
 			if j+1 < len(c.Lines) {
-				assert.False(t, isProclitic(line[len(line)-1].Norm), "a line ends with a function word: %q", text)
+				assert.False(t, holdsNext(line[len(line)-1]), "a line ends with a function word: %q", text)
 			}
 		}
 	}

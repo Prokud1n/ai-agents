@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The trainer's subtitles, polish (T3.31): the question under a section heading at a joint of the cut is shown 0.2 s
+  after the joint even when the speech recognition starts its first word later (it was up to 0.36 s after the voice
+  under the second heading); a word the recognition capitalized right after a removed take («…этот ролик | Разбираю…»)
+  starts a sentence and gets a small letter (not after a preposition: a name); neither a line nor a subtitle ends on
+  «и я», «а мы», «но они» when the sentence goes on; «если честно» and «честно говоря» at the end of a sentence get
+  their comma, «кстати» and «честно говоря» at its start too (a conditional «если честно ответите», the adverb «очень
+  кстати» and the middle of a sentence stay as they are); a word with a comma is no longer left alone on a line
+  («думаете, / онлайн-тренировки…») when the other line takes it.
 - The editor runs on Opus (T3.32, `model: claude-opus-5-5` in `agents/editor/agent.md`; the other agents stay on
   `LLM_DEFAULT_MODEL`): its price is already in `LLM_PRICES` of `.env.dist`, so its cost is recorded.
 - Light by the frame (T3.28): the brightness of the source is measured with its upper and lower thirds (the same key

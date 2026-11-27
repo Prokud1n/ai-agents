@@ -431,6 +431,22 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `TestCompoundAcrossSegments`, `TestTextOrthography`, `TestSectionQuestion`, `TestLeadFromJoint`,
   `TestTrainerHookTwoLines` (≈75 символов — 2 строки), `TestBurnTrainerStyleWithFFmpeg` («a hook of two clauses», «a
   hook of about 75 characters»: низ ≤ 640), `TestTrainerSectionLead`.
+- Субтитры тренера, доводка (T3.31). Синхрон вопроса: `leadUnderSections` при стыке ≤ `jointWindow` до раздела
+  показывает с `max(стык + lead, раздел)` и первый субтитр раздела, чьё первое слово Whisper начал позже (до стык +
+  `lateWordReach` 0,5 с; позже — речь после чтения заголовка, не трогается) — голос начинается у стыка (`cutGrid.around`:
+  0,04–0,12 с), поэтому вопрос ≤ 0,3 с после голоса (в проверке №5 СТРАХ 2 — 0,35 с: слово Whisper ≈ стык + 0,35).
+  Заглавная: `sentencesAtJoints` (перед `lowerSentenceStarts`, только `lowercase_sentences`): слово с одной заглавной в
+  начале куска склейки сразу после слова другого куска без знака (`jointBetween` по серединам слов) начинает
+  предложение — Whisper не поставил точку, а между ними вырезан дубль; после проклитики («в | Москве») и запятой — нет;
+  стыки сжатых пауз тоже стыки (риск: имя после паузы посреди фразы станет строчным). «и я»: `markLeaningSubjects`
+  (при `phrases.enabled`) — подлежащее я/ты/мы/вы/он/она/оно/они после и/а/но без знаков (`token.leans`) держится за
+  следующее слово как проклитика: `holdsNext` в `sticks`, `splitsAt` (пауза ≤ `hold_gap`), `cutSense` (`brokenCut`),
+  `linesScore` (штраф). Вводные (`asides.go`, `asideCommas` в конце `fixOrthography`): запятая перед «если честно»/«честно
+  говоря» в конце предложения или перед уже стоящей запятой (не после проклитики), после «кстати»/«честно говоря» в
+  начале предложения; «короче» и середина без запятой — нет. Строки: `linesScore` не даёт бонус запятой строке из одного
+  слова (`oneWord`). Проверка — `TestLeadLateWordAtJoint`, `TestSentencesAtJoints`, `TestTrainerCapitalAfterJoint`,
+  `TestMarkLeaningSubjects`, `TestTrainerNotOnSubject`, `TestAsideCommas`, `TestPhraseLinesNotOneWord`,
+  `TestSyntheticTalkPhrases` (строка не кончается на `holdsNext`).
 - Чистка первой версии и невыполнимые просьбы (T3.19a). `EDITOR_CLEANUP` (по умолчанию `true`) →
   `job.Decide = подпись || cleanup` (каждая первая версия ждёт модель) и `editplan.Request.Cleanup`.
   `Request.Cleaning()` — первая версия talk без отбора (с подписью и без): поле `cleanup_words` (вырезается как
