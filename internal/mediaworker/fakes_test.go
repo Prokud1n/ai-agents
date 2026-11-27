@@ -198,7 +198,7 @@ func (f *fakeBurner) BurnSubtitles(_ context.Context, data *subtitles.BurnSubtit
 
 // fakeMeter is the brightness of the source; it records what it was asked.
 type fakeMeter struct {
-	luma    float64
+	luma    ffmpeg.Luma
 	err     error
 	moments []float64
 	toneMap bool
@@ -206,7 +206,7 @@ type fakeMeter struct {
 	cancel context.CancelFunc
 }
 
-func (f *fakeMeter) MeanLuma(_ context.Context, _ string, moments []float64, toneMap bool) (float64, error) {
+func (f *fakeMeter) MeanLuma(_ context.Context, _ string, moments []float64, toneMap bool) (ffmpeg.Luma, error) {
 	f.moments, f.toneMap = moments, toneMap
 	if f.cancel != nil {
 		f.cancel()

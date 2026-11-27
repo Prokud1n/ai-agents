@@ -161,6 +161,24 @@ func TestParseProbe(t *testing.T) {
 				ColorTransfer: "arib-std-b67", ColorPrimaries: "bt2020",
 			},
 		},
+		{
+			name: "iPhone portrait stored on its side (the display matrix)",
+			input: `{"streams":[{"codec_type":"video","r_frame_rate":"30/1","avg_frame_rate":"30/1","width":1920,` +
+				`"height":1080,"side_data_list":[{"side_data_type":"Display Matrix","rotation":-90}]}],"format":{"duration":"3"}}`,
+			expected: MediaInfo{
+				Duration: 3, HasVideo: true, AvgFrameRate: Rational{Num: 30, Den: 1}, RealFrameRate: Rational{Num: 30, Den: 1},
+				Width: 1920, Height: 1080, Rotation: -90,
+			},
+		},
+		{
+			name: "the old rotate tag",
+			input: `{"streams":[{"codec_type":"video","r_frame_rate":"30/1","avg_frame_rate":"30/1","width":1920,` +
+				`"height":1080,"tags":{"rotate":"90"}}],"format":{"duration":"3"}}`,
+			expected: MediaInfo{
+				Duration: 3, HasVideo: true, AvgFrameRate: Rational{Num: 30, Den: 1}, RealFrameRate: Rational{Num: 30, Den: 1},
+				Width: 1920, Height: 1080, Rotation: 90,
+			},
+		},
 		{name: "no duration", input: `{"streams":[],"format":{}}`, expectErr: true},
 		{name: "not json", input: "oops", expectErr: true},
 	}
@@ -180,6 +198,62 @@ func TestParseProbe(t *testing.T) {
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+// TestMediaInfoDisplayAspect: a quarter turn swaps the width and the height of the picture as shown.
+func TestMediaInfoDisplayAspect(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		info     MediaInfo
+		expected float64
+	}{
+		{name: "vertical", info: MediaInfo{Width: 1080, Height: 1920}, expected: 0.5625},
+		{name: "horizontal", info: MediaInfo{Width: 1920, Height: 1080}, expected: 1920.0 / 1080},
+		{name: "on its side, -90", info: MediaInfo{Width: 1920, Height: 1080, Rotation: -90}, expected: 0.5625},
+		{name: "on its side, 270", info: MediaInfo{Width: 1920, Height: 1080, Rotation: 270}, expected: 0.5625},
+		{name: "upside down", info: MediaInfo{Width: 1080, Height: 1920, Rotation: 180}, expected: 0.5625},
+		{name: "unknown", info: MediaInfo{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.InDelta(t, tt.expected, tt.info.DisplayAspect(), 1e-9)
+		})
+	}
+}
+
+// TestRunnerProbeRotation: ffprobe reads the display matrix of a video stored on its side.
+func TestRunnerProbeRotation(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	ctx := t.Context()
+	r := newTestRunner(time.Minute)
+	dir := t.TempDir()
+	plain, turned := filepath.Join(dir, "plain.mp4"), filepath.Join(dir, "turned.mp4")
+
+	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(), lavfiInput("testsrc=size=320x180:rate=30:duration=1"),
+		[]string{videoCodecFlag, videoCodec, pixFmtFlag, videoPixFmt, plain}), nil)
+	require.NoError(t, err)
+
+	_, err = r.run(ctx, r.ffmpegPath, concat(commonArgs(), []string{"-display_rotation", "90", inputFlag, plain,
+		"-c", "copy", turned}), nil)
+	require.NoError(t, err)
+
+	info, err := r.Probe(ctx, turned)
+	require.NoError(t, err)
+	t.Logf("probe rotation: %d×%d, rotation %d, display aspect %.4f", info.Width, info.Height, info.Rotation,
+		info.DisplayAspect())
+	assert.Contains(t, []int{90, -90}, info.Rotation, "the sign of the display matrix differs between versions")
+	assert.InDelta(t, 180.0/320, info.DisplayAspect(), 1e-9)
+
+	info, err = r.Probe(ctx, plain)
+	require.NoError(t, err)
+	assert.Zero(t, info.Rotation)
 }
 
 func TestMediaInfoHDR(t *testing.T) {

@@ -92,10 +92,10 @@ func parseSoundSettings(cfg *config.MediaWorker) (soundSettings, error) {
 // only in a talking head: in a workout the noise reduction would eat into the music, and the cuts are rare and
 // deliberate. A muted sound stays silent.
 //
-// The colour (T3.25) is graded in a talking head only, by luma — the mean brightness of the source measured before the
-// render (0: not measured): a workout is filmed in a gym or outdoors, where a darker frame hides the movement, and has
-// no speech subtitles on a light wall to make readable.
-func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness, luma float64) *ffmpeg.Cut {
+// The colour (T3.25, T3.28) is graded in a talking head only, by light — the brightness of the source (its mean and
+// thirds) measured before the render: a workout is filmed in a gym or outdoors, where a darker frame hides the
+// movement, and has no speech subtitles on a light wall to make readable.
+func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness, light *sourceLight) *ffmpeg.Cut {
 	opts := plan.Render
 	talk := plan.Plan.Mode.Effective() == roughcut.TalkMode
 
@@ -119,7 +119,7 @@ func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness, lu
 	}
 
 	if s.grade.on && talk {
-		cut.Grade = s.grade.forSource(luma)
+		cut.Grade = s.grade.forSource(light)
 	}
 
 	return cut
@@ -138,13 +138,13 @@ func sectionStarts(notes []roughcut.ScreenNote) []float64 {
 	return starts
 }
 
-// notes are the lines of the decisions log about the sound, the framing and the colour of the rendered draft; luma is
-// the measured brightness of the source (0: not measured), report what the render did to the loudness (nil if it did
+// notes are the lines of the decisions log about the sound, the framing and the colour of the rendered draft; light is
+// the measured brightness of the source, report what the render did to the loudness (nil if it did
 // not say).
 func (s *soundSettings) notes(
 	cut *ffmpeg.Cut,
 	measured *ffmpeg.Loudness,
-	luma float64,
+	light *sourceLight,
 	mode roughcut.Mode,
 	report *ffmpeg.SoundReport,
 ) []string {
@@ -152,7 +152,7 @@ func (s *soundSettings) notes(
 
 	return []string{
 		s.loudnessNote(cut, measured, report), s.denoiseNote(cut, workout), s.zoomNote(cut, workout),
-		s.grade.note(cut.Grade, workout, luma),
+		s.grade.note(cut.Grade, workout, light),
 	}
 }
 

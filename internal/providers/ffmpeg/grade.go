@@ -34,6 +34,20 @@ const (
 	lumaHeight = 112
 	// lumaFrameBytes of a yuv420p frame of lumaWidth×lumaHeight (the luma plane, then the two chroma planes).
 	lumaFrameBytes = lumaWidth * lumaHeight * 3 / 2
+	// lumaThirdRows: the upper and the lower third of the small frame (its middle gets the row left over).
+	lumaThirdRows = lumaHeight / 3
+	// maxLuma of an 8-bit code value.
+	maxLuma = 255
+	// frameThird of the height of the frame.
+	frameThird = 1.0 / 3
+)
+
+// The shares of the shadow of the top (the mean of its alpha over the rows, 0..1) in the upper, the middle and the lower
+// third of the frame: 0.98, 0.15 and 0 — the top third is nearly all in the full shadow, the middle gets its fade.
+var (
+	topShadowTop    = shadeShare(0, frameThird)
+	topShadowMiddle = shadeShare(frameThird, 2*frameThird)
+	topShadowBottom = shadeShare(2*frameThird, 1)
 )
 
 var (
@@ -103,30 +117,95 @@ func gradeGraph(g *Grade, width, height int) (string, error) {
 		"[" + gradedLabel + "][" + gradeTopLabel + "]overlay=x=0:y=" + y, nil
 }
 
+// Luma is the brightness of a picture, Y' of the limited range (8 bits: 16 black, 235 white): its mean and the means of
+// its upper and lower thirds.
+type Luma struct {
+	Mean   float64
+	Top    float64
+	Bottom float64
+}
+
+// Middle is the mean of the middle third: the thirds are equal, the mean is the mean of the three.
+func (l Luma) Middle() float64 {
+	return math.Min(maxLuma, math.Max(0, 3*l.Mean-l.Top-l.Bottom))
+}
+
+// Graded estimates the luma of a picture after the grade, as gradeGraph renders it: the exposure curve of the mean of
+// each third, then the shadow of the top by its share in the third (overlay of black: Y' → 16 + (Y' − 16)·(1 − α)).
+// The curve is nearly straight over the light of a third, so the estimate is within a couple of code values of the
+// render: about ±1 on a grey, up to ±3 on untagged synthetic sources (TestRunnerGradeThirds). The warmth does not
+// change the luma. It is the frame without the zoom: the 1.3× zoom of some pieces (Zoom) moves the thirds of the
+// picture under the fixed shadow a little — the margin of the worker's gap over the criterion covers it.
+func (g *Grade) Graded(l Luma) Luma {
+	top := shaded(g.curve(l.Top), g.Top*topShadowTop)
+	middle := shaded(g.curve(l.Middle()), g.Top*topShadowMiddle)
+	bottom := shaded(g.curve(l.Bottom), g.Top*topShadowBottom)
+
+	return Luma{Mean: (top + middle + bottom) / 3, Top: top, Bottom: bottom}
+}
+
+// curve is the exposure curve of the lookup table of gradeGraph on one code value.
+func (g *Grade) curve(v float64) float64 {
+	x := (math.Min(lumaBlack+lumaRange, math.Max(lumaBlack, v)) - lumaBlack) / lumaRange
+
+	return lumaBlack + lumaRange*math.Pow(x, 1-g.Exposure)
+}
+
+// shaded is the luma under black laid over it with the alpha share.
+func shaded(v, alpha float64) float64 {
+	return lumaBlack + (v-lumaBlack)*(1-alpha)
+}
+
+// shadeShare is the mean alpha (a share of the full one) of the shadow of the top between the heights from and to,
+// shares of the frame's height from its top edge: full to gradeTopPlateau, then (1 + cos(π·t)) / 2 to gradeTopHeight.
+func shadeShare(from, to float64) float64 {
+	return (shadeIntegral(to) - shadeIntegral(from)) / (to - from)
+}
+
+// shadeIntegral is the integral of the alpha share of the shadow of the top from the top edge to the height y.
+func shadeIntegral(y float64) float64 {
+	const half = 0.5
+
+	fade := gradeTopHeight - gradeTopPlateau
+
+	switch {
+	case y <= gradeTopPlateau:
+		return y
+	case y < gradeTopHeight:
+		return gradeTopPlateau + half*(y-gradeTopPlateau) + fade/(2*math.Pi)*math.Sin(math.Pi*(y-gradeTopPlateau)/fade)
+	default:
+		return gradeTopPlateau + half*fade
+	}
+}
+
 func evenFloor(v float64) int {
 	return 2 * int(v/2)
 }
 
-// MeanLuma is the mean luma (Y' of the limited range, 8 bits: 16 black, 235 white) of the picture of the source at the
-// moments, seconds: one key frame at or before each moment is decoded (no other frame is), brought to SDR bt709 as
-// the render brings it (toneMap: an HLG/PQ source) and averaged on a small copy. A 4K frame costs a fraction of a
-// second. A moment that gives no frame (past the end) or fails to decode is skipped; it fails only when no moment gave
-// a frame, or with the context. Moments within one GOP measure the same key frame (a file with a single key frame,
-// such as a reel, measures its first frame at every moment).
-func (r *Runner) MeanLuma(ctx context.Context, path string, moments []float64, toneMap bool) (float64, error) {
+// MeanLuma is the luma of the picture of the source at the moments, seconds (Luma: the mean and the means of the
+// upper and the lower third, measured on the same frames in the same pass): one key frame at or before each moment is
+// decoded (no other frame is), brought to SDR bt709 as the render brings it (toneMap: an HLG/PQ source) and averaged
+// on a small copy. A 4K frame costs a fraction of a second. A moment that gives no frame (past the end) or fails to
+// decode is skipped; it fails only when no moment gave a frame, or with the context. Moments within one GOP measure
+// the same key frame (a file with a single key frame, such as a reel, measures its first frame at every moment).
+func (r *Runner) MeanLuma(ctx context.Context, path string, moments []float64, toneMap bool) (Luma, error) {
 	in, err := localFile(path)
 	if err != nil {
-		return 0, err
+		return Luma{}, err
 	}
 
-	sum, frames := 0.0, 0
+	var (
+		sum    Luma
+		frames int
+		failed error
+	)
 
-	var failed error
+	third := lumaThirdRows * lumaWidth
 
 	for _, at := range moments {
 		plane, err := r.lumaPlane(ctx, in, at, toneMap)
 		if ctx.Err() != nil {
-			return 0, fmt.Errorf("failed to measure the picture: %w", ctx.Err())
+			return Luma{}, fmt.Errorf("failed to measure the picture: %w", ctx.Err())
 		}
 
 		if err != nil {
@@ -139,15 +218,19 @@ func (r *Runner) MeanLuma(ctx context.Context, path string, moments []float64, t
 			continue
 		}
 
-		sum += meanByte(plane)
+		sum.Mean += meanByte(plane)
+		sum.Top += meanByte(plane[:third])
+		sum.Bottom += meanByte(plane[len(plane)-third:])
 		frames++
 	}
 
 	if frames == 0 {
-		return 0, fmt.Errorf("failed to measure the picture: %w", errors.Join(errNoLuma, failed))
+		return Luma{}, fmt.Errorf("failed to measure the picture: %w", errors.Join(errNoLuma, failed))
 	}
 
-	return sum / float64(frames), nil
+	n := float64(frames)
+
+	return Luma{Mean: sum.Mean / n, Top: sum.Top / n, Bottom: sum.Bottom / n}, nil
 }
 
 // lumaPlane is the luma plane (lumaWidth×lumaHeight) of the key frame at or before at; nil if none was decoded.

@@ -100,7 +100,9 @@ type MediaWorker struct {
 	// GradeExposure of the midtones, EV within -0.5..0: a curve of the encoded luma takes the middle grey down by it
 	// (-0.3: × 0.81), the shadows a little more, and keeps the black and the white.
 	GradeExposure float64 `env:"MEDIA_WORKER_GRADE_EXPOSURE" envDefault:"-0.3"`
-	// GradeTop, percent within 0..60: how much darker the top edge of the frame is; the shadow fades by the middle.
+	// GradeTop, percent within 0..60: how much darker the top edge of the frame is at least; the shadow fades by the
+	// middle. A light top over a darker bottom gets a stronger shadow (up to 70 %), so the upper third ends up darker
+	// than the lower third (T3.28); no shadow takes the mean of the reel under 95; 0 — no shadow at all.
 	GradeTop float64 `env:"MEDIA_WORKER_GRADE_TOP" envDefault:"30"`
 	// HeartbeatFile is touched while the worker is healthy (it reaches Redis); the container healthcheck
 	// (media-worker healthcheck) reads its age. Empty: <WorkDir>/.heartbeat.
