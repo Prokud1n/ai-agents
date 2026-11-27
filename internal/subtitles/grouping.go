@@ -107,7 +107,7 @@ func sticks(prev, next token) bool {
 		return !isNumber(next.Norm) || isCompoundNumber(prev.Norm, next.Norm)
 	}
 
-	return isProclitic(prev.Norm) || isEnclitic(next.Norm)
+	return holdsNext(prev) || isEnclitic(next.Norm)
 }
 
 // layoutLimits are the size limits of one subtitle.

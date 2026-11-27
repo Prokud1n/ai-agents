@@ -185,7 +185,7 @@ func splitsAt(prev, next token, gap, holdGap float64) bool {
 		return false
 	}
 
-	return prev.Break == strongBreak || !isProclitic(prev.Norm) || next.Start-prev.End > holdGap
+	return prev.Break == strongBreak || !holdsNext(prev) || next.Start-prev.End > holdGap
 }
 
 // phraseEnds: a sentence or a segment ends between the words, or a pause of at least gap.
@@ -276,7 +276,7 @@ func bestCut(phrase []unit, limits layoutLimits, p *PhraseLayout) int {
 // conjunction, elsewhere; worst between a function word and its word.
 func cutSense(prev, next token) int {
 	switch {
-	case prev.Break == noBreak && isProclitic(prev.Norm), isEnclitic(next.Norm):
+	case prev.Break == noBreak && holdsNext(prev), isEnclitic(next.Norm):
 		return brokenCut
 	case prev.Break == strongBreak:
 		return sentenceCut
@@ -539,8 +539,8 @@ func phraseLines(units []unit, maxChars int) [][]token {
 }
 
 // linesScore scores the lines that start at the cuts: the widest line, the penalty of a cut that breaks a preposition
-// or a particle from its word, less the bonus of a cut after punctuation; false when a line of more than one unit is
-// wider than maxChars.
+// or a particle from its word, less the bonus of a cut after punctuation (not after a line of one word); false when a
+// line of more than one unit is wider than maxChars.
 func linesScore(units []unit, cuts []int, maxChars int) (int, bool) {
 	widest, adjust, from := 0, 0, 0
 
@@ -558,9 +558,9 @@ func linesScore(units []unit, cuts []int, maxChars int) (int, bool) {
 			last, next := line[len(line)-1].last(), units[to].first()
 
 			switch {
-			case isProclitic(last.Norm) || isEnclitic(next.Norm):
+			case holdsNext(last) || isEnclitic(next.Norm):
 				adjust += lineBreakPenalty
-			case last.Break != noBreak:
+			case last.Break != noBreak && !oneWord(line):
 				adjust -= lineCommaBonus
 			}
 		}
@@ -569,6 +569,12 @@ func linesScore(units []unit, cuts []int, maxChars int) (int, bool) {
 	}
 
 	return widest + adjust, true
+}
+
+// oneWord: the line is a single word («считаете,»): a comma after it earns no bonus, so it is not left alone on a line
+// when the other lines take it (T3.31).
+func oneWord(line []unit) bool {
+	return len(line) == 1 && len(line[0].tokens) == 1
 }
 
 // linesAt joins the units into the lines that start at the cuts.
@@ -587,6 +593,29 @@ func linesAt(units []unit, cuts []int) [][]token {
 	}
 
 	return lines
+}
+
+// subjectPronouns are the pronouns that start the subject of a clause; leaningConjunctions join such a clause.
+var (
+	subjectPronouns     = wordSet("я", "ты", "мы", "вы", "он", "она", "оно", "они")
+	leaningConjunctions = wordSet("и", "а", "но")
+)
+
+// markLeaningSubjects marks a subject pronoun right after «и», «а» or «но» (token.leans) when the sentence goes on after
+// it: «приходите на зарядку и я | покажу разминку» — the pronoun is the start of the next clause, so neither a line nor
+// a subtitle ends on «и я» (T3.31); a pause after it breaks as after a preposition (a unit up to the pause, a phrase up
+// to hold_gap). tokens is not changed.
+func markLeaningSubjects(tokens []token) []token {
+	out := slices.Clone(tokens)
+
+	for i := 1; i+1 < len(out); i++ {
+		conj, t := out[i-1], out[i]
+		if conj.Break == noBreak && t.Break == noBreak && leaningConjunctions[conj.Norm] && subjectPronouns[t.Norm] {
+			out[i].leans = true
+		}
+	}
+
+	return out
 }
 
 // commaChains joins a chain of one-word sentences (the periods Whisper puts into an enumeration: «Подскажу. Поправлю.

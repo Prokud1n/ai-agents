@@ -759,6 +759,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The trainer's subtitles, polish (T3.31): the question under a section heading at a joint of the cut is shown 0.2 s
+  after the joint even when the speech recognition starts its first word later (it was up to 0.36 s after the voice
+  under the second heading), unless the reading of the heading is said before it; a word the recognition capitalized
+  right after a removed take («…этот ролик | Разбираю…») starts a sentence and gets a small letter (not at a pause
+  pressed to a breath, not after a preposition and not a word in Latin letters: those are names); neither a line nor a
+  subtitle ends on «и я», «а мы», «но они» when the sentence goes on; «если честно» and «честно говоря» at the end of a
+  sentence get their comma, «кстати» and «честно говоря» at its start too (a conditional «если честно ответите», the
+  adverb «очень кстати» and the middle of a sentence stay as they are); a word with a comma is no longer left alone on
+  a line («считаете, / домашние тренировки не для вас?») when the other line takes it.
 - A screen note whose start falls into a cut piece moves to the next kept piece when it starts within 0.6 s (the cut
   by the sound starts a kept word up to 0.4 s after Whisper's start; a section heading within 3 s: its reading is
   cut), instead of being lost: a section plate set 0.11 s before the kept question disappeared from the reel. The app

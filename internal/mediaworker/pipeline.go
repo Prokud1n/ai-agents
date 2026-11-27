@@ -518,6 +518,7 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		CreateSubtitlesData: subtitles.CreateSubtitlesData{
 			Transcript: speech, Titles: subtitleTitles(w.cut.Titles), Hook: editHook(w.cut.Plan.Edit),
 			Notes: subtitleNotes(w.cut.ScreenNotes), Branding: p.branding(ctx, w.job),
+			SentenceJoints: roughcut.WordCutJoints(&w.cut.Plan),
 		},
 		VideoPath:  w.source,
 		OutputPath: w.reel,
