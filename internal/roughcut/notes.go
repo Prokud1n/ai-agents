@@ -6,15 +6,20 @@ import (
 	"sort"
 )
 
-// How far a screen note that starts in a cut piece moves on to the next kept piece (seconds of the source). The cut
-// points stand by the sound, not by Whisper's word edges: a note set on the first word of a phrase may start up to
-// about 0.3 s before the kept piece (Whisper starts a word early in the silence before it); a note on a removed word
-// (a filler, a cut take) further away is dropped as before. A section heading stands where
-// the trainer reads it out («страх номер два», «пункт первый»), and that reading is cut from the sound: the plate
-// replaces it, so the section moves to where the speech goes on after the reading and its pause.
+// How far a screen note that starts in a cut piece moves on to the next kept piece (seconds of the source). The worker
+// cuts by the sound, not by Whisper's word edges: a kept word whose start Whisper put early in the silence starts the
+// kept piece up to wordInnerReach later (and a frame or two of the grid), so a note set on it moves by up to
+// noteShiftReach. A section heading stands where the trainer reads it out («ошибка номер два», «пункт первый»), and
+// that reading is cut from the sound: the plate replaces it, so the section moves to where the speech goes on after
+// the reading and its pause.
+//
+// NoteCheckSlack: the app checks the notes on its plan by the margins (no sound) with the reach shortened by it, so a
+// note the app lets through is never dropped by the worker's cut; in doubt the model is asked to move it.
 const (
-	noteShiftReach    = 0.3
+	noteShiftMargin   = 0.2
+	noteShiftReach    = wordInnerReach + noteShiftMargin
 	sectionShiftReach = 3.0
+	NoteCheckSlack    = noteShiftReach
 )
 
 // RemapScreenNotes puts the screen notes of an edit onto the timeline of the cut by keep: ordered by time; a note that
@@ -59,6 +64,12 @@ func RemapScreenNotes(notes []ScreenNote, keep []Interval) []ScreenNote {
 
 // noteShown: the note starts in a kept piece, or in a cut one with the next kept piece within its reach.
 func noteShown(n ScreenNote, keep []Interval) bool {
+	return NoteShown(n, keep, 0)
+}
+
+// NoteShown reports whether RemapScreenNotes keeps the note on the cut by keep, with its reach shortened by slack
+// (NoteCheckSlack: the stricter check of the app).
+func NoteShown(n ScreenNote, keep []Interval, slack float64) bool {
 	if _, ok := findInterval(keep, n.Start); ok {
 		return true
 	}
@@ -70,7 +81,7 @@ func noteShown(n ScreenNote, keep []Interval) bool {
 
 	i := sort.Search(len(keep), func(i int) bool { return keep[i].Start > n.Start })
 
-	return i < len(keep) && keep[i].Start-n.Start <= reach+gridEpsilon
+	return i < len(keep) && keep[i].Start-n.Start <= reach-slack+gridEpsilon
 }
 
 // editScreenNotes are the screen notes of a talking-head edit, nil without one or in a workout.

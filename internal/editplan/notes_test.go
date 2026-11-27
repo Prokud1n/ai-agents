@@ -135,6 +135,63 @@ func TestApplySections(t *testing.T) {
 	assert.Equal(t, "На экране: 2 раздела.", outcome.Changes[0])
 }
 
+// TestApplySectionOnCutReading (T3.22): a section set on the words it removes (the spoken heading) is shown where the
+// speech goes on; a note at the same place, or a section too far before the speech, goes back to the model.
+func TestApplySectionOnCutReading(t *testing.T) {
+	t.Parallel()
+
+	reading := []roughcut.WordRange{{From: 0, To: 2}}
+
+	tests := []struct {
+		name   string
+		remove []roughcut.WordRange
+		notes  []NoteInput
+		err    string
+	}{
+		{name: "the section on its cut reading", remove: reading,
+			notes: []NoteInput{{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)}}},
+		{
+			name: "an item at the same place", remove: reading, err: "в одном месте",
+			notes: []NoteInput{
+				{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)},
+				{Kind: roughcut.CalloutNote, Text: noteYears, Word: new(3)},
+			},
+		},
+		{
+			name: "two sections in one cut", remove: reading, err: "в одном месте",
+			notes: []NoteInput{
+				{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)},
+				{Kind: roughcut.SectionNote, Text: sectionTwo, Word: new(1)},
+			},
+		},
+		{
+			name: "too far before the speech", remove: []roughcut.WordRange{{From: 3, To: 5}}, err: "не видно в ролике",
+			notes: []NoteInput{{Kind: roughcut.SectionNote, Text: sectionTwo, Word: new(3)}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			outcome, err := Apply(testRequest(1, nil), &Input{
+				Decision: EditDecision, Reason: testReason, Remove: tt.remove, ScreenNotes: new(tt.notes),
+			})
+
+			if tt.err == "" {
+				require.NoError(t, err)
+				assert.Len(t, outcome.Edit.ScreenNotes, len(tt.notes))
+
+				return
+			}
+
+			var check *CheckError
+			require.ErrorAs(t, err, &check)
+			assert.Contains(t, check.Message, tt.err)
+		})
+	}
+}
+
 // TestApplyScreenNotesRevision: a revision replaces the list (an empty one removes it), keeps it when it does not
 // name it, and a list that changes nothing is no revision; the reel built with notes alone is the same.
 func TestApplyScreenNotesRevision(t *testing.T) {

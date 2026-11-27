@@ -91,6 +91,13 @@ func TestRemapScreenNotesShift(t *testing.T) {
 			input:    ScreenNote{Kind: SectionNote, Text: sectionThree, Start: 151.6, End: 152.5},
 			expected: []ScreenNote{{Kind: SectionNote, Text: sectionThree, Start: 21.367}},
 		},
+		{
+			// The worker starts the piece by the sound up to wordInnerReach after Whisper's start of the word.
+			name:     "a callout 0.55 s before the kept piece",
+			input:    ScreenNote{Kind: CalloutNote, Text: calloutYears, Start: 152.65},
+			expected: []ScreenNote{{Kind: CalloutNote, Text: calloutYears, Start: 21.367}},
+		},
+		{name: "a callout 0.7 s before speech", input: ScreenNote{Kind: CalloutNote, Text: calloutYears, Start: 152.5}},
 		{name: "a callout 1.6 s before speech", input: ScreenNote{Kind: CalloutNote, Text: calloutYears, Start: 151.6}},
 		{name: "a section 4 s before speech", input: ScreenNote{Kind: SectionNote, Text: "страх 1", Start: 146}},
 		{name: "a section after the last piece", input: ScreenNote{Kind: SectionNote, Text: "страх 4", Start: 161}},
@@ -101,6 +108,35 @@ func TestRemapScreenNotesShift(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.expected, RemapScreenNotes([]ScreenNote{tt.input}, keep))
+		})
+	}
+}
+
+// TestNoteShownSlack: the app checks a note with the reach shortened by NoteCheckSlack, so near the edge of the reach
+// it asks the model to move the note rather than the worker dropping it.
+func TestNoteShownSlack(t *testing.T) {
+	t.Parallel()
+
+	keep := []Interval{{Start: 100, End: 120}, {Start: 150, End: 160}}
+
+	tests := []struct {
+		name          string
+		input         ScreenNote
+		worker, check bool
+	}{
+		{name: "in a kept piece", input: ScreenNote{Kind: CalloutNote, Start: 110}, worker: true, check: true},
+		{name: "an item 0.4 s before", input: ScreenNote{Kind: ListItemNote, Start: 149.6}, worker: true},
+		{name: "a section 2 s before", input: ScreenNote{Kind: SectionNote, Start: 148}, worker: true, check: true},
+		{name: "a section 2.8 s before", input: ScreenNote{Kind: SectionNote, Start: 147.2}, worker: true},
+		{name: "a section 3.5 s before", input: ScreenNote{Kind: SectionNote, Start: 146.5}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.worker, NoteShown(tt.input, keep, 0), "the worker")
+			assert.Equal(t, tt.check, NoteShown(tt.input, keep, NoteCheckSlack), "the app")
 		})
 	}
 }

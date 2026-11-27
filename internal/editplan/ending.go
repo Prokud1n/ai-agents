@@ -71,12 +71,13 @@ func checkEnding(req *Request, in *Input, edit *roughcut.Edit, sel *selection) s
 			maxDroppedRunes))
 }
 
-// findEndingIssue finds a selected reel whose last section lost its end and whose introduction after the call stayed.
+// findEndingIssue finds a selected first version whose last section lost its end and whose introduction after the call
+// stayed; a revision is the trainer's own request and is not judged.
 func findEndingIssue(req *Request, in *Input, edit *roughcut.Edit, sel *selection) (endingIssue, bool) {
 	words := req.Transcript.Words
 
 	first, ok := lastSectionWord(words, edit.ScreenNotes)
-	if !sel.on || !ok {
+	if !sel.on || req.IsRevision() || !ok {
 		return endingIssue{}, false
 	}
 
@@ -152,7 +153,8 @@ func isIntroduction(words []transcription.Word, i int) bool {
 
 // cutTail is the run of words the decision cut (remove) right before the call (up to callLeadWords kept words of the
 // question and the call between them), within the last section (from first on); false when it is shorter than
-// minClimaxWords.
+// minClimaxWords. The words of cleanup_words are not counted on purpose: they are failed takes, links and reactions
+// the model cleaned, not the climax cut for the length.
 func cutTail(remove []roughcut.WordRange, kept []bool, first, call int) (roughcut.WordRange, bool) {
 	end := call - 1
 	for lead := 0; end >= first && kept[end] && lead < callLeadWords; lead++ {

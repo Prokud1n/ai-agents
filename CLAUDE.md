@@ -325,9 +325,11 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   Пункты на экране: `roughcut.Edit.ScreenNotes` (`list_title`/`list_item`/`callout`, время исходника, `omitempty`,
   накапливаются; `screen_notes` в `submit_edit` — весь список версии, `[]` убирает, нет поля — оставить;
   `editplan.checkNotesInput`: ≤ 12, ≤ 40 символов, как хук без разметки/эмодзи/`#`; только talk; чистка их
-  разрешает; новые элементы на вырезанном слове — отказ модели, прежние просто пропадают) → `roughcut.RemapScreenNotes`
-  (начало в вырезанном куске — на начало следующего оставленного, если оно не дальше `noteShiftReach` 0,3 с, у раздела —
-  `sectionShiftReach` 3 с; иначе убрать, T3.22) → `roughcut.Result.ScreenNotes` → `subtitles.CreateSubtitlesData.Notes`.
+  разрешает; новый элемент на вырезанном слове — отказ модели, если следующий оставленный кусок дальше допуска переноса
+  минус `roughcut.NoteCheckSlack` 0,6 с (`roughcut.NoteShown`; раздел, совпавший в ролике с другим элементом, — тоже
+  отказ), прежние просто пропадают) → `roughcut.RemapScreenNotes` (начало в вырезанном куске — на начало следующего
+  оставленного, если оно не дальше `noteShiftReach` = `wordInnerReach` + 0,2 = 0,6 с, у раздела — `sectionShiftReach`
+  3 с; иначе убрать, T3.22) → `roughcut.Result.ScreenNotes` → `subtitles.CreateSubtitlesData.Notes`.
   `subtitles.noteBlocks`: элемент ждёт конца хука; пункты копятся под заголовком до конца списка (свой `end`, следующий
   не-пункт или 5 с после последнего), ≤ `hookLines` строк — ранние пункты уезжают; выноска — одна на 1,5–3 с; блок —
   событие стиля `Hook` (слой 2), `\fad` только на краях серии. Во фразовой раскладке субтитры под блоком сдвигаются как
@@ -449,9 +451,12 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `readingsCut` в `writeScreenNotes` — кроме `HookOnly`): структура «заголовок → пункты → кульминация (доказательство
   последнего пункта, не резать) → вопрос зрителю и призыв → следующая часть», самопрезентация и «подписывайся» после
   призыва вырезаются, если тренер не просит; связки и реакции отдельной репликой — в `cleanup_words`; чтение заголовка
-  раздела («страх номер два») — из звука (`cleanup_words`/`remove_words`), раздел на нём допустим (`checkNotesShown` через
-  `RemapScreenNotes` с переносом); имена, искажённые распознаванием, — `fix_words`. `editplan.checkEnding` (`ending.go`,
-  только при `sel.on`): последний `section`, после него оставленное «коммент…», после него оставленное «подписыв…»/«меня
+  раздела («ошибка номер два») — из звука через `remove_words` (не брак, не `cleanup_words`), раздел на нём допустим
+  (`checkNotesShown` → `roughcut.NoteShown` с запасом `NoteCheckSlack`); имена, искажённые распознаванием, —
+  `fix_words`. Строка чистки — `CleanupLinePrefix` «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние
+  вставки»; «неудачные дубли» в заголовке — `Result.Retakes`, вырезанный спорный повтор или `Outcome.CleanedTakes`
+  (чистка задела фразу из подсказок повторов `writeRepeats`, `cutsRepeats`). `editplan.checkEnding` (`ending.go`,
+  только первая версия при `sel.on`, хвост в `cleanup_words` не считается): последний `section`, после него оставленное «коммент…», после него оставленное «подписыв…»/«меня
   зовут», и прямо перед призывом (≤ 10 оставленных слов вопроса) ≥ 8 слов, вырезанных `remove_words`, — строка «Финал: …»
   в `Edit.Details` и `Outcome.endingHint`: `Session.submit` один раз возвращает его модели ошибкой инструмента, не
   тратя попытку; то же решение второй раз принимается. Стык у выреза (`cutGrid.around`): если по звуку осталось тишины
@@ -459,8 +464,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   края ищутся до `minWordSound` внутри слов и разрез может пройти середину слова в тишине; `Service.Cut` тогда отдаёт
   субтитрам слова с обрезанным тихим краем (`trimSilentEdges`: только если в отрезанной части нет окна выше порога речи —
   слово, разрезанное по звуку, по-прежнему пропадает). Проверка — `roughcut.TestCutGridAroundStretchedWords`,
-  `TestTrimSilentEdges`, `TestRemapScreenNotesShift`, `TestServiceCutSectionOnCutReading`,
-  `editplan.TestSubmitEndingHint`, `TestRolePromptSelectionLikeTrainer`.
+  `TestTrimSilentEdges`, `TestRemapScreenNotesShift`, `TestNoteShownSlack`, `TestServiceCutSectionOnCutReading`,
+  `TestServiceCutNoteOnQuietStart`, `editplan.TestSubmitEndingHint`, `TestApplySectionOnCutReading`, `TestCleanedTakes`,
+  `TestRolePromptSelectionLikeTrainer`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

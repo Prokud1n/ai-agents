@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   point (the climax, never cut for the length) → the question to the viewer and the call → the next part; the
   self-introduction and «подписывайся» after the call are cut unless the trainer asks to keep them; short links and
   reactions between phrases («не переживай», «ну что», a swear word as a reply) go with the cleaning; the spoken section
-  heading («страх номер два») is cut from the sound and the section plate stands where the speech goes on; names
-  distorted by the recognition («Ульянске») are corrected in the subtitles. A selection that cuts the end of the last
+  heading («ошибка номер два») is cut from the sound (remove_words, not the cleaning) and the section plate stands where the speech goes on; names
+  distorted by the recognition are corrected in the subtitles. A selection that cuts the end of the last
   section and keeps the introduction after the call gets one hint back (the same decision again is accepted) and a line
   in the decisions log.
 
@@ -697,9 +697,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A screen note whose start falls into a cut piece moves to the next kept piece when it starts within 0.3 s (a section
-  heading within 3 s: its reading is cut), instead of being lost: the plate «СТРАХ 2» set 0.11 s before the kept
-  question disappeared from the reel (T3.22).
+- A screen note whose start falls into a cut piece moves to the next kept piece when it starts within 0.6 s (the cut
+  by the sound starts a kept word up to 0.4 s after Whisper's start; a section heading within 3 s: its reading is
+  cut), instead of being lost: a section plate set 0.11 s before the kept question disappeared from the reel. The app
+  checks the notes with the reach shortened by 0.6 s and refuses a section at one place with another note, so the
+  model moves such a note rather than the worker dropping it (T3.22).
+- The line about the cleaning says what it cuts: «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние
+  вставки: N фрагментов (X с).»; the header names the failed takes only when the cleaning cut a phrase said again (or
+  a disputed repeat was cut), not for the preparation and the links alone (T3.22).
 - No long pause at the joint of a removed piece when Whisper stretched the kept words far into its silence: the cut
   looks for their sound down to 0.08 s of each word, and the subtitles keep such a word (a hole of 1.3 s at a cut
   retake, T3.22).

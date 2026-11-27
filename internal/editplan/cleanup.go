@@ -17,14 +17,19 @@ const (
 	shortCleanupShare = 0.5
 )
 
-// CleanupLinePrefix starts the line of the description about the cleaning of a first version (cleanupLine): the
-// editor's description of the draft names the failed takes only when they were cut.
-const CleanupLinePrefix = "Убрал неудачные дубли и подготовку к съёмке"
+// CleanupLinePrefix starts the line of the description about the cleaning of a first version (cleanupLine). The
+// cleaning cuts the failed takes, the preparation for the shooting and the short links and reactions between phrases
+// (T3.22), so the line names all three; the header of the description names the failed takes only when some were cut
+// (Outcome.CleanedTakes).
+const CleanupLinePrefix = "Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки"
 
 // cleaning is what the cleaning of a first version removed from the reel: the fragments of speech and their seconds.
 type cleaning struct {
 	fragments int
 	seconds   float64
+	// takes: the cleaning cut a phrase the hints found said again (writeRepeats: similar phrases, a repeat in a row),
+	// so it cut a failed take, not only the preparation or a link.
+	takes bool
 }
 
 // cleaningTask is said after the task of a first version with a caption that is cleaned too.
@@ -150,7 +155,31 @@ func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan
 		inside = cleaned
 	}
 
-	return cleaning{fragments: fragments, seconds: max(whole.Duration-plan.Duration, 0)}, nil
+	cleanedWord := func(i int) bool { return marked[i] && keptBefore[i] && !keptAfter[i] }
+
+	return cleaning{
+		fragments: fragments, seconds: max(whole.Duration-plan.Duration, 0), takes: cutsRepeats(req, cleanedWord),
+	}, nil
+}
+
+// cutsRepeats: a word of a phrase the hints of the cleaning name as said again (writeRepeats) is cut.
+func cutsRepeats(req *Request, cut func(i int) bool) bool {
+	list := normalizedPhrases(req.Transcript, req.Plan)
+	repeated := inRowRepeats(list)
+
+	for _, pair := range similarPairs(req.Transcript.Words, list) {
+		repeated = append(repeated, pair[0], pair[1])
+	}
+
+	for _, p := range repeated {
+		for i := p.from; i <= p.to; i++ {
+			if cut(i) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // cleanupFloor is the shortest reel a cleaning may leave of a reel of the duration.
@@ -158,7 +187,7 @@ func cleanupFloor(duration float64) float64 {
 	return max(duration*minCleanupShare, min(minCleanupSeconds, duration*shortCleanupShare))
 }
 
-// cleanupLine: «Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с).»; "" when nothing was removed.
+// cleanupLine: «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки: 3 фрагмента (52,4 с).»; "" when nothing was removed.
 func cleanupLine(c cleaning) string {
 	if c.fragments == 0 {
 		return ""

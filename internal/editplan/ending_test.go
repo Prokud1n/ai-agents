@@ -13,14 +13,14 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 )
 
-// endingSpeech is a talking head of two sections, a proof in the last one, the call and an introduction after it:
+// endingSpeech is a talking head of two sections, a story in the last one, the call and an introduction after it:
 //
-//	0–2 страх номер один | 3–6 вдруг это не работает | 7–8 работает отлично | 9–11 страх номер два |
-//	12–14 а мне помогут | 15–23 у меня клиенты в трёх городах и все довольны | 24–28 пиши в комментариях свои
-//	страхи | 29–32 меня зовут настя подписывайся
-const endingSpeech = "страх номер один. | вдруг это не работает. | работает отлично. | страх номер два. | " +
-	"а мне помогут. | у меня клиенты в трёх городах и все довольны. | пиши в комментариях свои страхи. | " +
-	"меня зовут настя подписывайся."
+//	0–2 ошибка номер один | 3–5 бежать каждый день | 6–7 нужен отдых | 8–10 ошибка номер два | 11–12 не разминаться |
+//	13–20 я сама так порвала связку и лечилась полгода | 21–25 пишите в комментариях свои ошибки |
+//	26–29 меня зовут ира подписывайтесь
+const endingSpeech = "ошибка номер один. | бежать каждый день. | нужен отдых. | ошибка номер два. | " +
+	"не разминаться. | я сама так порвала связку и лечилась полгода. | пишите в комментариях свои ошибки. | " +
+	"меня зовут ира подписывайтесь."
 
 // endingShare: the target of the selection is the reel shortened by about this share, so it is selected.
 const endingShare = 1.12
@@ -44,7 +44,7 @@ func endingRequest(t *testing.T) *Request {
 // endingInput is a selection that removes the ranges, with the two sections.
 func endingInput(remove string) string {
 	return fmt.Sprintf(`{"decision": "edit", "reason": "отбор", "remove_words": [%s], "screen_notes": [`+
-		`{"kind": "section", "text": "страх 1", "word": 0}, {"kind": "section", "text": "страх 2", "word": 9}]}`, remove)
+		`{"kind": "section", "text": "ошибка 1", "word": 0}, {"kind": "section", "text": "ошибка 2", "word": 8}]}`, remove)
 }
 
 // TestSubmitEndingHint (T3.22): a selection that cut the proof of the last section and kept the introduction after the
@@ -54,11 +54,11 @@ func TestSubmitEndingHint(t *testing.T) {
 	t.Parallel()
 
 	var (
-		proofCut = endingInput(`{"from": 15, "to": 23}`)
-		bothCut  = endingInput(`{"from": 15, "to": 23}, {"from": 29, "to": 32}`)
+		proofCut = endingInput(`{"from": 13, "to": 20}`)
+		bothCut  = endingInput(`{"from": 13, "to": 20}, {"from": 26, "to": 29}`)
 		broken   = `{"decision": "edit", "reason": "x", "remove_words": [{"from": 90, "to": 91}]}`
-		detail   = "Финал: вырезан конец последнего раздела (слова 15–23), оставлено представление после призыва " +
-			"(слова 29–32)"
+		detail   = "Финал: вырезан конец последнего раздела (слова 13–20), оставлено представление после призыва " +
+			"(слова 26–29)"
 	)
 
 	tests := []struct {
@@ -71,7 +71,7 @@ func TestSubmitEndingHint(t *testing.T) {
 		{name: "the same decision after the hint", inputs: []string{proofCut, proofCut}, toolErrors: 1, kind: EditOutcome, detail: true},
 		{name: "the introduction cut after the hint", inputs: []string{proofCut, bothCut}, toolErrors: 1, kind: EditOutcome},
 		{name: "the introduction cut at once", inputs: []string{bothCut}, kind: EditOutcome},
-		{name: "the proof kept", inputs: []string{endingInput(`{"from": 3, "to": 6}`)}, kind: EditOutcome},
+		{name: "the proof kept", inputs: []string{endingInput(`{"from": 3, "to": 5}`)}, kind: EditOutcome},
 		{
 			name: "the hint takes no attempt", inputs: []string{proofCut, broken, bothCut}, toolErrors: 2,
 			kind: EditOutcome,
@@ -125,12 +125,12 @@ func TestSubmitEndingHintText(t *testing.T) {
 
 	session := NewSession(endingRequest(t))
 	_, err := NewSubmitTool().Execute(WithSession(t.Context(), session),
-		json.RawMessage(endingInput(`{"from": 15, "to": 23}`)))
+		json.RawMessage(endingInput(`{"from": 13, "to": 20}`)))
 	require.Error(t, err)
 
 	for _, s := range []string{
-		"вырезан конец последнего раздела — слова 15–23 «у меня клиенты в трёх городах",
-		"оставлено представление — слова 29–32 «меня зовут настя подписывайся»",
+		"вырезан конец последнего раздела — слова 13–20 «я сама так порвала связку",
+		"оставлено представление — слова 26–29 «меня зовут ира подписывайтесь»",
 		"кульминация", "отправь то же решение ещё раз",
 	} {
 		assert.Contains(t, err.Error(), s)
@@ -142,7 +142,45 @@ func TestEndingWithoutSections(t *testing.T) {
 	t.Parallel()
 
 	outcome, err := Apply(endingRequest(t), &Input{Decision: EditDecision, Reason: testReason,
-		Remove: []roughcut.WordRange{{From: 15, To: 23}}})
+		Remove: []roughcut.WordRange{{From: 13, To: 20}}})
 	require.NoError(t, err)
 	assert.Empty(t, outcome.endingHint)
+}
+
+// TestEndingOnlyFirstVersion: the hint about the ending is for the selection of a first version; a revision is the
+// trainer's own request.
+func TestEndingOnlyFirstVersion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		version  int
+		expected bool
+	}{
+		{name: "the first version", version: 1, expected: true},
+		{name: "a revision", version: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := endingRequest(t)
+			req.Version = tt.version
+			words := req.Transcript.Words
+			remove := []roughcut.WordRange{{From: 13, To: 20}}
+
+			plan, err := roughcut.BuildPlanEdited(req.Transcript, req.Plan.SourceDuration, req.Plan.Settings,
+				&roughcut.Edit{Remove: remove})
+			require.NoError(t, err)
+
+			edit := &roughcut.Edit{Remove: remove, ScreenNotes: []roughcut.ScreenNote{
+				{Kind: roughcut.SectionNote, Text: sectionOne, Start: words[0].Start},
+				{Kind: roughcut.SectionNote, Text: sectionTwo, Start: words[8].Start},
+			}}
+			sel := &selection{on: true, keep: plan.Keep}
+
+			assert.Equal(t, tt.expected, checkEnding(req, &Input{Remove: remove}, edit, sel) != "")
+		})
+	}
 }

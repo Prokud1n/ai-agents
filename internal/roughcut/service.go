@@ -163,6 +163,9 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 		return nil, err
 	}
 
+	// A plan given as it is (CutData.Plan: only the CLI's -plan, never the worker) is rendered without reading the
+	// sound levels: trimSilentEdges does nothing there, and a word whose middle such a plan cut in the silence is left
+	// out of its subtitles.
 	source := data.Transcript
 	if plan.SoundCuts {
 		source = trimSilentEdges(source, plan.Keep, levels)

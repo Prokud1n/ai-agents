@@ -315,3 +315,39 @@ func TestPromptCleanup(t *testing.T) {
 		"cleanup_words")
 	assert.NotContains(t, Prompt(selected), "Ещё почисти ролик", "the selection is not the cleaning mode")
 }
+
+// TestCleanedTakes (T3.22): the header of the description names the failed takes only when the cleaning cut a phrase
+// the hints found said again; the preparation for the shooting alone is not a failed take.
+func TestCleanedTakes(t *testing.T) {
+	t.Parallel()
+
+	src := speech("сегодня расскажу про планку. | итак сегодня про планку и спину. | держите спину ровно. | " +
+		"дышите спокойно и не спешите.")
+
+	plan, err := roughcut.BuildPlanEdited(src, src.Duration, testSettings(), &roughcut.Edit{})
+	require.NoError(t, err)
+
+	takes := &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan, Cleanup: true}
+	require.Contains(t, Prompt(takes), "Похожие фразы", "the intro said again is hinted")
+
+	tests := []struct {
+		name     string
+		req      *Request
+		cleanup  []roughcut.WordRange
+		expected bool
+	}{
+		{name: "the first intro", req: takes, cleanup: []roughcut.WordRange{{From: 0, To: 3}}, expected: true},
+		{name: "the countdown", req: cleanupSpeechRequest(t), cleanup: []roughcut.WordRange{countdownWords}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			outcome, err := Apply(tt.req, &Input{Decision: EditDecision, Reason: testReason, CleanupWords: tt.cleanup})
+			require.NoError(t, err)
+			assert.Equal(t, 1, outcome.Cleaned)
+			assert.Equal(t, tt.expected, outcome.CleanedTakes)
+		})
+	}
+}

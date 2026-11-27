@@ -150,7 +150,7 @@ func TestServiceCut(t *testing.T) {
 	}
 }
 
-// TestServiceCutSectionOnCutReading (T3.22): the spoken heading «страх номер два» is cut from the sound, the section
+// TestServiceCutSectionOnCutReading (T3.22): the spoken heading «ошибка номер два» is cut from the sound, the section
 // set on it lives to the result at the start of the question, and no long pause is left at the joint.
 func TestServiceCutSectionOnCutReading(t *testing.T) {
 	t.Parallel()
@@ -160,7 +160,7 @@ func TestServiceCutSectionOnCutReading(t *testing.T) {
 		questionSound = 4.95
 	)
 
-	src := words(word("ответ", 0.5, answerEnd), word("страх", 3.0, 3.4), word("номер", 3.45, 3.85),
+	src := words(word("ответ", 0.5, answerEnd), word("ошибка", 3.0, 3.4), word("номер", 3.45, 3.85),
 		word("два", 3.9, 4.3), word("а", 4.9, 5.1), word("вдруг", 5.15, 5.6), word("забуду", 5.65, 6.2))
 	src.Duration, src.Language = 7, testLanguage
 
@@ -186,6 +186,40 @@ func TestServiceCutSectionOnCutReading(t *testing.T) {
 
 	silence := (keep[0].End - answerEnd) + (questionSound - keep[1].Start)
 	assert.LessOrEqual(t, silence, result.Plan.Settings.MaxPause+1e-3, "no long pause at the joint")
+}
+
+// TestServiceCutNoteOnQuietStart (T3.22): Whisper starts a kept word 0.65 s before its sound, the cut by the sound
+// starts its piece about 0.5 s after the word; a callout on that word (it passed the app's check) still lives to the
+// result, and the word to the subtitles.
+func TestServiceCutNoteOnQuietStart(t *testing.T) {
+	t.Parallel()
+
+	src := words(word("ответ", 0.5, 1.0), word("лишнее", 2.0, 2.4), word("десять", 3.0, 3.9),
+		word("минут", 3.95, 4.4))
+	src.Duration, src.Language = 6, testLanguage
+
+	media := &fakeMedia{duration: 6, levels: soundOf(6, [3]float64{0.5, 1.0, testSpeech},
+		[3]float64{2.0, 2.4, testSpeech}, [3]float64{3.65, 4.4, testSpeech})}
+	edit := &Edit{
+		Remove:      []WordRange{{From: 1, To: 1}},
+		ScreenNotes: []ScreenNote{{Kind: CalloutNote, Text: "10 минут", Start: 3.0}},
+	}
+
+	result, err := newTestService(t, media).Cut(t.Context(), &CutData{
+		Source: "/videos/clip.mp4", Transcript: src, OutDir: filepath.Join(t.TempDir(), "out"), PlanOnly: true,
+		Edit: edit,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Plan.Keep, 2)
+
+	keep := result.Plan.Keep
+	shift := keep[1].Start - 3.0
+	require.Greater(t, shift, 0.4, "the piece starts well after Whisper's start of the word")
+	require.LessOrEqual(t, shift, noteShiftReach)
+
+	require.Len(t, result.ScreenNotes, 1, "the callout is not lost")
+	assert.InDelta(t, keep[0].End-keep[0].Start, result.ScreenNotes[0].Start, 1e-3)
+	assert.Equal(t, "ответ десять минут", joinWords(result.Transcript.Words))
 }
 
 func TestServiceCutSettings(t *testing.T) {
