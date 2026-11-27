@@ -39,6 +39,19 @@ func alignTokens(src *transcription.Result) []string {
 	return tokens
 }
 
+// SentenceEnds marks the words that close a sentence by the punctuation of their segment text ("приседаем." or
+// "так?"); a word of a segment that could not be aligned is not marked.
+func SentenceEnds(src *transcription.Result) []bool {
+	tokens := alignTokens(src)
+	out := make([]bool, len(tokens))
+
+	for i, token := range tokens {
+		out[i] = endsSentence(token)
+	}
+
+	return out
+}
+
 // skipBefore returns the first word from w whose middle is not before the segment start.
 func skipBefore(words []transcription.Word, w int, start float64) int {
 	for w < len(words) && mid(words[w]) < start-segmentStartSlack {

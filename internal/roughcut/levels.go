@@ -25,6 +25,9 @@ const (
 	// silenceAboveFloor: inside a word only the windows at most this far over the floor are silence (half of
 	// minSpeechAboveFloor); a quieter ending between it and the threshold of speech is kept.
 	silenceAboveFloor = minSpeechAboveFloor / 2
+	// maxQuietEnding: a quiet ending (under the threshold of speech, over the silence) is at most this long after the
+	// last window of speech of a word; a longer quiet stretch inside a word Whisper stretched is the room or a breath.
+	maxQuietEnding = 0.15
 	// speechHole: a quieter stretch this short inside the sound (the closure of a stop: «т», «к», «п») does not end it.
 	speechHole = 0.12
 	// breathPause is the silence a pause is compressed to (the tail of one phrase and the lead of the next), so the
@@ -159,17 +162,30 @@ func (s *speechLevels) around(t float64) float64 {
 // speechEnd is where the sound of a word ending at from (by Whisper) really ends: the end of the last window above the
 // threshold that follows it without a hole longer than speechHole, at most limit. Whisper also stretches words into
 // the silence after them: when nothing is heard at or after from, the silence inside the word is cut off too — the end
-// is after the last window above the silence level, not before inner (from when the word must not be shortened).
+// is after the last window above the silence level, not before inner (from when the word must not be shortened), and
+// at most maxQuietEnding after the last window of speech inside the word (silentEdge).
 func (s *speechLevels) speechEnd(from, inner, limit float64) float64 {
-	return s.heardEdge(from, inner, limit, forward)
+	return s.heardEdge(from, inner, limit, forward, maxQuietEnding)
 }
 
 // speechStart is where the sound of a word starting at to (by Whisper) really starts: the start of the first window
 // above the threshold before it without a hole longer than speechHole, at least limit. When nothing is heard at or
 // before to (Whisper started the word early, in the silence), the start is at the first window above the silence level
-// inside the word, not after inner (to when the word must not be shortened).
+// inside the word, not after inner (to when the word must not be shortened), and at most maxQuietEnding before the
+// first window of speech inside the word (silentEdge).
 func (s *speechLevels) speechStart(to, inner, limit float64) float64 {
-	return s.heardEdge(to, inner, limit, backward)
+	return s.heardEdge(to, inner, limit, backward, maxQuietEnding)
+}
+
+// cutSpeechEnd and cutSpeechStart are speechEnd and speechStart at a joint around removed words (cutGrid.around): a
+// long quiet stretch inside the word is cut off right at its speech — the tail and the lead of the joint are added
+// after it, and a removed piece leaves no pause of its own to hide the room in.
+func (s *speechLevels) cutSpeechEnd(from, inner, limit float64) float64 {
+	return s.heardEdge(from, inner, limit, forward, 0)
+}
+
+func (s *speechLevels) cutSpeechStart(to, inner, limit float64) float64 {
+	return s.heardEdge(to, inner, limit, backward, 0)
 }
 
 // Directions of heardEdge: out of a word past its end, or back past its start.
@@ -179,8 +195,8 @@ const (
 )
 
 // heardEdge is speechEnd (d forward) or speechStart (d backward) of a word edge: times are mirrored by d, so «later»
-// is d*t > d*u for both.
-func (s *speechLevels) heardEdge(edge, inner, limit, d float64) float64 {
+// is d*t > d*u for both. quietKeep is passed to silentEdge.
+func (s *speechLevels) heardEdge(edge, inner, limit, d, quietKeep float64) float64 {
 	first := d * math.Floor(d*edge/s.window) * s.window // the grid point at or before the edge, looking out
 	last := edge
 
@@ -194,19 +210,43 @@ scan:
 		}
 	}
 
-	if d*last > d*edge || d*inner >= d*edge || s.at(edge-d*s.window/2) > s.silence {
+	if d*last > d*edge || d*inner >= d*edge {
 		return last
 	}
 
-	// Nothing heard at the edge or past it, silence inside: the edge goes back to the last window above the silence,
-	// to inner if the word is silent all the way there.
-	for t := first - d*s.window; d*(t+d*s.window) >= d*inner-gridEpsilon; t -= d * s.window {
-		if s.at(t+d*s.window/2) > s.silence {
-			return d * max(min(d*(t+d*s.window), d*edge), d*inner)
+	return s.silentEdge(edge, inner, first, d, quietKeep)
+}
+
+// silentEdge is heardEdge of a word edge with nothing heard at it or past it: the edge goes back inside the word to the
+// last window above the silence level (a quiet ending — a fricative, a decay — stays), to inner if the word is silent
+// all the way there. A quiet stretch longer than maxQuietEnding after the last window of speech inside the word is not
+// an ending but the room or a breath Whisper stretched the word over (T3.26: «a late end by 0.8 s over the room noise»
+// left 0.9 s of silence at a joint): the edge goes back to quietKeep after the speech then. A word with no window of
+// speech down to inner (said quietly all through) keeps its quiet edge. first is the grid point at or before the edge,
+// looking out.
+func (s *speechLevels) silentEdge(edge, inner, first, d, quietKeep float64) float64 {
+	clamp := func(t float64) float64 { return d * max(min(d*t, d*edge), d*inner) }
+	quiet, quietFound := inner, false
+
+	for t := first; d*(t+d*s.window) >= d*inner-gridEpsilon; t -= d * s.window {
+		level := s.at(t + d*s.window/2)
+
+		if !quietFound && level > s.silence {
+			quiet, quietFound = clamp(t+d*s.window), true
 		}
+
+		if level <= s.threshold {
+			continue
+		}
+
+		if spoken := clamp(t + d*s.window); d*(quiet-spoken) > maxQuietEnding+gridEpsilon {
+			return clamp(spoken + d*quietKeep)
+		}
+
+		return quiet
 	}
 
-	return inner
+	return quiet
 }
 
 // innerEnd is how far inside a word its end may be moved by the sound: minWordSound after its start, and not more
@@ -317,8 +357,8 @@ func (g *cutGrid) around(prev, w transcription.Word, removedStart, removedEnd fl
 
 	end, next = g.aroundBy(&j, s, innerEnd(prev), innerStart(w), wordMiddle(prev), wordMiddle(w))
 
-	soundEnd := g.levels.speechEnd(prev.End, prev.Start+minWordSound, min(prev.End+s.PadAfter, removedStart))
-	soundStart := g.levels.speechStart(w.Start, w.End-minWordSound, max(w.Start-s.PadBefore, removedEnd))
+	soundEnd := g.levels.cutSpeechEnd(prev.End, prev.Start+minWordSound, min(prev.End+s.PadAfter, removedStart))
+	soundStart := g.levels.cutSpeechStart(w.Start, w.End-minWordSound, max(w.Start-s.PadBefore, removedEnd))
 
 	if (end-soundEnd)+(soundStart-next) <= s.MaxPause+gridEpsilon {
 		return end, next
@@ -343,8 +383,8 @@ func (g *cutGrid) aroundBy(
 ) (end, next float64) {
 	prevEnd, nextStart := j.prev.End, j.w.Start
 	latestEnd, earliestNext := max(g.floor(j.removedStart), prevEnd), min(g.ceil(j.removedEnd), nextStart)
-	heardEnd := g.levels.speechEnd(prevEnd, innerPrev, min(prevEnd+s.PadAfter, j.removedStart))
-	heardStart := g.levels.speechStart(nextStart, innerNext, max(nextStart-s.PadBefore, j.removedEnd))
+	heardEnd := g.levels.cutSpeechEnd(prevEnd, innerPrev, min(prevEnd+s.PadAfter, j.removedStart))
+	heardStart := g.levels.cutSpeechStart(nextStart, innerNext, max(nextStart-s.PadBefore, j.removedEnd))
 
 	end = g.quietest(min(heardEnd+tailMin, latestEnd), min(heardEnd+tailMax, latestEnd), true)
 	next = g.quietest(max(heardStart-s.PadBefore, earliestNext), max(heardStart-leadMin, earliestNext), false)
