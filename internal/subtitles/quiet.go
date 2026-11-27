@@ -110,9 +110,9 @@ func cueString(c cue) string {
 }
 
 // quietUnderSections keeps the subtitles off the screen for quiet seconds after a heading appears (section.quiet), as
-// the trainer's heading stands alone before the question under it: a subtitle that runs into the heading ends at its
-// start, one that starts in the quiet is shown from its end; the quiet lasts at most maxQuietLag after the start of the
-// first subtitle of the section, so the text does not fall behind the speech. A subtitle left shorter than
+// the trainer's heading stands alone before the question under it — whether or not the words that read it out were
+// found (the editor may have cut them out of the sound, the heading then starts on the question): a subtitle that runs
+// into the heading ends at its start, one that starts in the quiet is shown from its end. A subtitle left shorter than
 // minNoteShown is not shown. cues is not changed.
 func quietUnderSections(cues []cue, headings []noteBlock, quiet float64) []cue {
 	if quiet <= 0 || len(headings) == 0 {
@@ -122,24 +122,14 @@ func quietUnderSections(cues []cue, headings []noteBlock, quiet float64) []cue {
 	out := cues
 
 	for _, h := range headings {
-		out = quietAfter(out, h.start, quiet)
+		out = quietAfter(out, h.start, h.start+quiet)
 	}
 
 	return out
 }
 
-// quietAfter is quietUnderSections for the heading that starts at start.
-func quietAfter(cues []cue, start, quiet float64) []cue {
-	end := start + quiet
-
-	for _, c := range cues {
-		if c.Start >= start-quietTolerance {
-			end = min(end, c.Start+maxQuietLag)
-
-			break
-		}
-	}
-
+// quietAfter is quietUnderSections for the heading that starts at start, quiet until end.
+func quietAfter(cues []cue, start, end float64) []cue {
 	out := make([]cue, 0, len(cues))
 
 	for _, c := range cues {

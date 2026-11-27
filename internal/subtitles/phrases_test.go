@@ -463,8 +463,8 @@ func TestHideHookRepeat(t *testing.T) {
 	}
 }
 
-// TestQuietUnderSections: under a heading that has just appeared no subtitle is shown for section.quiet, but at most
-// maxQuietLag after the next phrase starts; a subtitle running into the heading ends at it.
+// TestQuietUnderSections: under a heading that has just appeared no subtitle is shown for section.quiet: one that
+// starts in it is shown from its end (if enough of it is left), one running into the heading ends at it.
 func TestQuietUnderSections(t *testing.T) {
 	t.Parallel()
 
@@ -476,24 +476,24 @@ func TestQuietUnderSections(t *testing.T) {
 		expected []cue
 	}{
 		{
-			name:     "the question after a pause waits",
+			name:     "the question after the reading waits",
 			input:    []cue{{Start: 8, End: 10.5}, {Start: 10.6, End: 13.5}},
-			expected: []cue{{Start: 8, End: 10}, {Start: 11.6, End: 13.5}},
+			expected: []cue{{Start: 8, End: 10}, {Start: 12, End: 13.5}},
 		},
 		{
-			name:     "the next phrase at the heading",
-			input:    []cue{{Start: 9.9, End: 13}, {Start: 13, End: 15}},
-			expected: []cue{{Start: 10.9, End: 13}, {Start: 13, End: 15}},
+			name:     "the question on the heading (its reading cut out) waits too",
+			input:    []cue{{Start: 9.95, End: 13}, {Start: 13, End: 15}},
+			expected: []cue{{Start: 12, End: 13}, {Start: 13, End: 15}},
 		},
 		{
-			name:     "the quiet of two seconds",
-			input:    []cue{{Start: 11.5, End: 14}},
-			expected: []cue{{Start: 12, End: 14}},
+			name:     "after the quiet as it is",
+			input:    []cue{{Start: 12.5, End: 14}},
+			expected: []cue{{Start: 12.5, End: 14}},
 		},
 		{
 			name:     "too short after the quiet",
-			input:    []cue{{Start: 10.2, End: 11.4}, {Start: 12, End: 13}},
-			expected: []cue{{Start: 12, End: 13}},
+			input:    []cue{{Start: 10.2, End: 12.4}, {Start: 12.5, End: 13}},
+			expected: []cue{{Start: 12.5, End: 13}},
 		},
 		{name: "apart", input: []cue{{Start: 1, End: 3}}, expected: []cue{{Start: 1, End: 3}}},
 	}
@@ -504,6 +504,50 @@ func TestQuietUnderSections(t *testing.T) {
 
 			assert.Equal(t, tt.expected, quietUnderSections(tt.input, heading, trainerSectionQuiet))
 			assert.Equal(t, tt.input, quietUnderSections(tt.input, heading, 0), "no quiet")
+		})
+	}
+}
+
+// TestTrainerSectionQuiet: in the document the heading stands alone for two seconds from its start and stays to the
+// end of the question shown after that — when the reading «страх номер один» is said (hidden) and when the editor cut
+// it out of the sound and the heading starts on the first word of the question.
+func TestTrainerSectionQuiet(t *testing.T) {
+	t.Parallel()
+
+	const question = "А что если онлайн-тренировка менее эффективна для меня?"
+
+	tests := []struct {
+		name     string
+		input    *transcription.Result
+		at       string
+		expected []string
+	}{
+		{
+			name: "the reading said", input: speech(hookPhrase, fear1Phrase, question), at: "Страх",
+			// the reading 1.9..2.95, the question 3.45..6.25
+			expected: []string{"Dialogue: 0,0:00:03.90,0:00:06.30,Main,", "Dialogue: 2,0:00:01.90,0:00:06.35,Section,"},
+		},
+		{
+			name: "the reading cut out", input: speech(hookPhrase, question), at: "А",
+			// the question 1.9..4.7: shown from 3.9 s, the heading stays to its end
+			expected: []string{"Dialogue: 0,0:00:03.90,0:00:04.75,Main,", "Dialogue: 2,0:00:01.90,0:00:04.80,Section,"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			style := DefaultStyle()
+			notes := []Note{{Kind: SectionNote, Text: fear1, Start: wordStart(t, tt.input, tt.at)}}
+			ass, cues := buildDocument(&CreateSubtitlesData{Transcript: tt.input, Hook: trainerHook, Notes: notes}, &style)
+
+			assert.Equal(t, 1, cues, "only the question")
+			assert.NotContains(t, ass, "номер один")
+
+			for _, want := range tt.expected {
+				assert.Contains(t, ass, want)
+			}
 		})
 	}
 }

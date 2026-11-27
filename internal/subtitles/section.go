@@ -23,11 +23,9 @@ const (
 	// close to it too (hideReadings).
 	readingWindow = 0.3
 	// trainerSectionQuiet: the trainer's heading stands about two seconds without subtitles under it (T3.23);
-	// maxSectionQuiet is the limit of section.quiet in a style file. maxQuietLag: the quiet never keeps a subtitle
-	// more than this after its words start.
+	// maxSectionQuiet is the limit of section.quiet in a style file.
 	trainerSectionQuiet = 2.0
 	maxSectionQuiet     = 4.0
-	maxQuietLag         = 1.0
 )
 
 // SectionStyle is the look and the place of the section headings of a talking head («СТРАХ 1», «СТРАХ 2»): one line
@@ -45,8 +43,8 @@ type SectionStyle struct {
 	MaxDuration float64 `yaml:"max_duration"`
 	// Fade in and out, in milliseconds.
 	Fade int `yaml:"fade"`
-	// Quiet is how long no speech subtitle is shown under a heading that has just appeared, seconds (quietUnderSections:
-	// at most until maxQuietLag after the start of the next phrase); 0: none.
+	// Quiet is how long no speech subtitle is shown under a heading that has just appeared, seconds
+	// (quietUnderSections); the heading then stays at least until the end of the first phrase shown after it. 0: none.
 	Quiet float64 `yaml:"quiet"`
 }
 
@@ -211,13 +209,18 @@ func sectionBlocks(sections []Note, hookEnd, reelEnd float64, result *transcript
 }
 
 // sectionShown is how long a heading shown from start stays: its own length when it has an end, otherwise until the
-// end of the first phrase of its section (sectionPhraseEnd); within min_duration..max_duration.
+// end of the first phrase of its section (sectionPhraseEnd) — with section.quiet, the first phrase shown after the
+// quiet (one that ends minNoteShown after it); within min_duration..max_duration.
 func sectionShown(n Note, start float64, result *transcription.Result, c *SectionStyle) float64 {
 	shown := c.MinDuration
+	from := start
+	if c.Quiet > 0 {
+		from = start + c.Quiet + minNoteShown
+	}
 
 	if n.End > n.Start {
 		shown = n.End - n.Start
-	} else if end, ok := sectionPhraseEnd(result, n.Start, start, c); ok {
+	} else if end, ok := sectionPhraseEnd(result, n.Start, from, c); ok {
 		// The subtitle of the phrase stays hold after it: the heading goes with it.
 		shown = end + hold - start
 	}

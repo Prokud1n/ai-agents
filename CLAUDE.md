@@ -386,8 +386,9 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   разрез) → `cueLines`/`phraseLines` (штраф строке, кончающейся проклитикой, или следующей с энклитики; бонус —
   пунктуация) → `hideHookRepeat` (`hook.hide_repeat`: начало ≤ конец хука + 1 с, ≥ ½ слов хука и ≥ ½ своих, окончания
   — `sameWord`) → `timeCuesWith(phraseTiming)` (≥ `min_duration`, держится до следующего через `hold_gap`) →
-  `hideUnderHook` → `quietUnderSections` (`section.quiet` 2 с после появления раздела, не позже начала следующей
-  фразы + `maxQuietLag` 1 с; заходящий в раздел — до его начала). `renderASS`: `\fad(layout.fade_in,0)` только после
+  `hideUnderHook` → `quietUnderSections` (`section.quiet` 2 с от начала раздела, найдено чтение или нет — после T3.22 раздел
+  стоит на первом слове вопроса: начатый в окне — с его конца, остаток < 0,5 с — нет; заходящий в раздел — до его
+  начала; `sectionShown` держит раздел до конца первой фразы, кончающейся позже окна + 0,5 с). `renderASS`: `\fad(layout.fade_in,0)` только после
   зазора (`fadeIns`). Хук: `hook.fit_scale` 75 — `selectLines` берёт меньше строк с уменьшением, а не третью строку.
   `hideReadings`: `noteBlock.at` (раздел ждал хук — чтение ищется и там), `strongBreak` внутри чтения не обрывает его,
   ведущее «и/а/итак/ну/так» прячется вместе. Проверка — `TestSyntheticTalkPhrases` (≈50 с: < 3 слов ≤ 2, ≥ 1,5 с,

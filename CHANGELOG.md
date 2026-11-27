@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subtitles: «кто-то», «что-нибудь», «онлайн-тренировки», «онлайн-тренер», «из-за», «во-первых», «всё равно», «ещё», a
   capital in the middle of a sentence. A subtitle after a pause fades in over 0.2 s. The hook takes two lines made
   smaller rather than three, a phrase that repeats the hook right after it is not shown, a section heading stands
-  alone for 2 s (at most a second after the next phrase starts), and «и страх номер три» or «Страх. Номер три.» are
+  alone for 2 s from its start (also when the editor cut its reading out of the sound) and stays until the end of the
+  first phrase shown after that, and «и страх номер три» or «Страх. Номер три.» are
   hidden whole under «СТРАХ 3». New style fields: `layout.phrases`, `layout.orthography`, `layout.fade_in`,
   `hook.fit_scale`, `hook.hide_repeat`, `section.quiet` (off in `style-phrase.yaml` and `style-words.yaml`).
 - The trainer's own style is the default subtitle style (T3.20), measured on the reel she edited herself: the speech in

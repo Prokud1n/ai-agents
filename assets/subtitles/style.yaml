@@ -153,8 +153,9 @@ section:
   min_duration: 2.5
   max_duration: 6
   fade: 150
-  # For this many seconds after a heading appears no subtitle is shown under it (she lets it stand alone), but at most
-  # a second after the next phrase starts; 0: none.
+  # For this many seconds after a heading appears no subtitle is shown under it (she lets it stand alone; a phrase
+  # started then is shown from the end of the quiet), and the heading stays until the end of the first phrase shown
+  # after it; 0: none.
   quiet: 2
 
 # The top line over the whole reel, as the interface of a camera: REELS_TOPBAR_LEFT at the left edge («tg:
