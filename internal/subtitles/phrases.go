@@ -571,7 +571,7 @@ func linesScore(units []unit, cuts []int, maxChars int) (int, bool) {
 	return widest + adjust, true
 }
 
-// oneWord: the line is a single word («думаете,»): a comma after it earns no bonus, so it is not left alone on a line
+// oneWord: the line is a single word («считаете,»): a comma after it earns no bonus, so it is not left alone on a line
 // when the other lines take it (T3.31).
 func oneWord(line []unit) bool {
 	return len(line) == 1 && len(line[0].tokens) == 1
@@ -602,7 +602,7 @@ var (
 )
 
 // markLeaningSubjects marks a subject pronoun right after «и», «а» or «но» (token.leans) when the sentence goes on after
-// it: «пишите вопросы и я | отвечу каждому» — the pronoun is the start of the next clause, so neither a line nor
+// it: «приходите на зарядку и я | покажу разминку» — the pronoun is the start of the next clause, so neither a line nor
 // a subtitle ends on «и я» (T3.31); a pause after it breaks as after a preposition (a unit up to the pause, a phrase up
 // to hold_gap). tokens is not changed.
 func markLeaningSubjects(tokens []token) []token {

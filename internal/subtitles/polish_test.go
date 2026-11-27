@@ -11,21 +11,32 @@ import (
 
 // TestLeadLateWordAtJoint: the question under a heading at a joint is shown lead after the joint even when Whisper
 // starts its first word later than that (T3.31: 0.35 s after the voice before); the speech after a reading of the
-// heading, or a heading without a joint, keeps its own start.
+// heading (said later, or a hidden reading said between the joint and it), or a heading without a joint, keeps its own
+// start.
 func TestLeadLateWordAtJoint(t *testing.T) {
 	t.Parallel()
 
 	heading := []noteBlock{{start: 10.2, end: 14}}
+	reading := []token{tok("пункт", 10.05, 10.25), tok("два", 10.27, 10.38), tok("Многие", 10.42, 10.7)}
 
 	tests := []struct {
 		name     string
 		input    cue
 		joints   []float64
+		said     []token
 		expected float64
 	}{
 		{name: "the late first word at the joint", input: cue{Start: 10.4, End: 13}, joints: []float64{0, 10}, expected: 10.2},
 		{name: "the latest one pulled", input: cue{Start: 10.5, End: 13}, joints: []float64{10}, expected: 10.2},
 		{name: "the speech after a reading", input: cue{Start: 10.9, End: 13}, joints: []float64{10}, expected: 10.9},
+		{
+			name: "a hidden reading said before it", input: cue{Start: 10.42, End: 13}, joints: []float64{10},
+			said: reading, expected: 10.42,
+		},
+		{
+			name: "its own words only", input: cue{Start: 10.42, End: 13}, joints: []float64{10}, said: reading[2:],
+			expected: 10.2,
+		},
 		{name: "no joint", input: cue{Start: 10.45, End: 13}, expected: 10.45},
 		{name: "a joint too far before", input: cue{Start: 10.45, End: 13}, joints: []float64{9.5}, expected: 10.45},
 	}
@@ -34,7 +45,8 @@ func TestLeadLateWordAtJoint(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := leadUnderSections([]cue{tt.input}, heading, trainerSectionLead, tt.joints)
+			got := leadUnderSections([]cue{tt.input}, heading, trainerSectionLead,
+				sectionJoints{joints: tt.joints, said: tt.said})
 			require.Len(t, got, 1)
 			assert.InDelta(t, tt.expected, got[0].Start, 1e-9)
 			assert.InDelta(t, tt.input.End, got[0].End, 1e-9)
@@ -43,7 +55,7 @@ func TestLeadLateWordAtJoint(t *testing.T) {
 
 	// Only the first subtitle of the section: the next one keeps its start.
 	two := leadUnderSections([]cue{{Start: 10.4, End: 11}, {Start: 11.1, End: 12}}, heading, trainerSectionLead,
-		[]float64{10})
+		sectionJoints{joints: []float64{10}})
 	require.Len(t, two, 2)
 	assert.InDelta(t, 10.2, two[0].Start, 1e-9)
 	assert.InDelta(t, 11.1, two[1].Start, 1e-9)
@@ -91,6 +103,12 @@ func TestSentencesAtJoints(t *testing.T) {
 			joints:   []float64{0, 0.8},
 			expected: "смотрите ролик МФЦ",
 		},
+		{
+			name:     "a Latin word",
+			input:    []token{tok("смотрите", 0, 0.3), tok("ролик", 0.35, 0.7), tok("Telegram", 0.85, 1.3)},
+			joints:   []float64{0, 0.8},
+			expected: "смотрите ролик Telegram",
+		},
 	}
 
 	for _, tt := range tests {
@@ -116,23 +134,41 @@ func TestSentencesAtJoints(t *testing.T) {
 	}
 }
 
-// TestTrainerCapitalAfterJoint: in the trainer's subtitles of a cut the word Whisper capitalized after the removed take
-// is small and starts its own subtitle.
+// TestTrainerCapitalAfterJoint: in the trainer's subtitles of a cut the word Whisper capitalized after a removed take is
+// small and starts its own subtitle; after a pause pressed to a breath (a joint, but no words cut) and without a cut
+// the capital stays: it may be a name.
 func TestTrainerCapitalAfterJoint(t *testing.T) {
 	t.Parallel()
 
-	style := DefaultStyle()
 	result := talkHead([]talkSegment{{text: "Тогда посмотрите этот ролик Разбираю мифы о домашних тренировках."}})
 	at := wordStart(t, result, "Разбираю")
 
-	cues := speechCues(&CreateSubtitlesData{Transcript: result, joints: []float64{0, at}}, &style, nil, 0, 0)
-	text := cueTexts(cues)
+	tests := []struct {
+		name     string
+		input    CreateSubtitlesData
+		expected string
+	}{
+		{
+			name:     "words cut at the joint",
+			input:    CreateSubtitlesData{Transcript: result, SentenceJoints: []float64{at}, joints: []float64{0, at}},
+			expected: "тогда посмотрите этот ролик | разбираю мифы о домашних тренировках",
+		},
+		{
+			name:     "a pause at the joint",
+			input:    CreateSubtitlesData{Transcript: result, joints: []float64{0, at}},
+			expected: "Разбираю",
+		},
+		{name: "no cut", input: CreateSubtitlesData{Transcript: result}, expected: "Разбираю"},
+	}
 
-	assert.NotContains(t, text, "Разбираю")
-	assert.Contains(t, text, "тогда посмотрите этот ролик | разбираю мифы о домашних тренировках")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	plain := cueTexts(speechCues(&CreateSubtitlesData{Transcript: result}, &style, nil, 0, 0))
-	assert.Contains(t, plain, "Разбираю", "without a cut the capital stays: it may be a name")
+			style := DefaultStyle()
+			assert.Contains(t, cueTexts(speechCues(&tt.input, &style, nil, 0, 0)), tt.expected)
+		})
+	}
 }
 
 // TestMarkLeaningSubjects: a subject pronoun after «и», «а», «но» leans on the next word when the sentence goes on.
@@ -144,7 +180,7 @@ func TestMarkLeaningSubjects(t *testing.T) {
 		input    []token
 		expected []bool
 	}{
-		{name: "и я", input: seq("пишите", "и", "я", "отвечу"), expected: []bool{false, false, true, false}},
+		{name: "и я", input: seq("приходите", "и", "я", "покажу"), expected: []bool{false, false, true, false}},
 		{name: "а мы", input: seq("а", "мы", "начнём"), expected: []bool{false, true, false}},
 		{name: "но они", input: seq("но", "они", "придут"), expected: []bool{false, true, false}},
 		{name: "the end of the speech", input: seq("и", "я"), expected: []bool{false, false}},
@@ -187,8 +223,8 @@ func TestTrainerNotOnSubject(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "a breath after it", input: "Оставляйте вопросы в комментариях и я| буду разбирать каждый из них подробно."},
-		{name: "a line", input: "Пишите свои вопросы в комментарии и я отвечу на каждый."},
+		{name: "a breath after it", input: "Записывайтесь на марафон до пятницы и я| соберу для вас личную программу питания."},
+		{name: "a line", input: "Приходите на утреннюю зарядку и я покажу новую разминку."},
 		{name: "а мы", input: "Многие сдаются через неделю а мы| продолжаем тренироваться каждый день."},
 	}
 
@@ -226,12 +262,13 @@ func TestAsideCommas(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{name: "если честно at the end", input: "Мне все равно если честно.", expected: "Мне всё равно, если честно."},
+		{name: "если честно at the end", input: "Мне это неважно если честно.", expected: "Мне это неважно, если честно."},
 		{name: "честно говоря at the end", input: "Это было сложно честно говоря.", expected: "Это было сложно, честно говоря."},
 		{name: "честно говоря at the start", input: "Честно говоря я устала.", expected: "Честно говоря, я устала."},
 		{name: "кстати at the start", input: "Кстати это важно.", expected: "Кстати, это важно."},
-		{name: "a comma after it", input: "Это кстати, важно.", expected: "Это, кстати, важно."},
-		{name: "a comma there", input: "Мне все равно, если честно.", expected: "Мне всё равно, если честно."},
+		{name: "a comma after it", input: "Мне это неважно если честно, правда.", expected: "Мне это неважно, если честно, правда."},
+		{name: "a comma there", input: "Нам это понятно, честно говоря.", expected: "Нам это понятно, честно говоря."},
+		{name: "кстати with a comma after it stays", input: "Это было очень кстати, спасибо.", expected: "Это было очень кстати, спасибо."},
 		{name: "a conditional stays", input: "Если честно ответите, получите приз.", expected: "Если честно ответите, получите приз."},
 		{name: "the adverb stays", input: "Это было очень кстати.", expected: "Это было очень кстати."},
 		{name: "the middle stays", input: "Это кстати важно.", expected: "Это кстати важно."},
@@ -254,7 +291,7 @@ func TestPhraseLinesNotOneWord(t *testing.T) {
 	t.Parallel()
 
 	input := []token{
-		withBreak(tok("думаете,", 0, 0.4), softBreak), tok("онлайн-тренировки", 0.5, 1.2), tok("не", 1.25, 1.3),
+		withBreak(tok("считаете,", 0, 0.4), softBreak), tok("кардиотренировки", 0.5, 1.2), tok("не", 1.25, 1.3),
 		tok("для", 1.35, 1.5), withBreak(tok("вас?", 1.55, 1.8), strongBreak),
 	}
 
@@ -265,5 +302,5 @@ func TestPhraseLinesNotOneWord(t *testing.T) {
 		got = append(got, strings.Join(texts(line), " "))
 	}
 
-	assert.Equal(t, []string{"думаете, онлайн-тренировки", "не для вас?"}, got)
+	assert.Equal(t, []string{"считаете, кардиотренировки", "не для вас?"}, got)
 }

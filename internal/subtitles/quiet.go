@@ -3,6 +3,7 @@ package subtitles
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -21,7 +22,8 @@ const (
 	jointWindow = readingWindow
 	// lateWordReach: the first word of the question under such a heading starts by Whisper at most this long after the
 	// joint (Whisper starts it up to 0.35 s after the voice, the cut puts the voice 0.04..0.12 s after the joint); a
-	// subtitle that starts later is the speech after a reading of the heading, not the question at the joint.
+	// subtitle that starts later is the speech after a reading of the heading, not the question at the joint. A breath
+	// kept at the joint may put the voice later: the question then leads it by up to about 0.15 s.
 	lateWordReach = 0.5
 )
 
@@ -142,20 +144,43 @@ func cueString(c cue) string {
 // before the heading, lead counts from the joint (but not before the heading), and the question whose first word
 // Whisper starts later still (up to lateWordReach after the joint, T3.31) is shown from there too — the voice starts
 // at the joint, so the question shows at most max(lead, jointWindow) after it. cues is not changed.
-func leadUnderSections(cues []cue, headings []noteBlock, lead float64, joints []float64) []cue {
+func leadUnderSections(cues []cue, headings []noteBlock, lead float64, at sectionJoints) []cue {
 	out := cues
 
 	for _, h := range headings {
 		from, pullUntil := h.start, math.Inf(-1)
 
-		if j, ok := jointBefore(joints, h.start); ok {
+		if j, ok := jointBefore(at.joints, h.start); ok {
 			from, pullUntil = j, j+lateWordReach
 		}
 
-		out = leadAfter(out, h.start, max(from+lead, h.start), pullUntil)
+		out = leadAfter(out, h.start, max(from+lead, h.start), pull{from: from, until: pullUntil, said: at.said})
 	}
 
 	return out
+}
+
+// sectionJoints are what leadUnderSections times the questions by: the starts of the fragments of the cut (cutJoints)
+// and the words said, the readings of the headings hidden in the subtitles included (nil: unknown, none).
+type sectionJoints struct {
+	joints []float64
+	said   []token
+}
+
+// pull: the first subtitle of a section that starts after the time it is shown from, but not after until, is shown
+// from that time — unless a word is said between from (the joint) and its start: a hidden reading of the heading.
+type pull struct {
+	from, until float64
+	said        []token
+}
+
+// pulls: the subtitle that starts at start is pulled.
+func (p pull) pulls(start float64) bool {
+	if start > p.until {
+		return false
+	}
+
+	return !slices.ContainsFunc(p.said, func(t token) bool { return t.Start >= p.from && t.End <= start })
 }
 
 // jointBefore is the last joint up to jointWindow before the time (or at it); false when there is none.
@@ -189,9 +214,9 @@ func cutJoints(cut *ffmpeg.Cut) []float64 {
 }
 
 // leadAfter is leadUnderSections for the heading that starts at start: its question is shown from shownFrom at the
-// earliest; the first subtitle of the section that starts after shownFrom but not after pullUntil (the late start
-// Whisper gave the word at a joint) is shown from shownFrom.
-func leadAfter(cues []cue, start, shownFrom, pullUntil float64) []cue {
+// earliest; the first subtitle of the section that starts after shownFrom and is pulled (p: the late start Whisper
+// gave the word at a joint) is shown from shownFrom.
+func leadAfter(cues []cue, start, shownFrom float64, p pull) []cue {
 	out := make([]cue, 0, len(cues))
 	first := true // the next subtitle of the section is its first one
 
@@ -209,7 +234,7 @@ func leadAfter(cues []cue, start, shownFrom, pullUntil float64) []cue {
 			continue
 		}
 
-		if first && c.Start > shownFrom && c.Start <= pullUntil {
+		if first && c.Start > shownFrom && p.pulls(c.Start) {
 			c.Start = shownFrom
 		}
 

@@ -314,10 +314,11 @@ func lowerSentenceStarts(tokens []token) []token {
 }
 
 // sentencesAtJoints ends a sentence before a word with one capital that starts a fragment of the cut right after a word
-// of another one without punctuation (T3.31): Whisper capitalized it as the start of a sentence but put no mark before
-// it, and the editor cut what was said between them («…этот ролик | Разбираю…»); after a preposition or a
-// conjunction it is a name and stays in the sentence («в | Москве»). joints are the starts of the fragments of the
-// cut (cutJoints); tokens is not changed.
+// of another one without punctuation, where words were cut out between them (T3.31): Whisper capitalized it as the
+// start of a sentence but put no mark before it, and the editor cut what was said between them («…этот ролик |
+// Разбираю…»). Not at a pause pressed to a breath (joints are only the joints of cut words,
+// CreateSubtitlesData.SentenceJoints), not after a preposition or a conjunction («в | Москве») and not a word with
+// Latin letters (Instagram, YouTube): those are names. tokens is not changed.
 func sentencesAtJoints(tokens []token, joints []float64) []token {
 	if len(joints) == 0 {
 		return tokens
@@ -327,7 +328,8 @@ func sentencesAtJoints(tokens []token, joints []float64) []token {
 
 	for i := 1; i < len(out); i++ {
 		prev, t := out[i-1], out[i]
-		if prev.Break != noBreak || isProclitic(prev.Norm) || capitals(t.Text) != 1 || !startsWithCapital(t.Text) {
+		if prev.Break != noBreak || isProclitic(prev.Norm) || capitals(t.Text) != 1 || !startsWithCapital(t.Text) ||
+			hasLatin(t.Text) {
 			continue
 		}
 
@@ -337,6 +339,11 @@ func sentencesAtJoints(tokens []token, joints []float64) []token {
 	}
 
 	return out
+}
+
+// hasLatin: the text has a Latin letter.
+func hasLatin(text string) bool {
+	return strings.ContainsFunc(text, func(r rune) bool { return unicode.Is(unicode.Latin, r) })
 }
 
 // startsWithCapital: the first letter of the text is a capital.
