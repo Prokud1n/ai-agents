@@ -143,7 +143,8 @@ func (r *Runner) lumaPlane(ctx context.Context, in string, at float64, toneMap b
 		filter = size + "," + toneMapFilter
 	}
 
-	args := append(commonArgs(), "-noaccurate_seek", "-skip_frame", "nokey", seekFlag, formatPrecise(at))
+	// -copyts: without it the key frame before the moment gets a negative timestamp and is dropped.
+	args := append(commonArgs(), "-copyts", "-noaccurate_seek", "-skip_frame", "nokey", seekFlag, formatPrecise(at))
 	args = append(args, inputArgs(in)...)
 	args = append(args, "-frames:v", "1", "-an", "-vf", filter, formatFlag, "rawvideo", "-")
 

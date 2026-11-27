@@ -13,6 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The flags and the codec of the generated sources.
+const (
+	pixFmtFlag    = "-pix_fmt"
+	losslessCodec = "ffv1" // keeps 10 bits and the HLG tags in Matroska
+)
+
 // renderBenchEnv turns the render speed measurement on (as in internal/subtitles).
 const renderBenchEnv = "RENDER_BENCH"
 
@@ -137,7 +143,7 @@ func TestRunnerGrade(t *testing.T) {
 	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
 		lavfiInput("color=c="+gradeSourceColor+":size=540x960:rate=30:duration=4"),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=4"),
-		[]string{videoCodecFlag, videoCodec, "-pix_fmt", videoPixFmt, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
+		[]string{videoCodecFlag, videoCodec, pixFmtFlag, videoPixFmt, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 	require.NoError(t, err)
 
 	source, err := r.MeanLuma(ctx, src, []float64{1, 3}, false)
@@ -179,8 +185,8 @@ func TestRunnerGradeHDR(t *testing.T) {
 		lavfiInput("testsrc2=size=540x960:rate=30:duration=4"),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=4"),
 		[]string{
-			"-vf", "setparams=color_primaries=bt2020:color_trc=" + hlgTransfer + ":colorspace=bt2020nc",
-			videoCodecFlag, "ffv1", "-pix_fmt", "yuv420p10le", "-color_primaries", "bt2020", "-color_trc", hlgTransfer,
+			videoFilterFlag, "setparams=color_primaries=bt2020:color_trc=" + hlgTransfer + ":colorspace=bt2020nc",
+			videoCodecFlag, losslessCodec, pixFmtFlag, "yuv420p10le", "-color_primaries", "bt2020", "-color_trc", hlgTransfer,
 			"-colorspace", "bt2020nc", audioCodecFlag, renderACodec, shortestFlag, src,
 		}), nil)
 	require.NoError(t, err)
@@ -301,7 +307,7 @@ func TestRenderSpeedGrade(t *testing.T) {
 		lavfiInput("testsrc2=size=2160x3840:rate=30:duration="+strconv.Itoa(duration)+",noise=alls=8:allf=t"),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration="+strconv.Itoa(duration)),
 		[]string{
-			videoCodecFlag, videoCodec, "-preset", "ultrafast", "-crf", "23", "-g", "30", "-pix_fmt", videoPixFmt,
+			videoCodecFlag, videoCodec, "-preset", "ultrafast", "-crf", "23", "-g", "30", pixFmtFlag, videoPixFmt,
 			audioCodecFlag, renderACodec, shortestFlag, src,
 		}), nil)
 	require.NoError(t, err)
