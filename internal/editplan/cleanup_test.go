@@ -228,20 +228,20 @@ func TestApplyCleanupKeepsTheSpeech(t *testing.T) {
 	assert.Contains(t, check.Message, "а должно остаться хотя бы")
 }
 
-// takesSpeech is a short video (about 19 s) of a long preparation, a failed take of the intro, the take said again and
+// takesSpeech is a short video (about 18 s) of a long preparation, a failed take of the intro, the take said again and
 // a short point:
 //
-//	0–3 раз два три начинаем | 4–8 так стоп заново камера пишет | 9–15 это последний дубль я точно справлюсь |
-//	16–23 сегодня развеиваю главные мифы про утренний бег натощак |
-//	24–31 развеиваю мифы про утренний бег на голодный желудок | 32–37 бег натощак не сжигает больше жира
+//	0–3 раз два три начинаем | 4–8 так стоп заново камера пишет | 9–14 это последний дубль я точно справлюсь |
+//	15–22 сегодня развеиваю главные мифы про утренний бег натощак |
+//	23–30 развеиваю мифы про утренний бег на голодный желудок | 31–36 бег натощак не сжигает больше жира
 const takesSpeech = "раз два три начинаем. | так стоп заново камера пишет. | это последний дубль я точно справлюсь. | " +
 	"сегодня развеиваю главные мифы про утренний бег натощак. | " +
 	"развеиваю мифы про утренний бег на голодный желудок. | бег натощак не сжигает больше жира."
 
 var (
-	takesPrep    = roughcut.WordRange{From: 0, To: 15}
-	takesFailed  = roughcut.WordRange{From: 16, To: 23}
-	takesContent = roughcut.WordRange{From: 32, To: 37}
+	takesPrep    = roughcut.WordRange{From: 0, To: 14}
+	takesFailed  = roughcut.WordRange{From: 15, To: 22}
+	takesContent = roughcut.WordRange{From: 31, To: 36}
 )
 
 // TestApplyCleanupFloorWithoutTakes (T3.26): the failed takes the cleaning cuts do not count against cleanupFloor — a
@@ -254,7 +254,7 @@ func TestApplyCleanupFloorWithoutTakes(t *testing.T) {
 
 	plan, err := roughcut.BuildPlanEdited(src, src.Duration, testSettings(), &roughcut.Edit{})
 	require.NoError(t, err)
-	require.InDelta(t, 19, plan.Duration, 2, "a video of about 19 s")
+	require.InDelta(t, 18, plan.Duration, 2, "a video of about 18 s")
 
 	req := &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan, Cleanup: true}
 	require.Contains(t, Prompt(req), "Похожие фразы", "the intro said again is hinted")
