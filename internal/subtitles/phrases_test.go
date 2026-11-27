@@ -536,6 +536,13 @@ func TestFixOrthography(t *testing.T) {
 		{name: "а если, что gets ?", input: "А если болит колено, что делать.", expected: "А если болит колено, что делать?"},
 		{name: "а почему gets ?", input: "А почему это важно.", expected: "А почему это важно?"},
 		{name: "ну и зачем gets ?", input: "Ну и зачем это.", expected: "Ну и зачем это?"},
+		{name: "так что если stays", input: "Так что если не получится, не страшно.", expected: "Так что если не получится, не страшно."},
+		{name: "так что если without a comma stays", input: "Так что если что, пишите.", expected: "Так что если что, пишите."},
+		{name: "так почему gets ?", input: "Так почему это работает.", expected: "Так почему это работает?"},
+		{name: "а что если, ничего stays", input: "А что если не получится, ничего страшного.", expected: "А что если не получится, ничего страшного."},
+		{name: "а вдруг, кто знает stays", input: "А вдруг получится, кто знает.", expected: "А вдруг получится, кто знает."},
+		{name: "а что если, чем gets ?", input: "А что если дома хуже, чем в зале.", expected: "А что если дома хуже, чем в зале?"},
+		{name: "сколько раз в жизни stays", input: "Сколько раз в жизни я это слышала.", expected: "Сколько раз в жизни я это слышала."},
 		{name: "ЕЩЁ in capitals", input: "ЕЩЕ РАЗ.", expected: "ЕЩЁ РАЗ."},
 		{name: "четвёртое", input: "Четвертое правило.", expected: "Четвёртое правило."},
 		{name: "четверть stays", input: "Четверть часа.", expected: "Четверть часа."},
@@ -627,16 +634,38 @@ func TestTextOrthography(t *testing.T) {
 }
 
 // TestSectionQuestion: the first sentence of a section that starts with «а если» gets «?» even with a comma (the
-// heading asks it); the same sentence elsewhere does not.
+// heading asks it), unless its last clause answers the condition («…, делайте мягче»); the same sentence elsewhere does
+// not.
 func TestSectionQuestion(t *testing.T) {
 	t.Parallel()
 
-	tokens := fixOrthography(tokensFromTranscript(speech("Мы начинаем.", "А если болит колено, делайте мягче.")))
-	heading := []noteBlock{{start: tokens[2].Start, end: 10}}
+	tests := []struct {
+		name     string
+		question string
+		heading  bool
+		expected string
+	}{
+		{name: "a question with a comma", question: "А если нет времени, хотя бы на зарядку.", heading: true, expected: "зарядку?"},
+		{name: "not under a heading", question: "А если нет времени, хотя бы на зарядку.", expected: "зарядку."},
+		{name: "an advice", question: "А если болит колено, делайте мягче.", heading: true, expected: "мягче."},
+		{name: "a conclusion with «то»", question: "А если устали, то отдохните.", heading: true, expected: "отдохните."},
+		{name: "not afraid", question: "А если не вышло, не страшно.", heading: true, expected: "страшно."},
+	}
 
-	assert.Equal(t, "мягче?", sectionQuestions(tokens, heading)[len(tokens)-1].Text)
-	assert.Equal(t, "мягче.", sectionQuestions(tokens, nil)[len(tokens)-1].Text)
-	assert.Equal(t, "мягче.", sectionQuestions(tokens, []noteBlock{{start: tokens[0].Start, end: 10}})[len(tokens)-1].Text)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tokens := fixOrthography(tokensFromTranscript(speech("Мы начинаем.", tt.question)))
+
+			headings := []noteBlock{{start: tokens[0].Start, end: 10}} // the heading on another sentence
+			if tt.heading {
+				headings = []noteBlock{{start: tokens[2].Start, end: 10}}
+			}
+
+			assert.Equal(t, tt.expected, sectionQuestions(tokens, headings)[len(tokens)-1].Text)
+		})
+	}
 }
 
 // TestFixOrthographyCapitals: a function word with a capital in the middle of a sentence starts one (and gets a small

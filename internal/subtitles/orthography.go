@@ -58,8 +58,11 @@ var (
 	yoStemNext = map[string]string{stemFourth: "ыаоу"}
 )
 
-// stemFourth is the stem of «четвёртый».
-const stemFourth = "четверт"
+// stemFourth is the stem of «четвёртый»; imperativeMinRunes: a shorter word is not taken for an imperative («сыте»).
+const (
+	stemFourth         = "четверт"
+	imperativeMinRunes = 4
+)
 
 // respellings are words Whisper writes in a spelling of before: «оффлайн» is «офлайн».
 var respellings = map[string]string{"оффлайн": "офлайн"}
@@ -331,6 +334,7 @@ const (
 	wordWhat = "что"
 	wordIf   = "если"
 	wordLi   = "ли"
+	wordSo   = "так"
 	// wordTimes and wordIn: «сколько раз в неделю» asks.
 	wordTimes = "раз"
 	wordIn    = "в"
@@ -355,6 +359,13 @@ var (
 	// слышала».
 	howMuch = wordSet("нужно", "надо", "стоит", "можно", "времени", "длится", "занимает", "займет", "весит", "лет",
 		"дней", "минут", "подходов", "повторений", "калорий")
+	// periods: «сколько раз в неделю» asks, «сколько раз в жизни» does not.
+	periods = wordSet("день", "неделю", "месяц", "год", "сутки", "час", "минуту", "тренировку")
+	// answerStarts and answerPairs start a main clause that answers a condition; imperativeEndings end a plural
+	// imperative.
+	answerStarts      = wordSet("то", "ничего")
+	answerPairs       = map[string]string{"не": "страшно", "все": "равно"}
+	imperativeEndings = []string{"йте", "ите", "ьте"}
 	// clauseQuestions start a clause that asks after a comma: «…, что делать».
 	clauseQuestions = wordSet("что", "как", "где", "куда", "когда", "кто", "какой", "какая", "какое", "какие", "чем",
 		"почему", "зачем", "сколько", "откуда")
@@ -396,7 +407,7 @@ func asksQuestion(sentence []token) bool {
 	norms := questionNorms(sentence)
 
 	if opener, ok := startsWithOpener(norms); ok {
-		return len(norms) == opener || !conditionalAside[norms[opener]]
+		return !conditionalAside[norms[opener]] && clauseAsks(sentence)
 	}
 
 	core := norms
@@ -412,14 +423,16 @@ func asksQuestion(sentence []token) bool {
 	return clauseAsks(sentence)
 }
 
-// questionNorms are the normalized words of the sentence without its leading «ну», «и», «так».
+// questionNorms are the normalized words of the sentence without its leading «ну», «и» and «так» before a question
+// word.
 func questionNorms(sentence []token) []string {
 	norms := make([]string, 0, len(sentence))
 	for _, t := range sentence {
 		norms = append(norms, t.Norm)
 	}
 
-	for len(norms) > 1 && questionLeads[norms[0]] {
+	// «так» leads only a question word in («так почему…»), not «так что если…» (a conclusion).
+	for len(norms) > 1 && questionLeads[norms[0]] && (norms[0] != wordSo || questionWords[norms[1]]) {
 		norms = norms[1:]
 	}
 
@@ -447,7 +460,7 @@ func asksByWord(withAnd bool, core []string) bool {
 	case core[0] == "разве":
 		return core[1] != wordWhat
 	case core[0] == "сколько":
-		return howMuch[core[1]] || (core[1] == wordTimes && len(core) > 2 && core[2] == wordIn)
+		return howMuch[core[1]] || (core[1] == wordTimes && len(core) > 3 && core[2] == wordIn && periods[core[3]])
 	case questionWords[core[0]]:
 		return true
 	default:
@@ -455,8 +468,19 @@ func asksByWord(withAnd bool, core []string) bool {
 	}
 }
 
-// clauseAsks: the sentence has no comma, or the clause after its last comma starts with a question word.
+// clauseAsks: the sentence has no comma, or the clause after its last comma starts with a question word (not «кто
+// знает»).
 func clauseAsks(sentence []token) bool {
+	tail := lastClause(sentence)
+	if tail == nil {
+		return true
+	}
+
+	return clauseQuestions[tail[0].Norm] && (len(tail) < 2 || tail[0].Norm != "кто" || tail[1].Norm != "знает")
+}
+
+// lastClause is the words after the last comma of the sentence; nil without a comma.
+func lastClause(sentence []token) []token {
 	last := -1
 
 	for i, t := range sentence[:len(sentence)-1] {
@@ -465,11 +489,40 @@ func clauseAsks(sentence []token) bool {
 		}
 	}
 
-	return last < 0 || clauseQuestions[sentence[last+1].Norm]
+	if last < 0 {
+		return nil
+	}
+
+	return sentence[last+1:]
+}
+
+// answers: the clause after the last comma is the main clause that answers the condition: «…, то…», «…, делайте
+// мягче», «…, ничего страшного», «…, не страшно», «…, всё равно…».
+func answers(sentence []token) bool {
+	tail := lastClause(sentence)
+	if tail == nil {
+		return false
+	}
+
+	first, second := tail[0].Norm, ""
+	if len(tail) > 1 {
+		second = tail[1].Norm
+	}
+
+	pair, ok := answerPairs[first]
+
+	return answerStarts[first] || isImperative(first) || (ok && pair == second)
+}
+
+// isImperative: the word looks like a plural imperative («делайте», «смотрите», «поставьте»).
+func isImperative(norm string) bool {
+	return utf8.RuneCountInString(norm) > imperativeMinRunes &&
+		slices.ContainsFunc(imperativeEndings, func(e string) bool { return strings.HasSuffix(norm, e) })
 }
 
 // sectionQuestions puts «?» at the end of the first sentence of a section that starts with «а если», «а что если»
-// or «что если», commas or not: a section heading always asks it. tokens is not changed.
+// or «что если», commas or not (a section heading always asks it), unless its last clause answers the condition
+// («а если болит колено, делайте мягче»). tokens is not changed.
 func sectionQuestions(tokens []token, headings []noteBlock) []token {
 	out := slices.Clone(tokens)
 
@@ -484,8 +537,8 @@ func sectionQuestions(tokens []token, headings []noteBlock) []token {
 			to++
 		}
 
-		mark := sentenceMark(out[to].Text)
-		if (mark == "" || mark == ".") && conditionalQuestion(questionNorms(out[from:to+1])) {
+		mark, sentence := sentenceMark(out[to].Text), out[from:to+1]
+		if (mark == "" || mark == ".") && conditionalQuestion(questionNorms(sentence)) && !answers(sentence) {
 			markQuestion(&out[to])
 		}
 	}

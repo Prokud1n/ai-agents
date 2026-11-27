@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on with a small letter. Orthography: «онлайн-тренировка» also across a pause or such a segment end (a slow question
   under a heading), «тренажёр» and «четвёртый» in all their forms, «офлайн» for «оффлайн», «?» after a clear question
   («а что если…», «а вдруг…», «а если…», «почему…», «можно ли…»; not «вряд ли», «то ли», «разве что», «сколько себя
-  помню, …», a question word with a comma unless the last clause asks), always after the first sentence of a section
-  with «а если»; the hook, the screen notes, the headings and the exercise titles get the hyphens, «ё» and spellings
+  помню, …», «так что если…», a comma unless the last clause asks), after the first sentence of a section with «а
+  если» also with a comma unless the last clause answers («…, делайте мягче»); the hook, the screen notes, the headings and the exercise titles get the hyphens, «ё» and spellings
   too (a word in capitals stays in capitals). The question under a section heading appears 0.2 s after the joint of
   the cut it starts at (the heading stands on the late start of the recognized word), not before the heading, at most
   0.3 s after the voice (`section.lead` was 0.35 s after the heading). The trainer's hook takes two lines made smaller
