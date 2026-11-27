@@ -89,8 +89,19 @@ type MediaWorker struct {
 	Loudness string `env:"MEDIA_WORKER_LOUDNESS" envDefault:"-14"`
 	// Denoise lightly reduces the noise of speech (the rumble and the stationary hiss) in a talking-head draft.
 	Denoise bool `env:"MEDIA_WORKER_DENOISE" envDefault:"true"`
-	// Zoom of the jump-cut zoom of a talking head, percent (the framing alternates at the joints); 0 turns it off.
-	Zoom float64 `env:"MEDIA_WORKER_ZOOM" envDefault:"9"`
+	// Zoom of the jump-cut zoom of a talking head, percent: the framing alternates between the frame and this much
+	// closer at every second joint and at the start of each section (T3.25: 30 %, as the trainer's own reels); 0 turns
+	// it off.
+	Zoom float64 `env:"MEDIA_WORKER_ZOOM" envDefault:"30"`
+	// Grade colours a talking-head draft as the trainer's own reels: darker (GradeExposure), slightly warmer, the top
+	// of the frame under the subtitles in a soft shadow (GradeTop). A source that is already dark is darkened less or
+	// not at all (its brightness is measured on a few key frames).
+	Grade bool `env:"MEDIA_WORKER_GRADE" envDefault:"true"`
+	// GradeExposure of the midtones, EV within -0.5..0: a curve of the encoded luma takes the middle grey down by it
+	// (-0.3: × 0.81), the shadows a little more, and keeps the black and the white.
+	GradeExposure float64 `env:"MEDIA_WORKER_GRADE_EXPOSURE" envDefault:"-0.3"`
+	// GradeTop, percent within 0..60: how much darker the top edge of the frame is; the shadow fades by the middle.
+	GradeTop float64 `env:"MEDIA_WORKER_GRADE_TOP" envDefault:"30"`
 	// HeartbeatFile is touched while the worker is healthy (it reaches Redis); the container healthcheck
 	// (media-worker healthcheck) reads its age. Empty: <WorkDir>/.heartbeat.
 	HeartbeatFile string `env:"MEDIA_WORKER_HEARTBEAT_FILE"`

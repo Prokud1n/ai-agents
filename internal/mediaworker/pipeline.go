@@ -133,8 +133,10 @@ type PipelineParams struct {
 	Transcriber transcriber
 	Cutter      cutter
 	Burner      burner
-	Config      *config.MediaWorker
-	Log         *slog.Logger
+	// Meter measures the brightness of the source for the grade; nil: the grade as configured.
+	Meter  lumaMeter
+	Config *config.MediaWorker
+	Log    *slog.Logger
 }
 
 // Pipeline edits one source video into a reel; see the package description.
@@ -145,13 +147,14 @@ type Pipeline struct {
 	transcriber transcriber
 	cutter      cutter
 	burner      burner
+	meter       lumaMeter
 	workDir     string
 	maxDuration float64
 	maxSize     int64
 	fit         ffmpeg.FitMode
 	// minSpeechShare: see config.MediaWorker.MinSpeechShare.
 	minSpeechShare float64
-	// sound and zoom of the drafts (MEDIA_WORKER_LOUDNESS, _DENOISE, _ZOOM).
+	// sound, zoom and colour of the drafts (MEDIA_WORKER_LOUDNESS, _DENOISE, _ZOOM, _GRADE*).
 	sound soundSettings
 	log   *slog.Logger
 	now   func() time.Time
@@ -182,7 +185,7 @@ func NewPipeline(p *PipelineParams) (*Pipeline, error) {
 
 	return &Pipeline{
 		store: p.Store, prober: p.Prober, keys: p.Keys, transcriber: p.Transcriber, cutter: p.Cutter, burner: p.Burner,
-		workDir: cfg.WorkDir, maxDuration: cfg.MaxSourceDuration.Seconds(), maxSize: cfg.MaxSourceSize, fit: fit,
+		meter: p.Meter, workDir: cfg.WorkDir, maxDuration: cfg.MaxSourceDuration.Seconds(), maxSize: cfg.MaxSourceSize, fit: fit,
 		minSpeechShare: cfg.MinSpeechShare, sound: sound, log: p.Log, now: time.Now,
 	}, nil
 }
@@ -501,7 +504,12 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		speech = &transcription.Result{Language: w.cut.Transcript.Language, Duration: w.cut.Transcript.Duration}
 	}
 
-	cut := p.sound.cut(w.cut, w.transcript.Loudness)
+	luma, err := p.sourceLuma(ctx, w)
+	if err != nil {
+		return err
+	}
+
+	cut := p.sound.cut(w.cut, w.transcript.Loudness, luma)
 
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{
 		CreateSubtitlesData: subtitles.CreateSubtitlesData{
@@ -523,7 +531,7 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 			"by the measurement of the source", "job_id", w.job.ID, "error", burn.Sound.FitError)
 	}
 
-	notes := p.sound.notes(cut, w.transcript.Loudness, w.cut.Plan.Mode, burn.Sound)
+	notes := p.sound.notes(cut, w.transcript.Loudness, luma, w.cut.Plan.Mode, burn.Sound)
 	p.log.InfoContext(ctx, "mediaworker: sound and framing", "job_id", w.job.ID, "notes", notes)
 
 	if err := appendDecisions(w.cut.Files.Log, notes); err != nil {

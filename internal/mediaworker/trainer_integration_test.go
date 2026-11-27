@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/editor"
 	"github.com/Prokud1n/ai-agents/internal/editplan"
 	"github.com/Prokud1n/ai-agents/internal/media"
+	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
 	"github.com/Prokud1n/ai-agents/internal/redistest"
 	"github.com/Prokud1n/ai-agents/internal/roughcut"
 	"github.com/Prokud1n/ai-agents/internal/s3test"
@@ -250,11 +252,98 @@ func TestIntegrationTrainerStyle(t *testing.T) {
 	assert.Contains(t, v2.Text, "Убрал пункты и цифры с экрана.")
 	assert.InDelta(t, duration, e.reelDuration(t, v2.MediaKey), 0.05, "the cut is the same")
 
-	withSections, plain := e.read(t, v1.MediaKey), e.read(t, v2.MediaKey)
-	shown, gone := sections[0].Start+sectionShownFor, sections[0].Start+sectionGoneAfter
+	// The zoom moves closer at the start of each section (T3.25): the sections of the real rough cut reach Zoom.Must,
+	// the log of v1 says so. The selection here is one fragment (the first 20 phrases with their short pauses), so the
+	// reel has no joint to change the framing at; the rule of the joints is checked by ffmpeg.TestZoomedSegments.
+	log1 := string(e.read(t, files1.Decisions))
+	assert.Contains(t, log1, "разделов: 3", "the sections of the real rough cut reach the zoom")
+	assert.Regexp(t, `масштаб меняется на \d+ из \d+ стыков`, log1)
 
+	files2, err := editjob.Files(e.files, e.source, 2)
+	require.NoError(t, err)
+
+	var plan2 roughcut.Plan
+	require.NoError(t, json.Unmarshal(e.read(t, files2.Plan), &plan2))
+
+	// Without the headings the revision is zoomed at other joints: the reels are compared where both have the same
+	// framing, so they differ by the heading only.
+	withZoom, plainZoom := trainerZoom(&plan, sections), trainerZoom(&plan2, nil)
+	start := sections[0].Start
+	// The heading stays at least 2.5 s; if the framings differ all that time (v1 moves closer on the section), the
+	// heading is compared as before: the difference only grows with the zoom.
+	shown := sameFraming(withZoom, plainZoom, start+sectionShownFor/2, start+sectionShownFor*2.4)
+	if math.IsNaN(shown) {
+		shown = start + sectionShownFor
+	}
+
+	gone := sameFraming(withZoom, plainZoom, start+sectionGoneAfter, start+sectionGoneAfter*2)
+	t.Logf("trainer style: section at %.2f s, compared at %.2f s (shown) and %.2f s (gone)", start, shown, gone)
+
+	withSections, plain := e.read(t, v1.MediaKey), e.read(t, v2.MediaKey)
+
+	require.False(t, math.IsNaN(gone), "a moment after the heading with the same framing in both reels")
 	assert.Greater(t, meanDiff(reelFrame(t, withSections, shown), reelFrame(t, plain, shown), sectionBandFrom,
 		sectionBandTo), hookDiff, "the heading is drawn in the reel with it only")
 	assert.Less(t, meanDiff(reelFrame(t, withSections, gone), reelFrame(t, plain, gone), sectionBandFrom,
 		sectionBandTo), sameDiff, "after the heading the reels are the same")
+}
+
+// zoomJointMargin: a compared frame is this far from a joint of the reel, seconds (the lengths here are not on frames).
+const zoomJointMargin = 0.2
+
+// reelZoom is the framing of a reel: its segments (seconds of the reel) and which of them are closer.
+type reelZoom struct {
+	ends   []float64
+	zoomed []bool
+}
+
+// trainerZoom is the framing the worker gives the plan with its defaults (MEDIA_WORKER_ZOOM, the sections of the edit).
+func trainerZoom(plan *roughcut.Plan, sections []roughcut.ScreenNote) reelZoom {
+	cut := &ffmpeg.Cut{
+		Segments: (&roughcut.Result{Plan: *plan}).Segments(),
+		Zoom: &ffmpeg.Zoom{
+			Factor: 1 + testZoom/percent, MinSegment: minZoomSegment, Every: zoomEvery, Must: sectionStarts(sections),
+		},
+	}
+
+	ends, at := make([]float64, 0, len(cut.Segments)), 0.0
+	for _, s := range cut.Segments {
+		at += s.End - s.Start
+		ends = append(ends, at)
+	}
+
+	return reelZoom{ends: ends, zoomed: cut.ZoomedSegments()}
+}
+
+// at is the framing at the second of the reel and whether a joint is within zoomJointMargin of it.
+func (z reelZoom) at(second float64) (zoomed, nearJoint bool) {
+	for i, end := range z.ends {
+		if second < end {
+			start := 0.0
+			if i > 0 {
+				start = z.ends[i-1]
+			}
+
+			return z.zoomed[i], second-start < zoomJointMargin || end-second < zoomJointMargin
+		}
+	}
+
+	return false, true
+}
+
+// sameFraming is the first moment within [from, to] (by 0.1 s) where both reels have the same framing, away from the
+// joints; the test fails without one.
+func sameFraming(a, b reelZoom, from, to float64) float64 {
+	const step = 0.1
+
+	for second := from; second <= to; second += step {
+		za, nearA := a.at(second)
+		zb, nearB := b.at(second)
+
+		if za == zb && !nearA && !nearB {
+			return second
+		}
+	}
+
+	return math.NaN()
 }

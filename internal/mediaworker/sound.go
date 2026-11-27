@@ -28,9 +28,12 @@ const (
 	// phone. Raising it to the target would make the hiss loud, so its level is kept.
 	quietestSource = -50.0
 
-	// maxZoomPercent: ffmpeg takes a zoom up to 50 %; more than 20 % reads as another shot, not a jump-cut zoom.
-	maxZoomPercent = 20.0
-	percent        = 100.0
+	// maxZoomPercent: ffmpeg takes a zoom up to 50 %; more than 40 % loses visible sharpness of a 1080×1920 frame.
+	maxZoomPercent = 40.0
+	// zoomEvery: the framing changes at every second joint, as in the trainer's own reels — every other joint is hidden
+	// by the change, the closer shot lasts two pieces.
+	zoomEvery = 2
+	percent   = 100.0
 	// minZoomSegment: a piece of the reel shorter than this keeps the framing of the one before it (seconds): 1.2 s
 	// is a short phrase, a change of framing more often than that flickers.
 	minZoomSegment = 1.2
@@ -39,24 +42,32 @@ const (
 	floatBits         = 64
 )
 
-// soundSettings are the sound and the framing of the drafts.
+// soundSettings are the sound, the framing and the colour of the drafts.
 type soundSettings struct {
 	// loudness is the target, LUFS; normalize false keeps the level of the source.
 	loudness  float64
 	normalize bool
 	denoise   bool
 	// zoom of the jump-cut zoom, percent; 0 is off.
-	zoom float64
+	zoom  float64
+	grade gradeSettings
 }
 
-// parseSoundSettings reads MEDIA_WORKER_LOUDNESS ("off" or LUFS), _DENOISE and _ZOOM.
+// parseSoundSettings reads MEDIA_WORKER_LOUDNESS ("off" or LUFS), _DENOISE, _ZOOM and _GRADE*.
 func parseSoundSettings(cfg *config.MediaWorker) (soundSettings, error) {
 	s := soundSettings{denoise: cfg.Denoise, zoom: cfg.Zoom}
 
-	if cfg.Zoom < 0 || cfg.Zoom > maxZoomPercent {
+	if math.IsNaN(cfg.Zoom) || cfg.Zoom < 0 || cfg.Zoom > maxZoomPercent {
 		return soundSettings{}, fmt.Errorf("MEDIA_WORKER_ZOOM %.1f must be within 0..%.0f: %w", cfg.Zoom, maxZoomPercent,
 			ErrInvalidConfig)
 	}
+
+	grade, err := parseGradeSettings(cfg)
+	if err != nil {
+		return soundSettings{}, err
+	}
+
+	s.grade = grade
 
 	value := strings.TrimSpace(cfg.Loudness)
 	if value == "" || strings.EqualFold(value, loudnessOff) {
@@ -80,7 +91,11 @@ func parseSoundSettings(cfg *config.MediaWorker) (soundSettings, error) {
 // one pass. The noise is reduced (its floor by the loudness of the recording) and the framing changes at the joints
 // only in a talking head: in a workout the noise reduction would eat into the music, and the cuts are rare and
 // deliberate. A muted sound stays silent.
-func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness) *ffmpeg.Cut {
+//
+// The colour (T3.25) is graded in a talking head only, by luma — the mean brightness of the source measured before the
+// render (0: not measured): a workout is filmed in a gym or outdoors, where a darker frame hides the movement, and has
+// no speech subtitles on a light wall to make readable.
+func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness, luma float64) *ffmpeg.Cut {
 	opts := plan.Render
 	talk := plan.Plan.Mode.Effective() == roughcut.TalkMode
 
@@ -98,32 +113,63 @@ func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness) *f
 
 	cut := &ffmpeg.Cut{Segments: plan.Segments(), Options: opts}
 	if s.zoom > 0 && talk {
-		cut.Zoom = &ffmpeg.Zoom{Factor: 1 + s.zoom/percent, MinSegment: minZoomSegment}
+		cut.Zoom = &ffmpeg.Zoom{
+			Factor: 1 + s.zoom/percent, MinSegment: minZoomSegment, Every: zoomEvery, Must: sectionStarts(plan.ScreenNotes),
+		}
+	}
+
+	if s.grade.on && talk {
+		cut.Grade = s.grade.forSource(luma)
 	}
 
 	return cut
 }
 
-// notes are the lines of the decisions log about the sound and the framing of the rendered draft; report is what the
-// render did to the loudness (nil if it did not say).
+// sectionStarts are the moments of the reel where its sections start: the framing changes there, on the question.
+func sectionStarts(notes []roughcut.ScreenNote) []float64 {
+	var starts []float64
+
+	for _, n := range notes {
+		if n.Kind == roughcut.SectionNote {
+			starts = append(starts, n.Start)
+		}
+	}
+
+	return starts
+}
+
+// notes are the lines of the decisions log about the sound, the framing and the colour of the rendered draft; luma is
+// the measured brightness of the source (0: not measured), report what the render did to the loudness (nil if it did
+// not say).
 func (s *soundSettings) notes(
 	cut *ffmpeg.Cut,
 	measured *ffmpeg.Loudness,
+	luma float64,
 	mode roughcut.Mode,
 	report *ffmpeg.SoundReport,
 ) []string {
 	workout := mode.Effective() == roughcut.WorkoutMode
 
-	zoom := fmt.Sprintf("Зумы на склейках: %d (приближение %.0f%%)", cut.Zooms(), s.zoom)
+	return []string{
+		s.loudnessNote(cut, measured, report), s.denoiseNote(cut, workout), s.zoomNote(cut, workout),
+		s.grade.note(cut.Grade, workout, luma),
+	}
+}
 
+// zoomNote: how many joints the change of the framing hides, of all the joints of the reel.
+func (s *soundSettings) zoomNote(cut *ffmpeg.Cut, workout bool) string {
 	switch {
 	case workout:
-		zoom = "Зумы на склейках: нет (тренировка)"
+		return "Зумы на склейках: нет (тренировка)"
 	case cut.Zoom == nil:
-		zoom = "Зумы на склейках: выключены"
+		return "Зумы на склейках: выключены"
 	}
 
-	return []string{s.loudnessNote(cut, measured, report), s.denoiseNote(cut, workout), zoom}
+	changed, joints := cut.ZoomChanges()
+
+	return fmt.Sprintf("Зумы на склейках: масштаб меняется на %d из %d стыков (приближение %.0f%%: на каждом втором "+
+		"стыке и в начале каждого раздела, разделов: %d; куски короче %.1f с кадр не меняют)", changed, joints, s.zoom,
+		len(cut.Zoom.Must), minZoomSegment)
 }
 
 // loudnessNote: the loudness before, the target, how it was reached and what the render measured (T3.19b: the result

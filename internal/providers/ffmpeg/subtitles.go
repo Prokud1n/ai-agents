@@ -103,6 +103,9 @@ type Cut struct {
 	// Zoom, if set, changes the framing at the joints (a talking head); it works on the output frame, after the fit
 	// and the tone mapping, and under the shade and the subtitles, which stay where they are.
 	Zoom *Zoom
+	// Grade, if set, colours the output frame as the trainer's reels (a talking head): after the fit, the tone mapping
+	// and the zoom, under the shade and the subtitles, which keep their colour.
+	Grade *Grade
 }
 
 // Shade darkens the frame from its top (or bottom) edge: an even Alpha (0..255) over Plateau pixels — where the
@@ -333,13 +336,13 @@ func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 		return "", err
 	}
 
-	if data.Cut != nil && data.Cut.Zoom != nil {
-		zoom, err := zoomGraph(data.Cut, data.Width, data.Height)
+	if data.Cut != nil {
+		picture, err := cutPictureGraph(data.Cut, data.Width, data.Height)
 		if err != nil {
 			return "", err
 		}
 
-		fit += zoom
+		fit += picture
 	}
 
 	subtitles := "ass=filename=" + data.SubtitlesName + ":fontsdir=" + data.FontsName + "," + colorTagsFilter +
@@ -356,6 +359,31 @@ func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 
 	return input + fit + ",setsar=1[base];" + shade + "[shade];" +
 		"[base][shade]overlay=x=0:y=" + y + "," + subtitles, nil
+}
+
+// cutPictureGraph is what a cut does to the output frame: the zoom at the joints, then the grade (both empty if unset).
+func cutPictureGraph(cut *Cut, width, height int) (string, error) {
+	var graph string
+
+	if cut.Zoom != nil {
+		zoom, err := zoomGraph(cut, width, height)
+		if err != nil {
+			return "", err
+		}
+
+		graph += zoom
+	}
+
+	if cut.Grade != nil {
+		grade, err := gradeGraph(cut.Grade, width, height)
+		if err != nil {
+			return "", err
+		}
+
+		graph += grade
+	}
+
+	return graph, nil
 }
 
 // fitFilter brings the frame to the output size (pad or crop). An SDR picture is converted to the bt709 matrix by scale

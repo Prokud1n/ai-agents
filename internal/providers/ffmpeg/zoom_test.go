@@ -29,6 +29,8 @@ func TestZoomedSegments(t *testing.T) {
 		input    Cut
 		expected []bool
 		zooms    int
+		// changes of the framing at the joints; 0: not checked.
+		changes int
 	}{
 		{
 			name:     "no zoom",
@@ -65,6 +67,87 @@ func TestZoomedSegments(t *testing.T) {
 			zooms:    1,
 		},
 		{
+			// T3.25: the framing changes at every second joint, the closer shot lasts two pieces.
+			name: "every second joint",
+			input: Cut{
+				Segments: []Segment{{Start: 0, End: 2}, {Start: 3, End: 5}, {Start: 6, End: 8}, {Start: 9, End: 11}, {Start: 12, End: 14}},
+				Options:  RenderOptions{FrameRate: rate}, Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2},
+			},
+			expected: []bool{false, false, true, true, false},
+			zooms:    1, changes: 2,
+		},
+		{
+			// The section starts at 2.1 s of the reel: its joint at 2 s changes the framing, the count starts again.
+			name: "the start of a section always changes the framing",
+			input: Cut{
+				Segments: []Segment{{Start: 0, End: 2}, {Start: 3, End: 5}, {Start: 6, End: 8}, {Start: 9, End: 11}, {Start: 12, End: 14}},
+				Options:  RenderOptions{FrameRate: rate}, Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{2.1}},
+			},
+			expected: []bool{false, true, true, false, false},
+			zooms:    1, changes: 2,
+		},
+		{
+			// The joint of the section is a short piece: the next long one changes the framing.
+			name: "a section on a short piece",
+			input: Cut{
+				Segments: []Segment{{Start: 0, End: 2}, {Start: 3, End: 3.8}, {Start: 4, End: 6}, {Start: 7, End: 9}},
+				Options:  RenderOptions{FrameRate: rate}, Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{2}},
+			},
+			expected: []bool{false, false, true, true},
+			zooms:    1, changes: 1,
+		},
+		{
+			// The frame is closer since the third piece; the section at 6 s goes back to the plain frame on that piece,
+			// so its joint moves closer (1.0 → 1.3), and the count starts again.
+			name: "a section on a zoomed piece",
+			input: Cut{
+				Segments: twoSecondPieces(6), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{6}},
+			},
+			expected: []bool{false, false, false, true, true, false},
+			zooms:    1, changes: 2,
+		},
+		{
+			// A joint between the start of the closer shot and the section: the frame goes plain there.
+			name: "a section on a zoomed piece with a joint before it",
+			input: Cut{
+				Segments: twoSecondPieces(7), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{8}},
+			},
+			expected: []bool{false, false, true, false, true, true, false},
+			zooms:    2, changes: 4,
+		},
+		{
+			// Two sections a piece apart: both move closer, the piece between them is plain.
+			name: "two sections close",
+			input: Cut{
+				Segments: twoSecondPieces(6), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{2, 6}},
+			},
+			expected: []bool{false, true, false, true, true, false},
+			zooms:    2, changes: 4,
+		},
+		{
+			// Two sections on neighbouring pieces: no joint between them to go back, the closer shot of the first one
+			// goes on through the second.
+			name: "two sections on neighbouring pieces",
+			input: Cut{
+				Segments: twoSecondPieces(5), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{2, 4}},
+			},
+			expected: []bool{false, true, true, true, false},
+			zooms:    1, changes: 2,
+		},
+		{
+			name: "a section with no joint near it",
+			input: Cut{
+				Segments: []Segment{{Start: 0, End: 2}, {Start: 3, End: 5}, {Start: 6, End: 8}},
+				Options:  RenderOptions{FrameRate: rate}, Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{20}},
+			},
+			expected: []bool{false, false, true},
+			zooms:    1, changes: 1,
+		},
+		{
 			name:     "one piece stays as it is",
 			input:    Cut{Segments: []Segment{{Start: 0, End: 20}}, Zoom: testZoom},
 			expected: []bool{false},
@@ -77,8 +160,25 @@ func TestZoomedSegments(t *testing.T) {
 
 			assert.Equal(t, tt.expected, tt.input.ZoomedSegments())
 			assert.Equal(t, tt.zooms, tt.input.Zooms())
+
+			changed, joints := tt.input.ZoomChanges()
+			assert.Equal(t, max(len(tt.input.Segments)-1, 0), joints)
+
+			if tt.changes > 0 {
+				assert.Equal(t, tt.changes, changed)
+			}
 		})
 	}
+}
+
+// twoSecondPieces are n pieces of 2 s of the source, 1 s apart: the reel has a joint every 2 s.
+func twoSecondPieces(n int) []Segment {
+	segments := make([]Segment, 0, n)
+	for i := range n {
+		segments = append(segments, Segment{Start: float64(3 * i), End: float64(3*i + 2)})
+	}
+
+	return segments
 }
 
 func TestZoomWindow(t *testing.T) {
@@ -175,9 +275,10 @@ func TestBurnGraphZoomSpans(t *testing.T) {
 	assert.Empty(t, none, "one piece: nothing to zoom, no extra filters")
 }
 
-// TestRunnerZoom: a static picture cut into three 1.5 s pieces — the second one is zoomed in: its frame is the frame of
-// the first one cropped to the window and scaled back, the third one is as it was — to the frame at both joints. The
-// reel keeps all its frames.
+// TestRunnerZoom: a static picture cut into four 1.5 s pieces with the rule of T3.25 — 30 % closer, at every second
+// joint and always at the start of a section (1.5 s, the first joint): the second and the third pieces are zoomed in,
+// their frame is the frame of the first one cropped to the window and scaled back; the second joint keeps the framing,
+// the fourth piece is as it was — to the frame at each joint. The reel keeps all its frames.
 func TestRunnerZoom(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
@@ -187,8 +288,8 @@ func TestRunnerZoom(t *testing.T) {
 		frameSize  = 108 * 192
 		plainFrame = 20    // the middle of the first piece of 45 frames
 		same       = 2.0   // mean difference of the same picture after the encode
-		different  = 8.0   // of a picture 9 % closer
-		reelFrames = "135" // 3 × 1.5 s at 30 fps
+		different  = 8.0   // of a picture 30 % closer
+		reelFrames = "180" // 4 × 1.5 s at 30 fps
 	)
 
 	ctx := t.Context()
@@ -197,16 +298,20 @@ func TestRunnerZoom(t *testing.T) {
 	src := filepath.Join(dir, "bars.mp4")
 
 	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
-		lavfiInput("smptehdbars=size=540x960:rate=30:duration=6"),
-		lavfiInput("sine=frequency=440:sample_rate=48000:duration=6"),
+		lavfiInput("smptehdbars=size=540x960:rate=30:duration=8"),
+		lavfiInput("sine=frequency=440:sample_rate=48000:duration=8"),
 		[]string{videoCodecFlag, videoCodec, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
 	require.NoError(t, err)
 
-	reel := burnTestReel(ctx, t, r, dir, src, &Cut{
-		Segments: []Segment{{Start: 0, End: 1.5}, {Start: 2, End: 3.5}, {Start: 4, End: 5.5}},
+	zoom := &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{1.5}}
+	cut := &Cut{
+		Segments: []Segment{{Start: 0, End: 1.5}, {Start: 2, End: 3.5}, {Start: 4, End: 5.5}, {Start: 6, End: 7.5}},
 		Options:  RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}},
-		Zoom:     testZoom,
-	})
+		Zoom:     zoom,
+	}
+	require.Equal(t, []bool{false, true, true, false}, cut.ZoomedSegments())
+
+	reel := burnTestReel(ctx, t, r, dir, src, cut)
 
 	in, err := localFile(reel)
 	require.NoError(t, err)
@@ -224,13 +329,14 @@ func TestRunnerZoom(t *testing.T) {
 		return []byte(out)
 	}
 
-	// The middle of the first and the last piece, and the frames around both joints (45 and 90).
+	// The middle of the first and the last piece, and the frames around the three joints (45, 90 and 135).
 	checked := []struct {
 		frame  int
 		zoomed bool
 	}{
 		{frame: 20}, {frame: 44}, {frame: 45, zoomed: true}, {frame: 46, zoomed: true},
-		{frame: 65, zoomed: true}, {frame: 89, zoomed: true}, {frame: 90}, {frame: 91}, {frame: 110},
+		{frame: 65, zoomed: true}, {frame: 89, zoomed: true}, {frame: 90, zoomed: true}, {frame: 91, zoomed: true},
+		{frame: 134, zoomed: true}, {frame: 135}, {frame: 136}, {frame: 160},
 	}
 
 	terms := make([]string, 0, len(checked))
@@ -247,7 +353,7 @@ func TestRunnerZoom(t *testing.T) {
 		frames[c.frame] = selected[i*frameSize : (i+1)*frameSize]
 	}
 
-	w, h, x, y := zoomWindow(1080, 1920, testZoom.Factor)
+	w, h, x, y := zoomWindow(1080, 1920, zoom.Factor)
 	expected := pick("select='eq(n\\," + strconv.Itoa(plainFrame) + ")',crop=" + strconv.Itoa(w) + ":" + strconv.Itoa(h) +
 		":" + strconv.Itoa(x) + ":" + strconv.Itoa(y) + ",scale=1080:1920")
 	require.Len(t, expected, frameSize)

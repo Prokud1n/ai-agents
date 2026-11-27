@@ -244,7 +244,8 @@ jobs:
             S3_ENDPOINT S3_ACCESS_KEY S3_SECRET_KEY S3_BUCKET S3_REGION S3_USE_SSL
             MEDIA_KEY_PREFIX MEDIA_RESULT_PREFIX MEDIA_UPLOAD_TIMEOUT OPENAI_API_KEY OPENAI_BASE_URL WHISPER_LANGUAGE
             EDITOR_STREAM MEDIA_WORKER_MAX_SOURCE_DURATION MEDIA_WORKER_MAX_SOURCE_SIZE MEDIA_WORKER_FIT
-            MEDIA_WORKER_MIN_SPEECH_SHARE MEDIA_WORKER_LOUDNESS MEDIA_WORKER_DENOISE MEDIA_WORKER_ZOOM FFMPEG_TIMEOUT
+            MEDIA_WORKER_MIN_SPEECH_SHARE MEDIA_WORKER_LOUDNESS MEDIA_WORKER_DENOISE MEDIA_WORKER_ZOOM MEDIA_WORKER_GRADE
+            MEDIA_WORKER_GRADE_EXPOSURE MEDIA_WORKER_GRADE_TOP FFMPEG_TIMEOUT
             SUBTITLES_STYLE_FILE MEDIA_WORKER_DIR TMPDIR XDG_CACHE_HOME)
           docker compose exec -T media-worker env | cut -d= -f1 | sort -u > env-keys.txt
           echo "media-worker environment: $(tr '\n' ' ' < env-keys.txt)"
@@ -608,6 +609,16 @@ jobs:
           done
           grep -E 'render speed|workout estimate' bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
 
+      # The colour and the zoom of T3.25 against the render of T3.15: a vertical 4K30 H.264 SDR source (an iPhone) on
+      # 2 CPUs, rendered both ways; the brightness measurement of the source is timed too.
+      - name: Measure the grade's render speed inside the media image (2 CPUs)
+        run: |
+          docker run --rm --cpus=2 -e FFMPEG_TESTS_REQUIRED=1 -e RENDER_BENCH=1 \
+            -v "$PWD/ffmpeg.test:/app/ffmpeg.test:ro" --entrypoint /app/ffmpeg.test ai-agents-media:ci \
+            -test.v -test.count=1 -test.timeout=30m -test.run 'TestRenderSpeedGrade' | tee grade-bench.txt
+          grep -q -- "--- PASS: TestRenderSpeedGrade " grade-bench.txt || { echo "::error::TestRenderSpeedGrade did not pass"; exit 1; }
+          grep -E 'render speed' grade-bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
+
       # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with
       # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export,
       # the workout plan with the exercise title (the Title style on its box), the muted reel, a dense talk and the hook
@@ -617,10 +628,10 @@ jobs:
           CGO_ENABLED=0 go test -c -o mediaworker.test ./internal/mediaworker
           docker run --rm -e INTEGRATION=1 -v "$PWD/mediaworker.test:/app/mediaworker.test:ro" \
             --entrypoint /app/mediaworker.test ai-agents-media:ci -test.v -test.count=1 \
-            -test.run 'TestIntegrationPipeline|TestIntegrationWorkout|TestIntegrationNoSpeech|TestIntegrationTalkRendersAtOnce|TestIntegrationHookRender' \
+            -test.run 'TestIntegrationPipeline|TestIntegrationWorkout|TestIntegrationNoSpeech|TestIntegrationTalkRendersAtOnce|TestIntegrationHookRender|TestIntegrationGradeDefaults' \
             | tee pipeline.txt
           for test in TestIntegrationPipeline TestIntegrationWorkoutKeepsPauses TestIntegrationNoSpeechIsPlanned \
-            TestIntegrationTalkRendersAtOnce TestIntegrationHookRender; do
+            TestIntegrationTalkRendersAtOnce TestIntegrationHookRender TestIntegrationGradeDefaults; do
             grep -q -- "--- PASS: $test " pipeline.txt || { echo "::error::$test did not pass"; exit 1; }
           done
           if grep -q -- '--- SKIP' pipeline.txt; then echo "::error::the pipeline test was skipped"; exit 1; fi

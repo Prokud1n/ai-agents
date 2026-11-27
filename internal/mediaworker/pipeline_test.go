@@ -47,6 +47,10 @@ type pipelineFakes struct {
 	loudness string
 	denoise  bool
 	zoom     float64
+	// grade: MEDIA_WORKER_GRADE with the default exposure and shadow of the top; off by default. meter measures the
+	// brightness of the source; nil: not measured.
+	grade bool
+	meter *fakeMeter
 }
 
 // newPipelineFakes: a 3-minute source with a picture and sound, two words, a plan that cuts it to 2:21 with nothing
@@ -78,14 +82,20 @@ func newPipelineFakes(t *testing.T) *pipelineFakes {
 func (f *pipelineFakes) pipeline(t *testing.T, workDir string) *Pipeline {
 	t.Helper()
 
-	p, err := NewPipeline(&PipelineParams{
+	params := &PipelineParams{
 		Store: f.store, Prober: f.prober, Keys: f.keys, Transcriber: f.transcriber, Cutter: f.cutter, Burner: f.burner,
 		Config: &config.MediaWorker{
 			WorkDir: workDir, MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 20, Fit: string(ffmpeg.PadFitMode),
 			MinSpeechShare: f.minSpeechShare, Loudness: f.loudness, Denoise: f.denoise, Zoom: f.zoom,
+			Grade: f.grade, GradeExposure: testGradeExposure, GradeTop: testGradeTop,
 		},
 		Log: slog.New(slog.DiscardHandler),
-	})
+	}
+	if f.meter != nil {
+		params.Meter = f.meter
+	}
+
+	p, err := NewPipeline(params)
 	require.NoError(t, err)
 
 	return p
@@ -504,6 +514,24 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 			name:  "a zoom of 50 %",
 			input: config.MediaWorker{Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, Zoom: 50},
 		},
+		{
+			name: "a brightening exposure",
+			input: config.MediaWorker{
+				Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, GradeExposure: 0.5,
+			},
+		},
+		{
+			name: "an exposure darker than -0.5 EV",
+			input: config.MediaWorker{
+				Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, GradeExposure: -0.6,
+			},
+		},
+		{
+			name: "a top shadow of 80 %",
+			input: config.MediaWorker{
+				Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, GradeTop: 80,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -571,7 +599,9 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 			name: "a talking head", measured: measured, loudness: true, noiseFloor: -64, zoom: true,
 			decisions: "- Громкость: исходник -27.6 LUFS (пики -9.3 dBTP), цель -14.0 LUFS: усиление +13.6 dB, " +
 				"лимитер пиков на -2.0 dBTP; итог не измерен\n- Шумодав: лёгкий (речь), порог шума -64 dBFS\n" +
-				"- Зумы на склейках: 0 (приближение 9%)\n",
+				"- Зумы на склейках: масштаб меняется на 0 из 1 стыков (приближение 30%: на каждом втором стыке и в " +
+				"начале каждого раздела, разделов: 0; куски короче 1.2 с кадр не меняют)\n" +
+				"- Цвет кадра: как в исходнике (пресет выключен)",
 		},
 		{
 			// The render fitted the gain by the sound of the cut and measured what it gave: the log has the measurement.
@@ -626,7 +656,8 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 			name:     "a workout: the loudness only",
 			change:   func(f *pipelineFakes) { f.cutter.result.Plan.Mode = roughcut.WorkoutMode },
 			measured: measured, loudness: true,
-			decisions: "- Шумодав: нет (тренировка, музыка)\n- Зумы на склейках: нет (тренировка)\n",
+			decisions: "- Шумодав: нет (тренировка, музыка)\n- Зумы на склейках: нет (тренировка)\n" +
+				"- Цвет кадра: как в исходнике (тренировка)",
 		},
 		{
 			name:      "muted: silence stays silent",
@@ -681,7 +712,7 @@ func TestPipelineSoundAndZoom(t *testing.T) {
 			}
 
 			if tt.zoom {
-				assert.Equal(t, &ffmpeg.Zoom{Factor: 1.09, MinSegment: 1.2}, cut.Zoom)
+				assert.Equal(t, &ffmpeg.Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2}, cut.Zoom)
 			} else {
 				assert.Nil(t, cut.Zoom)
 			}

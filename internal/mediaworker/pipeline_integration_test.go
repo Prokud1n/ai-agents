@@ -32,10 +32,12 @@ const repoFontsDir = "../../assets/fonts"
 // verticalSize of the synthetic vertical sources.
 const verticalSize = "720x1280"
 
-// testLoudness and testZoom are the defaults of MEDIA_WORKER_LOUDNESS and MEDIA_WORKER_ZOOM.
+// testLoudness, testZoom and testGrade* are the defaults of MEDIA_WORKER_LOUDNESS, _ZOOM and _GRADE*.
 const (
-	testLoudness = "-14"
-	testZoom     = 9
+	testLoudness      = "-14"
+	testZoom          = 30
+	testGradeExposure = -0.3
+	testGradeTop      = 30
 )
 
 // clipDuration of the synthetic source: four tone "words", one of them a filler, with long pauses between.
@@ -172,6 +174,19 @@ func wordsStyleFile(t *testing.T) string {
 func realPipelineStyled(t *testing.T, files store, speech transcriber, styleFile string) *Pipeline {
 	t.Helper()
 
+	return realPipelineConfigured(t, files, speech, styleFile, nil)
+}
+
+// realPipelineConfigured is realPipelineStyled with the worker's config changed by change (nil: the defaults).
+func realPipelineConfigured(
+	t *testing.T,
+	files store,
+	speech transcriber,
+	styleFile string,
+	change func(cfg *config.MediaWorker),
+) *Pipeline {
+	t.Helper()
+
 	log := slog.New(slog.DiscardHandler)
 	runner := ffmpeg.NewRunner(&config.FFmpeg{Timeout: 2 * time.Minute})
 
@@ -188,14 +203,19 @@ func realPipelineStyled(t *testing.T, files store, speech transcriber, styleFile
 	burner, err := subtitles.NewService(runner, &config.Subtitles{FontsDir: fonts, StyleFile: styleFile}, log)
 	require.NoError(t, err)
 
+	// The sound, the zoom and the colour as the worker has them by default: the duration and frame checks hold with them.
+	cfg := &config.MediaWorker{
+		WorkDir: t.TempDir(), MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 30, Fit: string(ffmpeg.PadFitMode),
+		Loudness: testLoudness, Denoise: true, Zoom: testZoom,
+		Grade: true, GradeExposure: testGradeExposure, GradeTop: testGradeTop,
+	}
+	if change != nil {
+		change(cfg)
+	}
+
 	p, err := NewPipeline(&PipelineParams{
 		Store: files, Prober: runner, Keys: fakeKeys{}, Transcriber: speech, Cutter: cutter, Burner: burner,
-		// The sound and the zoom as the worker has them by default: the duration and frame checks hold with them.
-		Config: &config.MediaWorker{
-			WorkDir: t.TempDir(), MaxSourceDuration: 10 * time.Minute, MaxSourceSize: 1 << 30, Fit: string(ffmpeg.PadFitMode),
-			Loudness: testLoudness, Denoise: true, Zoom: testZoom,
-		},
-		Log: log,
+		Meter: runner, Config: cfg, Log: log,
 	})
 	require.NoError(t, err)
 
@@ -207,6 +227,13 @@ func realPipelineStyled(t *testing.T, files store, speech transcriber, styleFile
 func makeSpeechClip(t *testing.T, path, size string, rate int, hdr bool) {
 	t.Helper()
 
+	makeClip(t, path, "testsrc=duration="+strconv.Itoa(clipDuration)+":size="+size+":rate="+strconv.Itoa(rate), hdr)
+}
+
+// makeClip is makeSpeechClip with the picture of the lavfi graph video.
+func makeClip(t *testing.T, path, video string, hdr bool) {
+	t.Helper()
+
 	spans := make([]string, 0, len(clipWords))
 	for _, w := range clipWords {
 		spans = append(spans, "between(t\\,"+strconv.FormatFloat(w.Start, 'f', 3, 64)+"\\,"+
@@ -215,7 +242,6 @@ func makeSpeechClip(t *testing.T, path, size string, rate int, hdr bool) {
 
 	d := strconv.Itoa(clipDuration)
 	audio := "aevalsrc=if(" + strings.Join(spans, "+") + "\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=" + d
-	video := "testsrc=duration=" + d + ":size=" + size + ":rate=" + strconv.Itoa(rate)
 
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y",
 		"-f", "lavfi", "-i", audio, "-f", "lavfi", "-i", video, "-c:a", "aac", "-shortest"}
