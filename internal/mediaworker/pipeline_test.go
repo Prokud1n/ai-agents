@@ -521,9 +521,9 @@ func TestNewPipelineRejectsInvalidConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "an exposure darker than -1 EV",
+			name: "an exposure darker than -0.5 EV",
 			input: config.MediaWorker{
-				Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, GradeExposure: -2,
+				Fit: string(ffmpeg.PadFitMode), MaxSourceDuration: time.Minute, MaxSourceSize: 1, GradeExposure: -0.6,
 			},
 		},
 		{

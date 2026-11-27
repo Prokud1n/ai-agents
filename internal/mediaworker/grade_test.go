@@ -35,6 +35,8 @@ func TestGradeForSource(t *testing.T) {
 		{name: "at the level: only the shadow of the top", luma: 110, expected: ffmpeg.Grade{Warmth: 3, Top: 0.3}},
 		{name: "between: half the shadow", luma: 105, expected: ffmpeg.Grade{Warmth: 3, Top: 0.15}},
 		{name: "a dark frame: only the warmth", luma: 92, expected: ffmpeg.Grade{Warmth: 3}},
+		{name: "under the black (superblack, noise): only the warmth", luma: 12, expected: ffmpeg.Grade{Warmth: 3}},
+		{name: "over the white: no curve, the shadow of the top", luma: 240, expected: ffmpeg.Grade{Warmth: 3, Top: 0.3}},
 	}
 
 	for _, tt := range tests {

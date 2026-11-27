@@ -14,7 +14,7 @@ import (
 // 131 of ours), warmer, the light wall at the top in shadow, so the white subtitles there read.
 const (
 	// minConfigExposure and maxConfigTop bound MEDIA_WORKER_GRADE_EXPOSURE (EV) and _GRADE_TOP (percent).
-	minConfigExposure = -1.0
+	minConfigExposure = -0.5 // the power 1.5: a stronger curve crushes the shadows
 	maxConfigTop      = 60.0
 	// gradeWarmth, code values of the chroma: Cb − 3, Cr + 3 turns a grey warmer by about 10 % of red over blue.
 	gradeWarmth = 3
@@ -43,7 +43,7 @@ type gradeSettings struct {
 
 func parseGradeSettings(cfg *config.MediaWorker) (gradeSettings, error) {
 	if math.IsNaN(cfg.GradeExposure) || cfg.GradeExposure < minConfigExposure || cfg.GradeExposure > 0 {
-		return gradeSettings{}, fmt.Errorf("MEDIA_WORKER_GRADE_EXPOSURE %.2f must be within %.0f..0 EV: %w",
+		return gradeSettings{}, fmt.Errorf("MEDIA_WORKER_GRADE_EXPOSURE %.2f must be within %.1f..0 EV: %w",
 			cfg.GradeExposure, minConfigExposure, ErrInvalidConfig)
 	}
 
@@ -65,9 +65,10 @@ func (g *gradeSettings) forSource(luma float64) *ffmpeg.Grade {
 	}
 
 	share := math.Min(1, math.Max(0, (luma-darkSource)/(gradeLevel-darkSource)))
-	grade := &ffmpeg.Grade{Exposure: g.exposure, Warmth: gradeWarmth, Top: g.top * share}
+	grade := &ffmpeg.Grade{Warmth: gradeWarmth, Top: g.top * share}
 
-	if mean := (luma - lumaBlack) / lumaRange; mean < 1 {
+	// A mean at or under the black (superblack, noise) or at or over the white has no curve to fit: the exposure stays.
+	if mean := (luma - lumaBlack) / lumaRange; mean > 0 && mean < 1 {
 		// mean^power = level: the power of the curve that brings the mean to gradeLevel (≤ 1 for a darker source).
 		power := math.Log((gradeLevel-lumaBlack)/lumaRange) / math.Log(mean)
 		grade.Exposure = roundEV(math.Max(g.exposure, math.Min(0, 1-power)))

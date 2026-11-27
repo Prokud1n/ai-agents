@@ -97,7 +97,7 @@ type MediaWorker struct {
 	// of the frame under the subtitles in a soft shadow (GradeTop). A source that is already dark is darkened less or
 	// not at all (its brightness is measured on a few key frames).
 	Grade bool `env:"MEDIA_WORKER_GRADE" envDefault:"true"`
-	// GradeExposure of the midtones, EV within -1..0: a curve of the encoded luma takes the middle grey down by it
+	// GradeExposure of the midtones, EV within -0.5..0: a curve of the encoded luma takes the middle grey down by it
 	// (-0.3: × 0.81), the shadows a little more, and keeps the black and the white.
 	GradeExposure float64 `env:"MEDIA_WORKER_GRADE_EXPOSURE" envDefault:"-0.3"`
 	// GradeTop, percent within 0..60: how much darker the top edge of the frame is; the shadow fades by the middle.
