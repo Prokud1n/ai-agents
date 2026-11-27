@@ -700,11 +700,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A screen note whose start falls into a cut piece moves to the next kept piece when it starts within 0.6 s (the cut
   by the sound starts a kept word up to 0.4 s after Whisper's start; a section heading within 3 s: its reading is
   cut), instead of being lost: a section plate set 0.11 s before the kept question disappeared from the reel. The app
-  checks the notes with the reach shortened by 0.6 s and refuses a section at one place with another note, so the
+  checks the notes with the reach shortened by 0.6 s and refuses a section closer than the margin + 0.6 s to another note, so the
   model moves such a note rather than the worker dropping it (T3.22).
 - The line about the cleaning says what it cuts: «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние
-  вставки: N фрагментов (X с).»; the header names the failed takes only when the cleaning cut a phrase said again (or
-  a disputed repeat was cut), not for the preparation and the links alone (T3.22).
+  вставки: N фрагментов (X с).» when it cut a phrase said again, «Почистил ролик — подготовка к съёмке и лишние
+  вставки: …» otherwise; the header names the failed takes only then (or when a disputed repeat was cut). The spoken
+  section headings cut with their sections are not named in «Не вошло» (T3.22).
 - No long pause at the joint of a removed piece when Whisper stretched the kept words far into its silence: the cut
   looks for their sound down to 0.08 s of each word, and the subtitles keep such a word (a hole of 1.3 s at a cut
   retake, T3.22).

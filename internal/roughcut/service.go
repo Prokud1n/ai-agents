@@ -183,7 +183,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 			Source: info.Frame(),
 		},
 		Titles:      RemapTitles(editTitles(plan.Edit), plan.Keep),
-		ScreenNotes: RemapScreenNotes(editScreenNotes(plan.Edit), plan.Keep),
+		ScreenNotes: RemapScreenNotes(notesOnTrimmed(editScreenNotes(plan.Edit), data.Transcript, source), plan.Keep),
 	}
 
 	if err := prepareOutDir(data.OutDir); err != nil {

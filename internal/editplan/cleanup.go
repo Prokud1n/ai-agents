@@ -21,7 +21,13 @@ const (
 // cleaning cuts the failed takes, the preparation for the shooting and the short links and reactions between phrases
 // (T3.22), so the line names all three; the header of the description names the failed takes only when some were cut
 // (Outcome.CleanedTakes).
-const CleanupLinePrefix = "Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки"
+//
+// CleanupLinePrefix is the line of a cleaning that cut a failed take (cleaning.takes), cleanupPrepPrefix of one that
+// cut only the preparation and the links: the trainer is never told of takes that were not there.
+const (
+	CleanupLinePrefix = "Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки"
+	cleanupPrepPrefix = "Почистил ролик — подготовка к съёмке и лишние вставки"
+)
 
 // cleaning is what the cleaning of a first version removed from the reel: the fragments of speech and their seconds.
 type cleaning struct {
@@ -188,13 +194,19 @@ func cleanupFloor(duration float64) float64 {
 	return max(duration*minCleanupShare, min(minCleanupSeconds, duration*shortCleanupShare))
 }
 
-// cleanupLine: «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки: 3 фрагмента (52,4 с).»; "" when nothing was removed.
+// cleanupLine: «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки: 3 фрагмента (52,4 с).», without
+// «неудачные дубли» when no failed take was cut; "" when nothing was removed.
 func cleanupLine(c cleaning) string {
 	if c.fragments == 0 {
 		return ""
 	}
 
-	return fmt.Sprintf("%s: %s (%s).", CleanupLinePrefix, plural(c.fragments, "фрагмент", "фрагмента", "фрагментов"),
+	prefix := cleanupPrepPrefix
+	if c.takes {
+		prefix = CleanupLinePrefix
+	}
+
+	return fmt.Sprintf("%s: %s (%s).", prefix, plural(c.fragments, "фрагмент", "фрагмента", "фрагментов"),
 		durationText(c.seconds))
 }
 

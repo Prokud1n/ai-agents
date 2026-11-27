@@ -158,11 +158,6 @@ func nextScreenNotes(req *Request, in *Input, previous *roughcut.Edit) []roughcu
 	return notes
 }
 
-// minNotesApart: a section and another note of the decision closer than this in the reel are at one place (a section
-// on its cut reading and an item on the first word of the question both move to where the speech goes on; two sections
-// in one cut). A list title and its first item may start together.
-const minNotesApart = 0.1
-
 // checkNotesShown: every note the decision set is seen in the reel built with the edit — it starts in a kept piece, or
 // moves to the next one within its reach (roughcut.NoteShown) shortened by roughcut.NoteCheckSlack: this plan is cut by
 // the margins, the worker's by the sound, so a note near the edge is moved by the model, not lost by the worker — and
@@ -186,10 +181,16 @@ func checkNotesShown(in *Input, edit *roughcut.Edit, plan *roughcut.Plan) error 
 			"которые остались в ролике (раздел — на первое слово вопроса или тезиса раздела)", hidden)
 	}
 
+	// A section and another note closer than this in this reel may be at one place in the worker's: its pieces start
+	// at the sound, PadBefore later than here and up to NoteCheckSlack after the word (a section on its cut reading and
+	// an item on the first word of the question; two sections in one cut). A list title and its first item may start
+	// together.
+	apart := plan.Settings.PadBefore + roughcut.NoteCheckSlack
 	shown := roughcut.RemapScreenNotes(edit.ScreenNotes, plan.Keep)
+
 	for i := 1; i < len(shown); i++ {
 		sections := shown[i].Kind == roughcut.SectionNote || shown[i-1].Kind == roughcut.SectionNote
-		if sections && shown[i].Start-shown[i-1].Start < minNotesApart {
+		if sections && shown[i].Start-shown[i-1].Start < apart {
 			return checkFailedf("элементы на экране «%s» и «%s» оказались в ролике в одном месте (%s): разнеси их — "+
 				"раздел поставь на первое слово вопроса раздела, пункт или выноску — на слово, где тренер это говорит",
 				shown[i-1].Text, shown[i].Text, roughcut.FormatTimecode(shown[i].Start))

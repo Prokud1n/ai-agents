@@ -180,6 +180,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 	}
 
 	sel := newSelection(req, in, mode, &plan)
+	sel.notes = edit.ScreenNotes
 	if sel.cleanup {
 		if sel.cleaned, err = cleanupOf(req, in, &trimmed, &edit, &plan); err != nil {
 			return nil, err

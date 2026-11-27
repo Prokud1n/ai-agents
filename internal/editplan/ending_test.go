@@ -184,3 +184,23 @@ func TestEndingOnlyFirstVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestDroppedLineWithoutReadings (T3.22): the spoken heading cut with its section (remove_words) is replaced by the
+// plate: it is not named in «Не вошло», the speech that did not make it is.
+func TestDroppedLineWithoutReadings(t *testing.T) {
+	t.Parallel()
+
+	outcome, err := Apply(endingRequest(t), &Input{
+		Decision: EditDecision, Reason: testReason,
+		Remove: []roughcut.WordRange{{From: 3, To: 5}, {From: 8, To: 10}},
+		ScreenNotes: new([]NoteInput{
+			{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)},
+			{Kind: roughcut.SectionNote, Text: sectionTwo, Word: new(8)},
+		}),
+	})
+	require.NoError(t, err)
+	require.True(t, outcome.Selected)
+
+	assert.Contains(t, outcome.Changes, "Не вошло: «бежать каждый день».")
+	assert.Contains(t, outcome.Edit.Details, "Не вошло в рилс: слова 8–10 «ошибка номер два»", "the log names it")
+}

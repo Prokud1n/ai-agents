@@ -136,7 +136,8 @@ func TestApplySections(t *testing.T) {
 }
 
 // TestApplySectionOnCutReading (T3.22): a section set on the words it removes (the spoken heading) is shown where the
-// speech goes on; a note at the same place, or a section too far before the speech, goes back to the model.
+// speech goes on; a note at the same place (here PadBefore apart, in the worker at one point), or a section too far
+// before the speech, goes back to the model.
 func TestApplySectionOnCutReading(t *testing.T) {
 	t.Parallel()
 
@@ -174,7 +175,7 @@ func TestApplySectionOnCutReading(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			outcome, err := Apply(testRequest(1, nil), &Input{
+			outcome, err := Apply(defaultMarginsRequest(t), &Input{
 				Decision: EditDecision, Reason: testReason, Remove: tt.remove, ScreenNotes: new(tt.notes),
 			})
 
@@ -190,6 +191,21 @@ func TestApplySectionOnCutReading(t *testing.T) {
 			assert.Contains(t, check.Message, tt.err)
 		})
 	}
+}
+
+// defaultMarginsRequest is the first version of testSpeech planned with the margins of the service (0.12/0.18 s), as
+// the app plans it.
+func defaultMarginsRequest(t *testing.T) *Request {
+	t.Helper()
+
+	src := speech(testSpeech)
+	settings := testSettings()
+	settings.MaxPause, settings.PadBefore, settings.PadAfter = 0.3, 0.12, 0.18
+
+	plan, err := roughcut.BuildPlanEdited(src, src.Duration, settings, &roughcut.Edit{})
+	require.NoError(t, err)
+
+	return &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan}
 }
 
 // TestApplyScreenNotesRevision: a revision replaces the list (an empty one removes it), keeps it when it does not

@@ -225,6 +225,38 @@ func TestServiceCutNoteOnQuietStart(t *testing.T) {
 	assert.Equal(t, "ответ десять минут", joinWords(result.Transcript.Words))
 }
 
+// TestServiceCutNoteOnFarStretchedWord (T3.22): Whisper starts a kept word 1.1 s before its sound, the cut by the
+// sound starts its piece about 1 s after the word — past noteShiftReach; the callout set on the word moves with it and
+// is not lost.
+func TestServiceCutNoteOnFarStretchedWord(t *testing.T) {
+	t.Parallel()
+
+	src := words(word("ответ", 0.5, 1.0), word("лишнее", 2.0, 2.4), word("десять", 2.9, 4.4),
+		word("минут", 4.45, 4.9))
+	src.Duration, src.Language = 6, testLanguage
+
+	media := &fakeMedia{duration: 6, levels: soundOf(6, [3]float64{0.5, 1.0, testSpeech},
+		[3]float64{2.0, 2.4, testSpeech}, [3]float64{4.0, 4.9, testSpeech})}
+	edit := &Edit{
+		Remove:      []WordRange{{From: 1, To: 1}},
+		ScreenNotes: []ScreenNote{{Kind: CalloutNote, Text: "10 минут", Start: 2.9}},
+	}
+
+	result, err := newTestService(t, media).Cut(t.Context(), &CutData{
+		Source: testClipPath, Transcript: src, OutDir: filepath.Join(t.TempDir(), "out"), PlanOnly: true,
+		Edit: edit,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Plan.Keep, 2)
+
+	keep := result.Plan.Keep
+	require.Greater(t, keep[1].Start-2.9, noteShiftReach, "the piece starts past the reach")
+
+	require.Len(t, result.ScreenNotes, 1, "the callout moved with its word")
+	assert.InDelta(t, keep[0].End-keep[0].Start, result.ScreenNotes[0].Start, 1e-3)
+	assert.Equal(t, "ответ десять минут", joinWords(result.Transcript.Words))
+}
+
 func TestServiceCutSettings(t *testing.T) {
 	t.Parallel()
 
