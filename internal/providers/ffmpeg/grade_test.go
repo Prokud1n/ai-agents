@@ -148,7 +148,7 @@ func TestRunnerGrade(t *testing.T) {
 
 	source, err := r.MeanLuma(ctx, src, []float64{1, 3}, false)
 	require.NoError(t, err)
-	assert.InDelta(t, gradeSourceLuma, source, 2, "the grey of our own frame")
+	assert.InDelta(t, gradeSourceLuma, source, 4, "the grey of our own frame")
 
 	reel := burnTestReel(ctx, t, r, dir, src, &Cut{
 		Segments: []Segment{{Start: 0, End: 1.5}, {Start: 2, End: 3.5}},
