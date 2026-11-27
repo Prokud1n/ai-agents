@@ -289,9 +289,20 @@ func writeScreenNotes(b *strings.Builder, req *Request) {
 	default:
 		b.WriteString("\nПункты и цифры на экране: если тренер перечисляет («во-первых…», «три причины…») или " +
 			"называет цифры, сроки, неожиданный факт — вынеси их через screen_notes по разделу «Пункты на экране»: " +
-			"переход к новому пункту — заголовок раздела (section), цифры — выноски; выносить нечего — не указывай.\n")
+			"переход к новому пункту — заголовок раздела (section), цифры — выноски; выносить нечего — не указывай.")
+
+		if !req.HookOnly() {
+			b.WriteString(readingsCut)
+		}
+
+		b.WriteString("\n")
 	}
 }
+
+// readingsCut: the spoken heading of a section goes from the sound, the plate replaces it (T3.22).
+const readingsCut = " Произнесённое чтение заголовка раздела («страх номер два», «пункт первый») вырежи через " +
+	"cleanup_words (при чистке и отборе) или remove_words, а вопрос или тезис раздела оставь: раздел покажется с того " +
+	"места, где продолжается речь."
 
 // notePlace is where the note starts in the current reel.
 func notePlace(n roughcut.ScreenNote, keep []roughcut.Interval) string {

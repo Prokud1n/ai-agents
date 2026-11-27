@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The editor selects a long talking head like the trainer (T3.22): heading → points → the proof or story of the last
+  point (the climax, never cut for the length) → the question to the viewer and the call → the next part; the
+  self-introduction and «подписывайся» after the call are cut unless the trainer asks to keep them; short links and
+  reactions between phrases («не переживай», «ну что», a swear word as a reply) go with the cleaning; the spoken section
+  heading («страх номер два») is cut from the sound and the section plate stands where the speech goes on; names
+  distorted by the recognition («Ульянске») are corrected in the subtitles. A selection that cuts the end of the last
+  section and keeps the introduction after the call gets one hint back (the same decision again is accepted) and a line
+  in the decisions log.
+
 - The trainer's own style is the default subtitle style (T3.20), measured on the reel she edited herself: the speech in
   phrases of one or two lines, small white Manrope Regular, the first word of a sentence in small letters, no accents,
   plates or vignette; the hook in large peach Fira Sans Extra Condensed ExtraBold capitals that appears as an object
@@ -687,6 +696,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kbtool.SearchTool`; `knowledge.FormatSearchResults` stays for `kb search`.
 
 ### Fixed
+
+- A screen note whose start falls into a cut piece moves to the next kept piece when it starts within 0.3 s (a section
+  heading within 3 s: its reading is cut), instead of being lost: the plate «СТРАХ 2» set 0.11 s before the kept
+  question disappeared from the reel (T3.22).
+- No long pause at the joint of a removed piece when Whisper stretched the kept words far into its silence: the cut
+  looks for their sound down to 0.08 s of each word, and the subtitles keep such a word (a hole of 1.3 s at a cut
+  retake, T3.22).
 
 - The media worker checks a running job on the board every 3 s apart from the lock refresh (T3.19c): Ctrl+C of
   `make edit` during the transcription stops Whisper within seconds (`job was forgotten while running, cancelled`)

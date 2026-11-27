@@ -34,8 +34,9 @@ const cleaningTask = " Ещё почисти ролик (раздел «Чист
 // selectionCleaning is said in the task of the selection: the failed takes go first, through cleanup_words, and count
 // in the length of the reel.
 const selectionCleaning = " Сначала выкинь неудачные дубли, повторы подряд и подготовку к съёмке через cleanup_words " +
-	"(раздел «Чистка дублей и подготовки»); из дублей оставляй последний полный. Вырезанное через cleanup_words тоже " +
-	"сокращает ролик и считается в его длине."
+	"(раздел «Чистка дублей и подготовки»); из дублей оставляй последний полный. Туда же — короткие вставки и реакции " +
+	"отдельной репликой («не переживай», «ну что», ругательство). Вырезанное через cleanup_words тоже сокращает ролик " +
+	"и считается в его длине."
 
 // cleanupTask is the task of a first version only cleaned by the editor.
 func cleanupTask(req *Request) string {

@@ -33,6 +33,7 @@ type fakeMedia struct {
 	renderErr error
 	rendered  []ffmpeg.Segment
 	dst       string
+	levels    *ffmpeg.Levels // the sound level of the source; nil: the margins
 }
 
 func (f *fakeMedia) Probe(context.Context, string) (ffmpeg.MediaInfo, error) {
@@ -43,8 +44,8 @@ func (f *fakeMedia) Probe(context.Context, string) (ffmpeg.MediaInfo, error) {
 	return ffmpeg.MediaInfo{Duration: f.duration, HasVideo: true, HasAudio: true, AvgFrameRate: testRate}, nil
 }
 
-func (*fakeMedia) AudioLevels(context.Context, string) (*ffmpeg.Levels, error) {
-	return nil, nil
+func (f *fakeMedia) AudioLevels(context.Context, string) (*ffmpeg.Levels, error) {
+	return f.levels, nil
 }
 
 func (f *fakeMedia) RenderSegments(
@@ -147,6 +148,44 @@ func TestServiceCut(t *testing.T) {
 			assert.Len(t, media.rendered, len(result.Plan.Keep))
 		})
 	}
+}
+
+// TestServiceCutSectionOnCutReading (T3.22): the spoken heading «страх номер два» is cut from the sound, the section
+// set on it lives to the result at the start of the question, and no long pause is left at the joint.
+func TestServiceCutSectionOnCutReading(t *testing.T) {
+	t.Parallel()
+
+	const (
+		answerEnd     = 1.0
+		questionSound = 4.95
+	)
+
+	src := words(word("ответ", 0.5, answerEnd), word("страх", 3.0, 3.4), word("номер", 3.45, 3.85),
+		word("два", 3.9, 4.3), word("а", 4.9, 5.1), word("вдруг", 5.15, 5.6), word("забуду", 5.65, 6.2))
+	src.Duration, src.Language = 7, testLanguage
+
+	media := &fakeMedia{duration: 7, levels: soundOf(7, [3]float64{0.5, answerEnd, testSpeech},
+		[3]float64{3.05, 4.3, testSpeech}, [3]float64{questionSound, 6.2, testSpeech})}
+	edit := &Edit{
+		Remove:      []WordRange{{From: 1, To: 3}},
+		ScreenNotes: []ScreenNote{{Kind: SectionNote, Text: "страх 2", Start: 3.0}},
+	}
+
+	result, err := newTestService(t, media).Cut(t.Context(), &CutData{
+		Source: "/videos/clip.mp4", Transcript: src, OutDir: filepath.Join(t.TempDir(), "out"), PlanOnly: true,
+		Edit: edit,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Plan.SoundCuts)
+	require.Len(t, result.Plan.Keep, 2)
+
+	keep := result.Plan.Keep
+	require.Len(t, result.ScreenNotes, 1, "the section is not lost with its reading")
+	assert.InDelta(t, keep[0].End-keep[0].Start, result.ScreenNotes[0].Start, 1e-3, "where the question starts")
+	assert.Equal(t, "ответ а вдруг забуду", joinWords(result.Transcript.Words))
+
+	silence := (keep[0].End - answerEnd) + (questionSound - keep[1].Start)
+	assert.LessOrEqual(t, silence, result.Plan.Settings.MaxPause+1e-3, "no long pause at the joint")
 }
 
 func TestServiceCutSettings(t *testing.T) {

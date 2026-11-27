@@ -52,6 +52,54 @@ func TestRemapScreenNotes(t *testing.T) {
 	}
 }
 
+// TestRemapScreenNotesShift (T3.22): a note that starts just before a kept piece (Whisper started its word early, the
+// cut stands by the sound) moves to the start of that piece; a section set on its cut reading («страх номер два»)
+// moves to where the speech goes on; further away both are dropped.
+func TestRemapScreenNotesShift(t *testing.T) {
+	t.Parallel()
+
+	// The reel: 100.0–120.0 | 150.233–151.6 | 153.2–160.0 of the source.
+	keep := []Interval{{Start: 100, End: 120}, {Start: 150.233, End: 151.6}, {Start: 153.2, End: 160}}
+
+	tests := []struct {
+		name     string
+		input    ScreenNote
+		expected []ScreenNote
+	}{
+		{
+			name:     "a section 0.11 s before the kept piece",
+			input:    ScreenNote{Kind: SectionNote, Text: "страх 2", Start: 150.12},
+			expected: []ScreenNote{{Kind: SectionNote, Text: "страх 2", Start: 20}},
+		},
+		{
+			name:     "an item 0.11 s before the kept piece",
+			input:    ScreenNote{Kind: ListItemNote, Text: "1/ вода", Start: 150.12, End: 151},
+			expected: []ScreenNote{{Kind: ListItemNote, Text: "1/ вода", Start: 20, End: 20.767}},
+		},
+		{
+			name:     "a section on its cut reading, 1.6 s before the question",
+			input:    ScreenNote{Kind: SectionNote, Text: "страх 3", Start: 151.6},
+			expected: []ScreenNote{{Kind: SectionNote, Text: "страх 3", Start: 21.367}},
+		},
+		{
+			name:     "an end inside the reading is dropped",
+			input:    ScreenNote{Kind: SectionNote, Text: "страх 3", Start: 151.6, End: 152.5},
+			expected: []ScreenNote{{Kind: SectionNote, Text: "страх 3", Start: 21.367}},
+		},
+		{name: "a callout 1.6 s before speech", input: ScreenNote{Kind: CalloutNote, Text: calloutYears, Start: 151.6}},
+		{name: "a section 4 s before speech", input: ScreenNote{Kind: SectionNote, Text: "страх 1", Start: 146}},
+		{name: "a section after the last piece", input: ScreenNote{Kind: SectionNote, Text: "страх 4", Start: 161}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, RemapScreenNotes([]ScreenNote{tt.input}, keep))
+		})
+	}
+}
+
 // TestScreenNotesInEditAndLog: the notes are copied with the edit, written to the decisions log and to the JSON of
 // the plan only when there are some; a workout plan draws none.
 func TestScreenNotesInEditAndLog(t *testing.T) {

@@ -326,7 +326,8 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   накапливаются; `screen_notes` в `submit_edit` — весь список версии, `[]` убирает, нет поля — оставить;
   `editplan.checkNotesInput`: ≤ 12, ≤ 40 символов, как хук без разметки/эмодзи/`#`; только talk; чистка их
   разрешает; новые элементы на вырезанном слове — отказ модели, прежние просто пропадают) → `roughcut.RemapScreenNotes`
-  (начало в вырезанном куске — убрать) → `roughcut.Result.ScreenNotes` → `subtitles.CreateSubtitlesData.Notes`.
+  (начало в вырезанном куске — на начало следующего оставленного, если оно не дальше `noteShiftReach` 0,3 с, у раздела —
+  `sectionShiftReach` 3 с; иначе убрать, T3.22) → `roughcut.Result.ScreenNotes` → `subtitles.CreateSubtitlesData.Notes`.
   `subtitles.noteBlocks`: элемент ждёт конца хука; пункты копятся под заголовком до конца списка (свой `end`, следующий
   не-пункт или 5 с после последнего), ≤ `hookLines` строк — ранние пункты уезжают; выноска — одна на 1,5–3 с; блок —
   событие стиля `Hook` (слой 2), `\fad` только на краях серии. Во фразовой раскладке субтитры под блоком сдвигаются как
@@ -444,6 +445,22 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `TestInputLimit`, `roughcut.TestBuildPlanBySound`/`TestCutGridAroundBreath`/`TestTailKeepsTheDecay`, бенчи
   `subtitles.TestRenderSpeedLongSource` (4K 4 мин → рилс ~1 мин, разреженная ≤ 100 с и плотная раскладки, пик RSS
   ffmpeg) и `TestRenderSpeedMemoryHDR` (4K HEVC 10 бит, пик RSS).
+- Отбор как у тренера (T3.22). Промпт (`agents/editor/agent.md`, задача отбора в `writeLength`, `selectionCleaning`,
+  `readingsCut` в `writeScreenNotes` — кроме `HookOnly`): структура «заголовок → пункты → кульминация (доказательство
+  последнего пункта, не резать) → вопрос зрителю и призыв → следующая часть», самопрезентация и «подписывайся» после
+  призыва вырезаются, если тренер не просит; связки и реакции отдельной репликой — в `cleanup_words`; чтение заголовка
+  раздела («страх номер два») — из звука (`cleanup_words`/`remove_words`), раздел на нём допустим (`checkNotesShown` через
+  `RemapScreenNotes` с переносом); имена, искажённые распознаванием, — `fix_words`. `editplan.checkEnding` (`ending.go`,
+  только при `sel.on`): последний `section`, после него оставленное «коммент…», после него оставленное «подписыв…»/«меня
+  зовут», и прямо перед призывом (≤ 10 оставленных слов вопроса) ≥ 8 слов, вырезанных `remove_words`, — строка «Финал: …»
+  в `Edit.Details` и `Outcome.endingHint`: `Session.submit` один раз возвращает его модели ошибкой инструмента, не
+  тратя попытку; то же решение второй раз принимается. Стык у выреза (`cutGrid.around`): если по звуку осталось тишины
+  больше `MaxPause` (Whisper растянул оставленные слова в тишину вырезанного дальше `wordInnerReach` или за середину),
+  края ищутся до `minWordSound` внутри слов и разрез может пройти середину слова в тишине; `Service.Cut` тогда отдаёт
+  субтитрам слова с обрезанным тихим краем (`trimSilentEdges`: только если в отрезанной части нет окна выше порога речи —
+  слово, разрезанное по звуку, по-прежнему пропадает). Проверка — `roughcut.TestCutGridAroundStretchedWords`,
+  `TestTrimSilentEdges`, `TestRemapScreenNotesShift`, `TestServiceCutSectionOnCutReading`,
+  `editplan.TestSubmitEndingHint`, `TestRolePromptSelectionLikeTrainer`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

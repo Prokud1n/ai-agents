@@ -163,7 +163,12 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 		return nil, err
 	}
 
-	transcript := SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit)
+	source := data.Transcript
+	if plan.SoundCuts {
+		source = trimSilentEdges(source, plan.Keep, levels)
+	}
+
+	transcript := SubtitleTranscript(source, plan.Keep, plan.Edit)
 	plan.LongPauses = countLongPauses(&plan, levels, transcript.Words)
 
 	s.logPlan(ctx, &plan, data.Plan != nil)

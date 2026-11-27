@@ -239,7 +239,7 @@ func TestPromptScreenNotes(t *testing.T) {
 	}{
 		{
 			name: "a first version", req: testRequest(1, nil),
-			expected: []string{"Пункты и цифры на экране: если тренер перечисляет"},
+			expected: []string{"Пункты и цифры на экране: если тренер перечисляет", readingsCut},
 		},
 		{
 			name: "a revision without notes", req: testRequest(2, &roughcut.Edit{}),

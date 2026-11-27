@@ -161,4 +161,7 @@ type Outcome struct {
 	// Declined are the texts for the trainer about what was asked and is not done (music, color...): with an edit
 	// (the rest is done) or with a refusal (CannotOutcome).
 	Declined []string
+	// endingHint: a selection cut the end of the last section and kept the introduction after the call (checkEnding);
+	// the session gives it back to the model once before it accepts the decision.
+	endingHint string
 }

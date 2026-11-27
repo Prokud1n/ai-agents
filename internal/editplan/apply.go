@@ -187,6 +187,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 	}
 
 	edit.Notes, edit.Details = notes(req, in, reason, &sel), details(req, in, &sel)
+	ending := checkEnding(req, in, &edit, &sel)
 
 	shown, err := checkTitlesShown(&edit, &plan)
 	if err != nil {
@@ -209,7 +210,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		Kind: EditOutcome, Edit: edit, Cut: cut, Kept: kept,
 		Changes:  describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}, &sel),
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
-		Selected: sel.on, Target: in.TargetSeconds, Cleaned: sel.cleaned.fragments,
+		Selected: sel.on, Target: in.TargetSeconds, Cleaned: sel.cleaned.fragments, endingHint: ending,
 	}, nil
 }
 
