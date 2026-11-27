@@ -180,6 +180,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 	}
 
 	sel := newSelection(req, in, mode, &plan)
+	sel.notes = edit.ScreenNotes
 	if sel.cleanup {
 		if sel.cleaned, err = cleanupOf(req, in, &trimmed, &edit, &plan); err != nil {
 			return nil, err
@@ -187,6 +188,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 	}
 
 	edit.Notes, edit.Details = notes(req, in, reason, &sel), details(req, in, &sel)
+	ending := checkEnding(req, in, &edit, &sel)
 
 	shown, err := checkTitlesShown(&edit, &plan)
 	if err != nil {
@@ -210,6 +212,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		Changes:  describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}, &sel),
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
 		Selected: sel.on, Target: in.TargetSeconds, Cleaned: sel.cleaned.fragments,
+		CleanedTakes: sel.cleaned.takes, endingHint: ending,
 	}, nil
 }
 

@@ -153,3 +153,26 @@ func TestPipelineGradeCancelled(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, fakes.burner.got, "not rendered")
 }
+
+// TestSectionInCutZoomsIn: a section heading read in a cut piece (T3.22: «страх номер два» cut from the sound) is put
+// by the rough cut at the start of the next kept piece — its joint is where the framing moves closer.
+func TestSectionInCutZoomsIn(t *testing.T) {
+	t.Parallel()
+
+	keep := []roughcut.Interval{{Start: 0, End: 3}, {Start: 5, End: 8}, {Start: 10, End: 13}, {Start: 15, End: 18}}
+	notes := roughcut.RemapScreenNotes([]roughcut.ScreenNote{{Kind: roughcut.SectionNote, Text: "страх 2", Start: 9}}, keep)
+	require.Len(t, notes, 1)
+
+	segments := make([]ffmpeg.Segment, 0, len(keep))
+	for _, k := range keep {
+		segments = append(segments, ffmpeg.Segment{Start: k.Start, End: k.End})
+	}
+
+	cut := &ffmpeg.Cut{
+		Segments: segments,
+		Zoom:     &ffmpeg.Zoom{Factor: 1.3, MinSegment: minZoomSegment, Every: zoomEvery, Must: sectionStarts(notes)},
+	}
+
+	t.Logf("section at %.2f s of the reel", notes[0].Start)
+	assert.Equal(t, []bool{false, false, true, true}, cut.ZoomedSegments(), "closer from the joint of the section")
+}

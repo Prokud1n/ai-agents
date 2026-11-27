@@ -158,16 +158,43 @@ func nextScreenNotes(req *Request, in *Input, previous *roughcut.Edit) []roughcu
 	return notes
 }
 
-// checkNotesShown: every note the decision set is seen in the reel built with the edit (its start is not cut). The
-// notes of the previous versions are not checked: a revision that cuts the words of one drops it from the reel.
+// checkNotesShown: every note the decision set is seen in the reel built with the edit — it starts in a kept piece, or
+// moves to the next one within its reach (roughcut.NoteShown) shortened by roughcut.NoteCheckSlack: this plan is cut by
+// the margins, the worker's by the sound, so a note near the edge is moved by the model, not lost by the worker — and
+// no section lands at one place with another note. The notes of the previous versions are not checked: a revision
+// that cuts the words of one drops it from the reel.
 func checkNotesShown(in *Input, edit *roughcut.Edit, plan *roughcut.Plan) error {
 	if in.ScreenNotes == nil {
 		return nil
 	}
 
-	if hidden := len(edit.ScreenNotes) - len(roughcut.RemapScreenNotes(edit.ScreenNotes, plan.Keep)); hidden > 0 {
+	hidden := 0
+
+	for _, n := range edit.ScreenNotes {
+		if !roughcut.NoteShown(n, plan.Keep, roughcut.NoteCheckSlack) {
+			hidden++
+		}
+	}
+
+	if hidden > 0 {
 		return checkFailedf("элементов на экране не видно в ролике: %d (их начало вырезано) — поставь их на слова, "+
-			"которые остались в ролике", hidden)
+			"которые остались в ролике (раздел — на первое слово вопроса или тезиса раздела)", hidden)
+	}
+
+	// A section and another note closer than this in this reel may be at one place in the worker's: its pieces start
+	// at the sound, PadBefore later than here and up to NoteCheckSlack after the word (a section on its cut reading and
+	// an item on the first word of the question; two sections in one cut). A list title and its first item may start
+	// together.
+	apart := plan.Settings.PadBefore + roughcut.NoteCheckSlack
+	shown := roughcut.RemapScreenNotes(edit.ScreenNotes, plan.Keep)
+
+	for i := 1; i < len(shown); i++ {
+		sections := shown[i].Kind == roughcut.SectionNote || shown[i-1].Kind == roughcut.SectionNote
+		if sections && shown[i].Start-shown[i-1].Start < apart {
+			return checkFailedf("элементы на экране «%s» и «%s» оказались в ролике в одном месте (%s): разнеси их — "+
+				"раздел поставь на первое слово вопроса раздела, пункт или выноску — на слово, где тренер это говорит",
+				shown[i-1].Text, shown[i].Text, roughcut.FormatTimecode(shown[i].Start))
+		}
 	}
 
 	return nil
@@ -289,9 +316,20 @@ func writeScreenNotes(b *strings.Builder, req *Request) {
 	default:
 		b.WriteString("\nПункты и цифры на экране: если тренер перечисляет («во-первых…», «три причины…») или " +
 			"называет цифры, сроки, неожиданный факт — вынеси их через screen_notes по разделу «Пункты на экране»: " +
-			"переход к новому пункту — заголовок раздела (section), цифры — выноски; выносить нечего — не указывай.\n")
+			"переход к новому пункту — заголовок раздела (section), цифры — выноски; выносить нечего — не указывай.")
+
+		if !req.HookOnly() {
+			b.WriteString(readingsCut)
+		}
+
+		b.WriteString("\n")
 	}
 }
+
+// readingsCut: the spoken heading of a section goes from the sound, the plate replaces it (T3.22).
+const readingsCut = " Произнесённое чтение заголовка раздела («ошибка номер два», «пункт первый») вырежи через " +
+	"remove_words (не cleanup_words: это не брак), а вопрос или тезис раздела оставь: раздел покажется с того места, " +
+	"где продолжается речь."
 
 // notePlace is where the note starts in the current reel.
 func notePlace(n roughcut.ScreenNote, keep []roughcut.Interval) string {

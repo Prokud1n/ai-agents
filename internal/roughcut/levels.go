@@ -306,15 +306,49 @@ func (g *cutGrid) pause(prev, w transcription.Word, maxPause float64) (end, next
 // its quietest frame between the margin and leadMin before its sound, never into the removed words nor past the
 // middles of the kept ones. Too little silence left is made up to breathPause: the next word starts earlier (not
 // before removedEnd), then the tail ends later (not after removedStart).
+//
+// Before and after a long removed piece Whisper often stretches the kept words far into its silence (an end late by a
+// second, a start early by half of one): their middles and wordInnerReach then leave that silence in the reel (T3.22:
+// a hole of 1.3 s at the joint of a cut retake). When more than MaxPause of silence would be heard, the edges are
+// looked for down to minWordSound of each word and the cut may pass its middle in the silence (trimSilentEdges keeps
+// the word in the subtitles).
 func (g *cutGrid) around(prev, w transcription.Word, removedStart, removedEnd float64, s Settings) (end, next float64) {
-	prevEnd, nextStart := prev.End, w.Start
-	latestEnd, earliestNext := max(g.floor(removedStart), prevEnd), min(g.ceil(removedEnd), nextStart)
-	heardEnd := g.levels.speechEnd(prevEnd, innerEnd(prev), min(prevEnd+s.PadAfter, removedStart))
-	heardStart := g.levels.speechStart(nextStart, innerStart(w), max(nextStart-s.PadBefore, removedEnd))
+	j := jointAround{prev: prev, w: w, removedStart: removedStart, removedEnd: removedEnd}
+
+	end, next = g.aroundBy(&j, s, innerEnd(prev), innerStart(w), wordMiddle(prev), wordMiddle(w))
+
+	soundEnd := g.levels.speechEnd(prev.End, prev.Start+minWordSound, min(prev.End+s.PadAfter, removedStart))
+	soundStart := g.levels.speechStart(w.Start, w.End-minWordSound, max(w.Start-s.PadBefore, removedEnd))
+
+	if (end-soundEnd)+(soundStart-next) <= s.MaxPause+gridEpsilon {
+		return end, next
+	}
+
+	return g.aroundBy(&j, s, prev.Start+minWordSound, w.End-minWordSound,
+		min(wordMiddle(prev), soundEnd), max(wordMiddle(w), soundStart))
+}
+
+// jointAround is a joint of two kept words with removed words between them.
+type jointAround struct {
+	prev, w                  transcription.Word
+	removedStart, removedEnd float64
+}
+
+// aroundBy is around with the edges of the words looked for down to innerPrev (the end of prev) and innerNext (the
+// start of w), and the cut not before keepEnd in prev nor after keepStart in w.
+func (g *cutGrid) aroundBy(
+	j *jointAround,
+	s Settings,
+	innerPrev, innerNext, keepEnd, keepStart float64,
+) (end, next float64) {
+	prevEnd, nextStart := j.prev.End, j.w.Start
+	latestEnd, earliestNext := max(g.floor(j.removedStart), prevEnd), min(g.ceil(j.removedEnd), nextStart)
+	heardEnd := g.levels.speechEnd(prevEnd, innerPrev, min(prevEnd+s.PadAfter, j.removedStart))
+	heardStart := g.levels.speechStart(nextStart, innerNext, max(nextStart-s.PadBefore, j.removedEnd))
 
 	end = g.quietest(min(heardEnd+tailMin, latestEnd), min(heardEnd+tailMax, latestEnd), true)
 	next = g.quietest(max(heardStart-s.PadBefore, earliestNext), max(heardStart-leadMin, earliestNext), false)
-	end, next = max(end, g.ceil(wordMiddle(prev))), min(next, g.floor(wordMiddle(w)))
+	end, next = max(end, g.ceil(keepEnd)), min(next, g.floor(keepStart))
 
 	if short := breathPause - (end - heardEnd) - (heardStart - next); short > 0 {
 		next = max(g.floor(next-short), earliestNext)
@@ -339,6 +373,59 @@ func (g *cutGrid) tail(end, to float64) float64 {
 	heard := g.levels.speechEnd(end, end, min(end+speechReach, to))
 
 	return max(min(g.ceil(heard+edgeTail), to), end)
+}
+
+// trimSilentEdges is src with the kept words a cut by the sound passed in the middle (around: Whisper stretched them
+// far into the silence of a removed piece) trimmed to their kept piece, so the subtitles keep them (RemapTranscript
+// keeps a word by its middle). Only an edge whose cut part is silent (no window above the threshold of speech) is
+// trimmed: a word cut through its sound stays cut. src itself without levels.
+func trimSilentEdges(src *transcription.Result, keep []Interval, levels *speechLevels) *transcription.Result {
+	if levels == nil || len(keep) == 0 {
+		return src
+	}
+
+	out := *src
+	out.Words = make([]transcription.Word, 0, len(src.Words))
+
+	for _, w := range src.Words {
+		out.Words = append(out.Words, levels.trimmedWord(w, keep))
+	}
+
+	return &out
+}
+
+// trimmedWord is w with its silent end (or start) cut off by keep moved to the edge of its kept piece, when at least
+// minWordSound of it is kept; w itself otherwise.
+func (s *speechLevels) trimmedWord(w transcription.Word, keep []Interval) transcription.Word {
+	if _, ok := findInterval(keep, wordMiddle(w)); ok {
+		return w
+	}
+
+	out := w
+
+	if k, ok := findInterval(keep, w.Start); ok && keep[k].End-w.Start >= minWordSound && !s.heardIn(keep[k].End, w.End) {
+		out.End = keep[k].End
+
+		return out
+	}
+
+	k, ok := findInterval(keep, w.End-gridEpsilon)
+	if ok && w.End-keep[k].Start >= minWordSound && !s.heardIn(w.Start, keep[k].Start) {
+		out.Start = keep[k].Start
+	}
+
+	return out
+}
+
+// heardIn: a whole window within [from, to] is above the threshold of speech.
+func (s *speechLevels) heardIn(from, to float64) bool {
+	for t := math.Ceil(from/s.window-gridEpsilon) * s.window; t+s.window <= to+gridEpsilon; t += s.window {
+		if s.at(t+s.window/2) > s.threshold {
+			return true
+		}
+	}
+
+	return false
 }
 
 // longPauses counts the silences longer than longPause inside the reel (not at its very start and end): the

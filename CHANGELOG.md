@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the light wall under the subtitles) in a soft shadow, so the white subtitles read; a source that is already dark is
   darkened less or not at all (its brightness is measured on a few key frames). `MEDIA_WORKER_GRADE`,
   `MEDIA_WORKER_GRADE_EXPOSURE` (−0.3 EV), `MEDIA_WORKER_GRADE_TOP` (30 %); not in a workout.
+- The editor selects a long talking head like the trainer (T3.22): heading → points → the proof or story of the last
+  point (the climax, never cut for the length) → the question to the viewer and the call → the next part; the
+  self-introduction and «подписывайся» after the call are cut unless the trainer asks to keep them; short links and
+  reactions between phrases («не переживай», «ну что», a swear word as a reply) go with the cleaning; the spoken section
+  heading («ошибка номер два») is cut from the sound (remove_words, not the cleaning) and the section plate stands where the speech goes on; names
+  distorted by the recognition are corrected in the subtitles. A selection that cuts the end of the last
+  section and keeps the introduction after the call gets one hint back (the same decision again is accepted) and a line
+  in the decisions log.
 
 - The trainer's own style is the default subtitle style (T3.20), measured on the reel she edited herself: the speech in
   phrases of one or two lines, small white Manrope Regular, the first word of a sentence in small letters, no accents,
@@ -696,6 +704,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kbtool.SearchTool`; `knowledge.FormatSearchResults` stays for `kb search`.
 
 ### Fixed
+
+- A screen note whose start falls into a cut piece moves to the next kept piece when it starts within 0.6 s (the cut
+  by the sound starts a kept word up to 0.4 s after Whisper's start; a section heading within 3 s: its reading is
+  cut), instead of being lost: a section plate set 0.11 s before the kept question disappeared from the reel. The app
+  checks the notes with the reach shortened by 0.6 s and refuses a section closer than the margin + 0.6 s to another note, so the
+  model moves such a note rather than the worker dropping it (T3.22).
+- The line about the cleaning says what it cuts: «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние
+  вставки: N фрагментов (X с).» when it cut a phrase said again, «Почистил ролик — подготовка к съёмке и лишние
+  вставки: …» otherwise; the header names the failed takes only then (or when a disputed repeat was cut). The spoken
+  section headings cut with their sections are not named in «Не вошло» (T3.22).
+- No long pause at the joint of a removed piece when Whisper stretched the kept words far into its silence: the cut
+  looks for their sound down to 0.08 s of each word, and the subtitles keep such a word (a hole of 1.3 s at a cut
+  retake, T3.22).
 
 - The media worker checks a running job on the board every 3 s apart from the lock refresh (T3.19c): Ctrl+C of
   `make edit` during the transcription stops Whisper within seconds (`job was forgotten while running, cancelled`)

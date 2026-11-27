@@ -276,7 +276,7 @@ const (
 	testMusicCaption = "добавь музыку"
 	trimmedStartLine = "Обрезал начало: убрал первые 2 с."
 	leftTwoRepeats   = "Спорные повторы оставил в ролике: 2."
-	testCleanupLine  = "Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с)."
+	testCleanupLine  = editplan.CleanupLinePrefix + ": 3 фрагмента (52,4 с)."
 	testMusicText    = "Музыку добавьте в Instagram при публикации — я её не накладываю."
 	testSpeedText    = "Ускорение и замедление я не делаю — видео идёт с обычной скоростью."
 	droppedHello     = "Не вошло: «привет»."

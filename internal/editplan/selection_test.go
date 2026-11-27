@@ -241,7 +241,7 @@ func TestApplySelectionWithCleanupWords(t *testing.T) {
 		require.Len(t, outcome.Changes, 3)
 		assert.Equal(t, keptEndLine, outcome.Changes[0])
 		assert.Equal(t, "Не вошло: «не прогибайте поясницу».", outcome.Changes[1], "the take is not «не вошло»")
-		assert.Equal(t, CleanupLinePrefix+": 1 фрагмент (2,4 с).", outcome.Changes[2])
+		assert.Equal(t, cleanupPrepPrefix+": 1 фрагмент (2,4 с).", outcome.Changes[2])
 		assert.Equal(t, []string{"Отбор под рилс: дубль вступления и лишняя фраза"}, outcome.Edit.Notes)
 		assert.Contains(t, outcome.Edit.Details, "Чистка: вырезаны слова 0–4 «привет сегодня расскажу про планку»")
 	}
