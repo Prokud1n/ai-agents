@@ -2,6 +2,7 @@ package subtitles
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"unicode"
 )
@@ -161,14 +162,16 @@ func quietAfter(cues []cue, start, quiet float64) []cue {
 // its time; one that follows the previous without a gap does not (the text would blink).
 func fadeIns(cues []cue, fadeIn int) []int {
 	fades := make([]int, 0, len(cues))
+	prevEnd := math.Inf(-1)
 
-	for i, c := range cues {
+	for _, c := range cues {
 		fade := 0
-		if fadeIn > 0 && (i == 0 || cues[i-1].End < c.Start) {
+		if fadeIn > 0 && prevEnd < c.Start {
 			fade = min(fadeIn, int((c.End-c.Start)*millisPerSecond)/2)
 		}
 
 		fades = append(fades, fade)
+		prevEnd = c.End
 	}
 
 	return fades
