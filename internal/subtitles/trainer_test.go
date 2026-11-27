@@ -145,12 +145,17 @@ func TestTrainerSubtitles(t *testing.T) {
 	style := DefaultStyle()
 	ass, cues := buildDocument(&CreateSubtitlesData{
 		Transcript: speech("Первое: мои подопечные приходят к целям.", "В Москве и Тбилиси, блять, 10 человек.",
-			"МФЦ рядом.", "PDF пришлю."),
+			"МФЦ рядом с домом, туда удобно ходить.", "PDF с планом пришлю вам завтра."),
 	}, &style)
 
 	assert.Equal(t, 4, cues)
 	assert.Contains(t, ass, ",,МФЦ рядом", "an abbreviation keeps its capitals")
-	assert.Contains(t, ass, ",,PDF пришлю")
+	assert.Contains(t, ass, ",,PDF с планом")
+
+	glued, _ := buildDocument(&CreateSubtitlesData{
+		Transcript: speech("Да.", "Начнём с разминки для спины и плеч."),
+	}, &style)
+	assert.Contains(t, glued, "да. начнём с разминки", "a short phrase is glued to the next one")
 	assert.Contains(t, ass, "первое: мои подопечные")
 	assert.NotContains(t, ass, "Первое")
 	assert.Contains(t, ass, "в Москве и Тбилиси")
@@ -208,8 +213,8 @@ func TestSectionBlocks(t *testing.T) {
 		{Start: 12, End: 12.8, Text: "Страх номер два."},
 		{Start: 13, End: 14, Text: "А что если я не справлюсь?"},
 	}}
-	block := func(start, end float64, text string) noteBlock {
-		return noteBlock{start: start, end: end, entries: []string{text}, lines: 1, fadeIn: true, fadeOut: true}
+	block := func(at, start, end float64, text string) noteBlock {
+		return noteBlock{start: start, end: end, at: at, entries: []string{text}, lines: 1, fadeIn: true, fadeOut: true}
 	}
 
 	tests := []struct {
@@ -223,13 +228,13 @@ func TestSectionBlocks(t *testing.T) {
 			name:     "until the phrase after the one that reads the heading out",
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5}, {Kind: SectionNote, Text: fear2, Start: 12}},
 			reelEnd:  20,
-			expected: []noteBlock{block(5, 9.6, fear1Caps), block(12, 14.5, fear2Caps)},
+			expected: []noteBlock{block(5, 5, 9.6, fear1Caps), block(12, 12, 14.5, fear2Caps)},
 		},
 		{
 			name:     "after the hook",
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5}},
 			hookEnd:  6,
-			expected: []noteBlock{block(6, 9.6, fear1Caps)},
+			expected: []noteBlock{block(5, 6, 9.6, fear1Caps)},
 		},
 		{
 			name: "the next one replaces it, the reel ends the last",
@@ -237,17 +242,17 @@ func TestSectionBlocks(t *testing.T) {
 				{Kind: SectionNote, Text: fear2, Start: 12}, {Kind: SectionNote, Text: "страх 3", Start: 13.5},
 			},
 			reelEnd:  15,
-			expected: []noteBlock{block(12, 13.5, fear2Caps), block(13.5, 15, "СТРАХ 3")},
+			expected: []noteBlock{block(12, 12, 13.5, fear2Caps), block(13.5, 13.5, 15, "СТРАХ 3")},
 		},
 		{
 			name:     "its own end within min_duration",
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5, End: 6}},
-			expected: []noteBlock{block(5, 7.5, fear1Caps)},
+			expected: []noteBlock{block(5, 5, 7.5, fear1Caps)},
 		},
 		{
 			name:     "too short to be drawn",
 			notes:    []Note{{Kind: SectionNote, Text: fear1, Start: 5}, {Kind: SectionNote, Text: fear2, Start: 5.2}},
-			expected: []noteBlock{block(5.2, 9.6, fear2Caps)},
+			expected: []noteBlock{block(5.2, 5.2, 9.6, fear2Caps)},
 		},
 		{name: "an empty heading", notes: []Note{{Kind: SectionNote, Text: " \u200b ", Start: 5}}, expected: []noteBlock{}},
 	}
@@ -261,7 +266,7 @@ func TestSectionBlocks(t *testing.T) {
 	}
 
 	long := &transcription.Result{Segments: []transcription.Segment{{Start: 3, End: 12, Text: "Долгий вопрос."}}}
-	assert.Equal(t, []noteBlock{block(3, 9, fear1Caps)},
+	assert.Equal(t, []noteBlock{block(3, 3, 9, fear1Caps)},
 		sectionBlocks([]Note{{Kind: SectionNote, Text: fear1, Start: 3}}, 0, 0, long, &style), "at most max_duration")
 }
 
@@ -372,6 +377,18 @@ func TestHideReadings(t *testing.T) {
 			name: "far from the heading", text: "Привет всем. Страх номер один.", heading: fear1Caps,
 			expected: "Привет всем. Страх номер один.",
 		},
+		{
+			name: "a sentence end inside the reading", text: "Страх. Номер три. Дорого ли это?", heading: "СТРАХ 3",
+			expected: "Дорого ли это?",
+		},
+		{
+			name: "a word that leads it in", text: "И страх номер два: а если не получится?", heading: fear2Caps,
+			expected: "а если не получится?",
+		},
+		{
+			name: "only «номер» or a number go on after a sentence end", text: "Страх. Ошибки бывают у всех.",
+			heading: "СТРАХ ОШИБКИ", expected: "Ошибки бывают у всех.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -394,6 +411,16 @@ func TestHideReadings(t *testing.T) {
 	}
 }
 
+// TestHideReadingsAtNote: a heading that waited for the hook hides the reading said at the time of its note.
+func TestHideReadingsAtNote(t *testing.T) {
+	t.Parallel()
+
+	tokens := tokensFromTranscript(speech("Страх номер один: а что если не получится?"))
+	heading := noteBlock{start: 2.5, at: tokens[0].Start, end: 9, entries: []string{fear1Caps}, lines: 1}
+
+	assert.Equal(t, "а что если не получится?", strings.Join(texts(hideReadings(tokens, []noteBlock{heading})), " "))
+}
+
 // TestHideReadingsInDocument: in one phrase without a pause the words reading the heading go and the question is
 // shown; a heading not drawn (a callout replaced it) hides nothing.
 func TestHideReadingsInDocument(t *testing.T) {
@@ -407,7 +434,7 @@ func TestHideReadingsInDocument(t *testing.T) {
 	ass, _ := buildDocument(&CreateSubtitlesData{Transcript: result, Hook: trainerHook, Notes: notes}, &style)
 
 	assert.NotContains(t, strings.ToLower(ass), "номер один", "the reading is hidden")
-	assert.Contains(t, ass, ",Main,,0,0,0,,а что если онлайн-тренировка", "the question is shown")
+	assert.Contains(t, ass, `,Main,,0,0,0,,{\fad(200,0)}а что если онлайн-тренировка`, "the question is shown")
 	assert.Contains(t, ass, ",Section,", "the heading is drawn")
 
 	dropped := append(slices.Clone(notes), Note{Kind: CalloutNote, Text: calloutYears, Start: start + 0.2})
@@ -447,7 +474,8 @@ func TestTrainerDocumentNoDoubles(t *testing.T) {
 	assert.Equal(t, 1, cues)
 	assert.NotContains(t, ass, "развеиваю страхи об", "the hook's phrase is not doubled")
 	assert.NotContains(t, ass, "страх номер один", "the heading is not read out in the subtitles")
-	assert.Contains(t, ass, ",Main,,0,0,0,,а что если онлайн-тренировка")
+	assert.Contains(t, ass, "Dialogue: 0,0:00:03.40,0:00:05.60,Main,,0,0,0,,{\\fad(200,0)}а что если онлайн-тренировка",
+		"the question on time, fading in")
 	assert.Contains(t, ass, "Dialogue: 2,0:00:01.90,0:00:05.65,Section,", "the heading stays to the end of the question")
 }
 

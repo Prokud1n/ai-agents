@@ -89,6 +89,9 @@ type HookStyle struct {
 	MarginSide int `yaml:"margin_side"`
 	// MaxLines of the hook (and of the screen notes in its style); 0: 4.
 	MaxLines int `yaml:"max_lines"`
+	// FitScale (the select animation): the hook takes the fewest lines that keep it at least this large, percent (a
+	// longer hook is made smaller as a whole rather than given one more line); 0: 93.
+	FitScale int `yaml:"fit_scale"`
 	// Until is when the hook goes: phrase (after the first phrase) or section (at the first section heading).
 	Until HookUntil `yaml:"until"`
 	// Animation is how the hook appears: none (it fades in) or select (it grows from a selection frame).
@@ -96,6 +99,9 @@ type HookStyle struct {
 	// HideSubtitles: no speech subtitles while the hook is shown (the phrase layout); a subtitle that starts under
 	// the hook is shown from its end. false: they stand under the hook.
 	HideSubtitles bool `yaml:"hide_subtitles"`
+	// HideRepeat: a phrase subtitle that repeats the hook (the trainer says the hook right after it) is not shown
+	// (hideHookRepeat).
+	HideRepeat bool `yaml:"hide_repeat"`
 }
 
 // hookMaxLines is how many lines the hook (and a block of the screen notes) takes at most.
@@ -290,6 +296,11 @@ func validateHookValues(h *HookStyle) []error {
 
 	if h.CharWidth < minCharWidth || h.CharWidth > maxCharWidth {
 		errs = append(errs, fmt.Errorf("hook.char_width must be %.1f..%.1f", minCharWidth, maxCharWidth))
+	}
+
+	if h.FitScale != 0 && (h.FitScale < minHookShrinkScale || h.FitScale > fullScaleX) {
+		errs = append(errs, fmt.Errorf("hook.fit_scale must be 0 (%d) or %d..%d", selectFitScale, minHookShrinkScale,
+			fullScaleX))
 	}
 
 	return errs

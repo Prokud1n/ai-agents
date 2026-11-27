@@ -91,7 +91,26 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 		return b.String() + extras, len(words)
 	}
 
-	tokens := tokensFromTranscript(result)
+	timed := speechCues(data, style, headings, end, limit)
+	layout := hookLayout{end: end, margin: style.hookSubtitlesMargin(style.hookLineCount(data.Hook)), notes: blocks}
+
+	if style.Hook.HideSubtitles {
+		layout.margin = 0
+	}
+
+	return renderASS(timed, style, data.Karaoke, layout) + extras, len(timed)
+}
+
+// speechCues are the subtitles of the phrase layout with their times: the tokens of the transcript (with the
+// orthography of the style, sentences in small letters, without the words that read a drawn heading out), grouped into
+// phrases (or the pieces of before), the hook's repeat dropped, timed, cut at the end card (limit), off the screen under
+// the hook (hook.hide_subtitles), the question under a heading shown section.lead after it.
+func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, hookEnd, limit float64) []cue {
+	tokens := tokensFromTranscript(data.Transcript)
+	if style.Layout.Orthography {
+		tokens = fixOrthography(tokens)
+	}
+
 	if style.Layout.LowercaseSentences {
 		tokens = lowerSentenceStarts(tokens)
 	}
@@ -99,14 +118,48 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 	tokens = markAccents(hideReadings(tokens, headings), data.Accents, style.Accent.Words)
 	limits := layoutLimits{maxLines: style.Layout.MaxLines, maxLineChars: style.lineChars()}
 	units := buildUnits(tokens, limits.maxLineChars)
-	timed := clipCues(timeCues(buildCues(groupCues(units, limits), style, len(parsePhrases(data.Accents)) > 0)), limit)
-	layout := hookLayout{end: end, margin: style.hookSubtitlesMargin(style.hookLineCount(data.Hook)), notes: blocks}
+	explicit := len(parsePhrases(data.Accents)) > 0
 
-	if style.Hook.HideSubtitles {
-		timed, layout.margin = hideUnderHook(timed, end), 0
+	var cues []cue
+
+	timing := defaultTiming
+
+	if p := &style.Layout.Phrases; p.Enabled {
+		barriers := glueBarriers(headings, hookEnd)
+		cues, timing = buildCues(phraseGroups(units, limits, p, barriers), style, explicit), phraseTiming(p)
+	} else {
+		cues = buildCues(groupCues(units, limits), style, explicit)
 	}
 
-	return renderASS(timed, style, data.Karaoke, layout) + extras, len(timed)
+	if style.Hook.HideRepeat {
+		cues = hideHookRepeat(cues, data.Hook, hookEnd)
+	}
+
+	timed := clipCues(timeCuesWith(cues, timing), limit)
+
+	if style.Hook.HideSubtitles {
+		timed = hideUnderHook(timed, hookEnd)
+	}
+
+	return leadUnderSections(timed, headings, style.Section.Lead)
+}
+
+// glueBarriers are the moments no phrase is glued across: the end of the hook (a piece under it and one after it are
+// apart, so the hook's repeat is recognized), the starts of the drawn headings and the times their notes were said.
+func glueBarriers(headings []noteBlock, hookEnd float64) []float64 {
+	barriers := make([]float64, 0, 2*len(headings)+1)
+	if hookEnd > 0 {
+		barriers = append(barriers, hookEnd)
+	}
+
+	for _, h := range headings {
+		barriers = append(barriers, h.start)
+		if h.at != h.start {
+			barriers = append(barriers, h.at)
+		}
+	}
+
+	return barriers
 }
 
 // titleEvents are the dialogue lines of the exercise titles: the Title style, above the subtitles, the text escaped
@@ -166,7 +219,8 @@ func titleStyleLine(style *Style) string {
 // renderASS writes an ASS document for a 1080×1920 frame. Line breaks are explicit (\N); WrapStyle 0 lets libass
 // wrap a line only if the character estimate was too optimistic, so the text never leaves the frame. A subtitle that
 // starts while the hook title is shown or meets a block of the screen notes stands clear of it for all its time (it
-// does not jump while it is read), over the shade that extends the vignette under it (shadeEvents).
+// does not jump while it is read), over the shade that extends the vignette under it (shadeEvents). A subtitle after a
+// gap fades in over layout.fade_in (fadeIns).
 func renderASS(cues []cue, style *Style, karaoke bool, hook hookLayout) string {
 	margins := make([]int, 0, len(cues))
 	for _, c := range cues {
@@ -180,17 +234,24 @@ func renderASS(cues []cue, style *Style, karaoke bool, hook hookLayout) string {
 	writeHeader(&b, style, shade != "")
 	b.WriteString(shade)
 
+	fades := fadeIns(cues, style.Layout.FadeIn)
+
 	for i, c := range cues {
 		marginV := margins[i]
 
 		if !karaoke {
-			writeDialogue(&b, c.Start, c.End, marginV, cueText(c, style, -1))
+			writeDialogue(&b, c.Start, c.End, marginV, fadePrefix(fades[i])+cueText(c, style, -1))
 
 			continue
 		}
 
-		for _, e := range karaokeEvents(c, style) {
-			writeDialogue(&b, e.start, e.end, marginV, e.text)
+		for j, e := range karaokeEvents(c, style) {
+			fade := ""
+			if j == 0 {
+				fade = fadePrefix(fades[i])
+			}
+
+			writeDialogue(&b, e.start, e.end, marginV, fade+e.text)
 		}
 	}
 

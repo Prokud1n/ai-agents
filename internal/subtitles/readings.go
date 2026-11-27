@@ -12,7 +12,11 @@ import (
 const maxReadingFillers = 2
 
 // readingFillers are said between the words of a heading when it is read out: «страх номер один» for «СТРАХ 1».
-var readingFillers = wordSet("номер", "пункт")
+// readingLeads are said right before a reading («и страх номер два»): hidden with it, they would stand alone.
+var (
+	readingFillers = wordSet("номер", "пункт")
+	readingLeads   = wordSet("и", "а", "итак", "ну", "так")
+)
 
 // readingNumbers map the numerals and the ordinal words of one to ten to their digits: «один», «первый» and
 // «во-первых» read «1» out.
@@ -92,7 +96,7 @@ func hideReadings(tokens []token, headings []noteBlock) []token {
 			continue
 		}
 
-		from, to, ok := findReading(tokens, h.start, headingWords(h.entries[0]))
+		from, to, ok := readingOf(tokens, h)
 		if !ok {
 			continue
 		}
@@ -125,6 +129,27 @@ func hideReadings(tokens []token, headings []noteBlock) []token {
 	return out
 }
 
+// readingOf finds the words that read the heading out: at its start or, when it waited for the hook, at the time the
+// note was said; with a word that leads the reading in at the start of a clause («и страх номер два»).
+func readingOf(tokens []token, h noteBlock) (from, to int, ok bool) {
+	heading := headingWords(h.entries[0])
+
+	from, to, ok = findReading(tokens, h.start, heading)
+	if !ok && h.at != h.start {
+		from, to, ok = findReading(tokens, h.at, heading)
+	}
+
+	if !ok {
+		return 0, 0, false
+	}
+
+	if from > 0 && readingLeads[tokens[from-1].Norm] && (from < 2 || tokens[from-2].Break != noBreak) {
+		from--
+	}
+
+	return from, to, true
+}
+
 // findReading finds the words that read the heading out: a run that starts within readingWindow of the heading's
 // start and is the heading's words in any order with at most maxReadingFillers fillers, at least half of the heading
 // and at least half of the run matching. false when no run reads it.
@@ -141,6 +166,13 @@ func findReading(tokens []token, start float64, heading []string) (from, to int,
 		if end, matched := readingRun(tokens, i, heading); matched {
 			return i, end, true
 		}
+
+		// «и страх номер два» from the heading's start: the reading after the word that leads it in.
+		if readingLeads[t.Norm] && i+1 < len(tokens) && t.Break == noBreak {
+			if end, matched := readingRun(tokens, i+1, heading); matched {
+				return i, end, true
+			}
+		}
 	}
 
 	return 0, 0, false
@@ -148,14 +180,20 @@ func findReading(tokens []token, start float64, heading []string) (from, to int,
 
 // readingRun reads the heading's words from the token at: the last word of the reading and whether it reads the
 // heading out (at least half of the heading and of the run match). It stops at a word that is neither a heading's
-// word left nor a filler, and after the end of a sentence.
+// word left nor a filler, and after the end of a sentence once all the heading's words are read; Whisper may end a
+// sentence inside the reading («Страх. Номер три.»), so after it the reading goes on only with «номер»/«пункт» or a
+// number.
 func readingRun(tokens []token, at int, heading []string) (end int, ok bool) {
 	left := slices.Clone(heading)
 	matched, fillers, last := 0, 0, -1
+	ended := false // a sentence ended inside the reading: only «номер»/«пункт» or a number go on with it
 
 run:
 	for i := at; i < len(tokens); i++ {
 		w := readingWord(tokens[i].Norm)
+		if ended && !readingFillers[w] && !isDigits(w) {
+			break
+		}
 
 		switch idx := slices.Index(left, w); {
 		case idx >= 0:
@@ -168,7 +206,11 @@ run:
 		}
 
 		if tokens[i].Break == strongBreak {
-			break
+			if len(left) == 0 {
+				break
+			}
+
+			ended = true
 		}
 	}
 

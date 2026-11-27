@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The trainer's subtitles are whole phrases, as in her reels (T3.23): a subtitle ends at the end of a sentence or at a
+  pause of 0.25 s (not right after «и», «в», «не»), a phrase too long for two lines of 30 characters is split at a comma
+  or before a conjunction into pieces of at least four words, a piece of fewer than three words or shorter than 1.5 s
+  is glued to its neighbor (or the cut between them is moved) and otherwise stays until the next subtitle; lines are
+  cut by sense, not after a preposition, a conjunction or «не». The speech recognition's misses are fixed in the
+  subtitles: «кто-то», «что-нибудь», «онлайн-тренировки», «онлайн-тренер», «из-за», «во-первых», «всё равно», «ещё», a
+  capital in the middle of a sentence. A subtitle after a pause fades in over 0.2 s. The hook takes two lines made
+  smaller rather than three, a phrase that repeats the hook right after it is not shown, the question under a
+  section heading is shown with its speech but not before 0.35 s after the heading (also when the editor cut the
+  reading out of the sound and the heading starts on the question), the heading stays to the end of the question, and «и страх номер три» or «Страх. Номер три.» are
+  hidden whole under «СТРАХ 3». New style fields: `layout.phrases`, `layout.orthography`, `layout.fade_in`,
+  `hook.fit_scale`, `hook.hide_repeat`, `section.lead` (off in `style-phrase.yaml` and `style-words.yaml`).
 - The editor selects a long talking head like the trainer (T3.22): heading → points → the proof or story of the last
   point (the climax, never cut for the length) → the question to the viewer and the call → the next part; the
   self-introduction and «подписывайся» after the call are cut unless the trainer asks to keep them; short links and
