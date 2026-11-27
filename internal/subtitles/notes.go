@@ -28,7 +28,9 @@ var newListPrefixes = []string{"1/", "1.", "1)"}
 // noteBlock is what the notes show from start to end: a list (its title and items, the latest that fit) or a callout,
 // lines lines in all.
 type noteBlock struct {
-	start, end      float64
+	start, end float64
+	// at is when the heading was said (it waits for the hook: start may be later); unused for the other notes.
+	at              float64
 	entries         []string
 	lines           int
 	fadeIn, fadeOut bool

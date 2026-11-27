@@ -40,19 +40,33 @@ const (
 	cursorPath = "m 0 0 l 0 34 l 9 26 l 15 40 l 21 37 l 15 24 l 26 24"
 	// assWhite is opaque white for the \1c override.
 	assWhite = "&HFFFFFF&"
-	// selectFitScale: the hook takes the fewest lines that keep it at least this large (percent).
-	selectFitScale = 93
+	// selectFitScale: the hook takes the fewest lines that keep it at least this large (percent), unless hook.fit_scale
+	// says otherwise; trainerHookFitScale is the trainer's: two lines made smaller rather than three (T3.23).
+	selectFitScale      = 93
+	trainerHookFitScale = 75
 )
+
+// hookFitScale is the smallest scale of the hook that does not take one more line (hook.fit_scale).
+func (s *Style) hookFitScale() int {
+	if s.Hook.FitScale > 0 {
+		return s.Hook.FitScale
+	}
+
+	return selectFitScale
+}
 
 // selectLines wraps the hook of the select animation: the fewest lines (up to the hook's max_lines) that keep it at
 // least selectFitScale of its size — without a short word at the end of a line when that is as good, otherwise as the
-// trainer does («РАЗВЕИВАЮ СТРАХИ ОБ» over «ОНЛАЙН-ТРЕНИРОВКАХ»); none such: the largest of them.
+// trainer does («РАЗВЕИВАЮ СТРАХИ ОБ» over «ОНЛАЙН-ТРЕНИРОВКАХ») — or, when none does, the larger of the two wraps of
+// the fewest lines that keep it at least hook.fit_scale; none such: the largest of them.
 func selectLines(words []string, style *Style) [][2]int {
 	var best [][2]int
 
 	bestScale := 0
 
 	for n := 1; n <= style.hookMaxLines(); n++ {
+		lineBest, lineScale := [][2]int(nil), 0
+
 		for _, strict := range []bool{true, false} {
 			lines := evenSplit(words, n, strict)
 			scale := selectionOf(words, lines, style).scale
@@ -61,9 +75,18 @@ func selectLines(words []string, style *Style) [][2]int {
 				return lines
 			}
 
-			if scale > bestScale {
-				best, bestScale = lines, scale
+			if scale > lineScale {
+				lineBest, lineScale = lines, scale
 			}
+		}
+
+		// Fewer lines made smaller (hook.fit_scale) rather than one more line.
+		if lineScale >= style.hookFitScale() {
+			return lineBest
+		}
+
+		if lineScale > bestScale {
+			best, bestScale = lineBest, lineScale
 		}
 	}
 

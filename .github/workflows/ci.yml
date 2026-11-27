@@ -653,7 +653,7 @@ jobs:
           JSON
             /app/subtitles -transcript /tmp/result.json -out /tmp/subtitles.ass -ass-only
             grep -q "PlayResY: 1920" /tmp/subtitles.ass
-            grep -q ",Main,,0,0,0,,делаем 3 подхода" /tmp/subtitles.ass
+            grep -q ",Main,,0,0,0,,{.fad(200,0)}делаем 3 подхода" /tmp/subtitles.ass
             if grep -q "ПОДХОДА" /tmp/subtitles.ass; then echo "no accents in the default style"; exit 1; fi
             /app/subtitles -transcript /tmp/result.json -style /app/subtitles-style-words.yaml -out /tmp/words.ass -ass-only
             grep -q ",Word,,0,0,0,,{.q2}3 подхода" /tmp/words.ass

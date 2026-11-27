@@ -22,6 +22,10 @@ const (
 	// out («страх номер один»): the heading stays for the phrase after it. The words that read it out start this
 	// close to it too (hideReadings).
 	readingWindow = 0.3
+	// trainerSectionLead: under the trainer's heading the subtitle of the question appears this much after it, so the
+	// heading is read first (T3.23); maxSectionLead is the limit of section.lead in a style file.
+	trainerSectionLead = 0.35
+	maxSectionLead     = 1.0
 )
 
 // SectionStyle is the look and the place of the section headings of a talking head («СТРАХ 1», «СТРАХ 2»): one line
@@ -39,6 +43,10 @@ type SectionStyle struct {
 	MaxDuration float64 `yaml:"max_duration"`
 	// Fade in and out, in milliseconds.
 	Fade int `yaml:"fade"`
+	// Lead: a subtitle whose speech starts with a heading (its reading cut out of the sound, the heading starts on the
+	// question) appears this many seconds after the heading, not before it (leadUnderSections); its speech is never
+	// delayed more. 0: at once.
+	Lead float64 `yaml:"lead"`
 }
 
 // defaultSection is the look of the trainer's headings: peach Fira Sans Extra Condensed ExtraBold capitals, the
@@ -70,6 +78,10 @@ func validateSection(s *Style) []error {
 	if c.Fade < 0 || c.Fade > maxHookFade || float64(2*c.Fade) >= c.MinDuration*millisPerSecond {
 		errs = append(errs, fmt.Errorf("section.fade must be 0..%d ms and shorter than half of section.min_duration",
 			maxHookFade))
+	}
+
+	if c.Lead < 0 || c.Lead > maxSectionLead {
+		errs = append(errs, fmt.Errorf("section.lead must be 0..%.0f s", maxSectionLead))
 	}
 
 	if len(errs) > 0 || !c.Enabled {
@@ -189,7 +201,8 @@ func sectionBlocks(sections []Note, hookEnd, reelEnd float64, result *transcript
 		}
 
 		blocks = append(blocks, noteBlock{
-			start: roundCS(start), end: roundCS(end), entries: []string{n.Text}, lines: 1, fadeIn: true, fadeOut: true,
+			start: roundCS(start), end: roundCS(end), at: n.Start, entries: []string{n.Text}, lines: 1, fadeIn: true,
+			fadeOut: true,
 		})
 	}
 

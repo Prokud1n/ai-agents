@@ -16,9 +16,29 @@ const (
 	centisecondsPerSecond = 100
 )
 
-// timeCues sets display times: lead-in and hold around the words, minimum duration, no overlaps (a subtitle ends
-// where the next begins at the latest), no blinking gaps. Times are rounded to ASS centiseconds.
+// cueTiming are the limits of timeCuesWith: the shortest and the longest subtitle and the gap to the next one that is
+// closed (the subtitle stays until the next starts).
+type cueTiming struct {
+	minDuration, maxDuration, closeGap float64
+}
+
+// defaultTiming is the timing of the pieces of before (groupCues).
+var defaultTiming = cueTiming{minDuration: minCueDuration, maxDuration: maxCueDuration, closeGap: flickerGap}
+
+// phraseTiming is the timing of the phrases of the style: a phrase stays at least min_duration and until the next one
+// across a pause up to hold_gap.
+func phraseTiming(p *PhraseLayout) cueTiming {
+	return cueTiming{minDuration: p.MinDuration, maxDuration: p.MaxDuration, closeGap: p.HoldGap}
+}
+
+// timeCues sets display times with defaultTiming.
 func timeCues(cues []cue) []cue {
+	return timeCuesWith(cues, defaultTiming)
+}
+
+// timeCuesWith sets display times: lead-in and hold around the words, minimum duration, no overlaps (a subtitle ends
+// where the next begins at the latest), no blinking gaps. Times are rounded to ASS centiseconds.
+func timeCuesWith(cues []cue, timing cueTiming) []cue {
 	starts := make([]float64, len(cues))
 
 	for i, c := range cues {
@@ -32,14 +52,14 @@ func timeCues(cues []cue) []cue {
 
 	for i, c := range cues {
 		start := starts[i]
-		end := max(c.End+hold, start+minCueDuration)
+		end := max(c.End+hold, start+timing.minDuration)
 
 		// The last word may be timed by Whisper over a long pause: do not keep it longer than a whole subtitle.
-		end = min(end, start+maxCueDuration+hold)
+		end = min(end, start+timing.maxDuration+hold)
 
 		if i+1 < len(cues) {
 			next := starts[i+1]
-			if next-end < flickerGap {
+			if next-end < timing.closeGap {
 				end = next
 			}
 
