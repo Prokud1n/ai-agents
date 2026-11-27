@@ -17,14 +17,25 @@ const (
 	shortCleanupShare = 0.5
 )
 
-// CleanupLinePrefix starts the line of the description about the cleaning of a first version (cleanupLine): the
-// editor's description of the draft names the failed takes only when they were cut.
-const CleanupLinePrefix = "Убрал неудачные дубли и подготовку к съёмке"
+// CleanupLinePrefix starts the line of the description about the cleaning of a first version (cleanupLine). The
+// cleaning cuts the failed takes, the preparation for the shooting and the short links and reactions between phrases
+// (T3.22), so the line names all three; the header of the description names the failed takes only when some were cut
+// (Outcome.CleanedTakes).
+//
+// CleanupLinePrefix is the line of a cleaning that cut a failed take (cleaning.takes), cleanupPrepPrefix of one that
+// cut only the preparation and the links: the trainer is never told of takes that were not there.
+const (
+	CleanupLinePrefix = "Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки"
+	cleanupPrepPrefix = "Почистил ролик — подготовка к съёмке и лишние вставки"
+)
 
 // cleaning is what the cleaning of a first version removed from the reel: the fragments of speech and their seconds.
 type cleaning struct {
 	fragments int
 	seconds   float64
+	// takes: the cleaning cut a phrase the hints found said again (writeRepeats: similar phrases, a repeat in a row),
+	// so it cut a failed take, not only the preparation or a link.
+	takes bool
 }
 
 // cleaningTask is said after the task of a first version with a caption that is cleaned too.
@@ -34,8 +45,9 @@ const cleaningTask = " Ещё почисти ролик (раздел «Чист
 // selectionCleaning is said in the task of the selection: the failed takes go first, through cleanup_words, and count
 // in the length of the reel.
 const selectionCleaning = " Сначала выкинь неудачные дубли, повторы подряд и подготовку к съёмке через cleanup_words " +
-	"(раздел «Чистка дублей и подготовки»); из дублей оставляй последний полный. Вырезанное через cleanup_words тоже " +
-	"сокращает ролик и считается в его длине."
+	"(раздел «Чистка дублей и подготовки»); из дублей оставляй последний полный. Туда же — короткие вставки и реакции " +
+	"отдельной репликой («не переживай», «ну что», ругательство). Вырезанное через cleanup_words тоже сокращает ролик " +
+	"и считается в его длине."
 
 // cleanupTask is the task of a first version only cleaned by the editor.
 func cleanupTask(req *Request) string {
@@ -149,7 +161,32 @@ func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan
 		inside = cleaned
 	}
 
-	return cleaning{fragments: fragments, seconds: max(whole.Duration-plan.Duration, 0)}, nil
+	cleanedWord := func(i int) bool { return marked[i] && keptBefore[i] && !keptAfter[i] }
+
+	return cleaning{
+		fragments: fragments, seconds: max(whole.Duration-plan.Duration, 0), takes: cutsRepeats(req, cleanedWord),
+	}, nil
+}
+
+// cutsRepeats: a word of a phrase the hints of the cleaning name as said again (writeRepeats) is cut.
+func cutsRepeats(req *Request, cut func(i int) bool) bool {
+	list := normalizedPhrases(req.Transcript, req.Plan)
+	repeated := inRowRepeats(list)
+
+	pairs := similarPairs(req.Transcript.Words, list)
+	for k := range pairs {
+		repeated = append(repeated, pairs[k][0], pairs[k][1])
+	}
+
+	for k := range repeated {
+		for i := repeated[k].from; i <= repeated[k].to; i++ {
+			if cut(i) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // cleanupFloor is the shortest reel a cleaning may leave of a reel of the duration.
@@ -157,13 +194,19 @@ func cleanupFloor(duration float64) float64 {
 	return max(duration*minCleanupShare, min(minCleanupSeconds, duration*shortCleanupShare))
 }
 
-// cleanupLine: «Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с).»; "" when nothing was removed.
+// cleanupLine: «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки: 3 фрагмента (52,4 с).», without
+// «неудачные дубли» when no failed take was cut; "" when nothing was removed.
 func cleanupLine(c cleaning) string {
 	if c.fragments == 0 {
 		return ""
 	}
 
-	return fmt.Sprintf("%s: %s (%s).", CleanupLinePrefix, plural(c.fragments, "фрагмент", "фрагмента", "фрагментов"),
+	prefix := cleanupPrepPrefix
+	if c.takes {
+		prefix = CleanupLinePrefix
+	}
+
+	return fmt.Sprintf("%s: %s (%s).", prefix, plural(c.fragments, "фрагмент", "фрагмента", "фрагментов"),
 		durationText(c.seconds))
 }
 

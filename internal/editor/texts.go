@@ -404,7 +404,7 @@ func firstSummary(req *editplan.Request, outcome *editplan.Outcome) *editjob.Sum
 	}
 
 	summary.Selected = outcome.Selected && !workout
-	summary.Cleaned = !workout && (outcome.Cleaned > 0 || outcome.Cut > 0)
+	summary.Cleaned = !workout && (outcome.CleanedTakes || outcome.Cut > 0)
 	summary.Changes = append(summary.Changes, outcome.Changes...)
 	summary.Note = editplan.DeclinedText(outcome.Declined)
 

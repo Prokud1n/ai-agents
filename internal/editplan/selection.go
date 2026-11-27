@@ -24,6 +24,8 @@ const (
 	maxDroppedQuotes = 3
 	maxDroppedRunes  = 40
 	ellipsisMark     = "…"
+	// maxReadingWords of a spoken section heading cut with it («страх номер два», «и пункт номер три»).
+	maxReadingWords = 5
 )
 
 // selection is the editorial selection of a decision: whether phrases were picked for the length of a reel (and the
@@ -39,6 +41,8 @@ type selection struct {
 	cleanup  bool
 	only     bool
 	cleaned  cleaning
+	// notes are the screen notes of the edit: a range cut from a section heading is its reading, replaced by the plate.
+	notes []roughcut.ScreenNote
 }
 
 // newSelection is the selection of a decision with the plan it builds: on only when the reel got shorter.
@@ -265,21 +269,55 @@ func selectionLines(req *Request, in *Input, sel *selection) []string {
 		lines = append(lines, "Оставил главное: «"+joinIndexed(words, kept)+"».")
 	}
 
-	if len(in.Remove) == 0 {
+	dropped := droppedRanges(words, in.Remove, sel.notes)
+	if len(dropped) == 0 {
 		return lines
 	}
 
-	names := make([]string, 0, min(len(in.Remove), maxDroppedQuotes))
-	for _, r := range in.Remove[:min(len(in.Remove), maxDroppedQuotes)] {
+	names := make([]string, 0, min(len(dropped), maxDroppedQuotes))
+	for _, r := range dropped[:min(len(dropped), maxDroppedQuotes)] {
 		names = append(names, "«"+truncate(quote(words, r), maxDroppedRunes)+"»")
 	}
 
 	line := "Не вошло: " + strings.Join(names, ", ")
-	if rest := len(in.Remove) - len(names); rest > 0 {
+	if rest := len(dropped) - len(names); rest > 0 {
 		line += fmt.Sprintf(" и ещё %d", rest)
 	}
 
 	return append(lines, line+".")
+}
+
+// droppedRanges are the ranges the selection cut that the trainer is told did not make it into the reel: not the
+// readings of the section headings (a range starting where a section stands, or right before the word it stands on),
+// the plate replaces them. A reading is short (maxReadingWords: «ошибка номер два», «пункт первый»); a longer range
+// there is speech that did not make it.
+func droppedRanges(
+	words []transcription.Word,
+	remove []roughcut.WordRange,
+	notes []roughcut.ScreenNote,
+) []roughcut.WordRange {
+	out := make([]roughcut.WordRange, 0, len(remove))
+
+	for _, r := range remove {
+		reading := r.To-r.From < maxReadingWords && (startsSection(words[r.From].Start, notes) ||
+			(r.To+1 < len(words) && startsSection(words[r.To+1].Start, notes)))
+		if !reading {
+			out = append(out, r)
+		}
+	}
+
+	return out
+}
+
+// startsSection: a section heading stands at t (within segmentSlack).
+func startsSection(t float64, notes []roughcut.ScreenNote) bool {
+	for _, n := range notes {
+		if n.Kind == roughcut.SectionNote && math.Abs(n.Start-t) <= segmentSlack {
+			return true
+		}
+	}
+
+	return false
 }
 
 // keptWords are the indices of the words left in the reel.

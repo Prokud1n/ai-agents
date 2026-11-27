@@ -135,6 +135,79 @@ func TestApplySections(t *testing.T) {
 	assert.Equal(t, "На экране: 2 раздела.", outcome.Changes[0])
 }
 
+// TestApplySectionOnCutReading (T3.22): a section set on the words it removes (the spoken heading) is shown where the
+// speech goes on; a note at the same place (here PadBefore apart, in the worker at one point), or a section too far
+// before the speech, goes back to the model.
+func TestApplySectionOnCutReading(t *testing.T) {
+	t.Parallel()
+
+	reading := []roughcut.WordRange{{From: 0, To: 2}}
+
+	tests := []struct {
+		name   string
+		remove []roughcut.WordRange
+		notes  []NoteInput
+		err    string
+	}{
+		{name: "the section on its cut reading", remove: reading,
+			notes: []NoteInput{{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)}}},
+		{
+			name: "an item at the same place", remove: reading, err: "в одном месте",
+			notes: []NoteInput{
+				{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)},
+				{Kind: roughcut.CalloutNote, Text: noteYears, Word: new(3)},
+			},
+		},
+		{
+			name: "two sections in one cut", remove: reading, err: "в одном месте",
+			notes: []NoteInput{
+				{Kind: roughcut.SectionNote, Text: sectionOne, Word: new(0)},
+				{Kind: roughcut.SectionNote, Text: sectionTwo, Word: new(1)},
+			},
+		},
+		{
+			name: "too far before the speech", remove: []roughcut.WordRange{{From: 3, To: 5}}, err: "их начало вырезано",
+			notes: []NoteInput{{Kind: roughcut.SectionNote, Text: sectionTwo, Word: new(3)}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			outcome, err := Apply(defaultMarginsRequest(t), &Input{
+				Decision: EditDecision, Reason: testReason, Remove: tt.remove, ScreenNotes: new(tt.notes),
+			})
+
+			if tt.err == "" {
+				require.NoError(t, err)
+				assert.Len(t, outcome.Edit.ScreenNotes, len(tt.notes))
+
+				return
+			}
+
+			var check *CheckError
+			require.ErrorAs(t, err, &check)
+			assert.Contains(t, check.Message, tt.err)
+		})
+	}
+}
+
+// defaultMarginsRequest is the first version of testSpeech planned with the margins of the service (0.12/0.18 s), as
+// the app plans it.
+func defaultMarginsRequest(t *testing.T) *Request {
+	t.Helper()
+
+	src := speech(testSpeech)
+	settings := testSettings()
+	settings.MaxPause, settings.PadBefore, settings.PadAfter = 0.3, 0.12, 0.18
+
+	plan, err := roughcut.BuildPlanEdited(src, src.Duration, settings, &roughcut.Edit{})
+	require.NoError(t, err)
+
+	return &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan}
+}
+
 // TestApplyScreenNotesRevision: a revision replaces the list (an empty one removes it), keeps it when it does not
 // name it, and a list that changes nothing is no revision; the reel built with notes alone is the same.
 func TestApplyScreenNotesRevision(t *testing.T) {
@@ -228,7 +301,7 @@ func TestPromptScreenNotes(t *testing.T) {
 
 	withNotes := &roughcut.Edit{ScreenNotes: []roughcut.ScreenNote{
 		{Kind: roughcut.ListItemNote, Text: noteSpine, Start: 0.5},
-		{Kind: roughcut.CalloutNote, Text: "эээ", Start: 5.7},
+		{Kind: roughcut.CalloutNote, Text: "пауза", Start: 4.5}, // in the long pause, 1.6 s before the speech
 	}}
 
 	tests := []struct {
@@ -239,7 +312,7 @@ func TestPromptScreenNotes(t *testing.T) {
 	}{
 		{
 			name: "a first version", req: testRequest(1, nil),
-			expected: []string{"Пункты и цифры на экране: если тренер перечисляет"},
+			expected: []string{"Пункты и цифры на экране: если тренер перечисляет", readingsCut},
 		},
 		{
 			name: "a revision without notes", req: testRequest(2, &roughcut.Edit{}),
@@ -250,7 +323,7 @@ func TestPromptScreenNotes(t *testing.T) {
 			expected: []string{
 				"screen_notes заменяет весь список",
 				"- пункт «1/ спина ровно», с 0:00.5 исходника (в ролике 0:00.",
-				"- выноска «эээ», с 0:05.7 исходника (вырезано, в ролике не видно)",
+				"- выноска «пауза», с 0:04.5 исходника (вырезано, в ролике не видно)",
 			},
 		},
 		{
