@@ -14,7 +14,8 @@ import (
 // the climax («…and then she ran her first ten kilometres» without «ten kilometres»), so the story broke off. A
 // cleaning that cuts the end of a sentence whose start stays in the reel gets a hint back once (like checkEnding: the
 // same decision again is accepted) and a line in the details. A sentence cut whole (a link, a reaction) is not
-// judged, nor the words said again in a row at the end of a sentence («ну привет ну привет»).
+// judged, nor the words said again in a row at the end of a sentence («ну привет ну привет»), nor a failed take glued
+// to the end of a kept sentence by the punctuation (takeWords).
 //
 // A sentence ends at a sentence mark of the segment text (roughcut.SentenceEnds), at a pause longer than phraseGap or
 // at the end of the speech.
@@ -52,7 +53,8 @@ func checkPhraseEnds(req *Request, in *Input, edit *roughcut.Edit, plan *roughcu
 	return "конец фразы: cleanup_words вырезают последние слова предложения, начало которого осталось в ролике, — " +
 		strings.Join(refs, "; ") + ". Без них мысль или история обрывается (особенно кульминация): верни конец " +
 		"фразы — убери эти слова из cleanup_words или вырежи предложение целиком. Короткую связку или реакцию " +
-		"отдельной репликой по-прежнему вырезай целиком"
+		"отдельной репликой по-прежнему вырезай целиком. Если это оборванный или неудачный дубль в конце " +
+		"предложения — отправь то же решение ещё раз"
 }
 
 // cutSentenceEnds are the ends of the sentences the cleaning cut: the words after the last kept word of a sentence up
@@ -62,13 +64,15 @@ func cutSentenceEnds(req *Request, cleanup []roughcut.WordRange, plan *roughcut.
 	words := req.Transcript.Words
 	ends := roughcut.SentenceEnds(req.Transcript)
 	before, after := keptSet(words, req.Plan.Keep), keptSet(words, plan.Keep)
+	takes := takeWords(req, after)
 
 	var out []roughcut.WordRange
 
 	for from := 0; from < len(words) && len(out) < maxTailHints; {
 		to := sentenceEnd(words, ends, from)
 
-		if tail, ok := cutEnd(words, after, from, to); ok && before[to] && inRanges(cleanup, to) {
+		if tail, ok := cutEnd(words, after, from, to); ok && before[to] && inRanges(cleanup, to) &&
+			!slices.Contains(takes[tail.From:tail.To+1], true) {
 			out = append(out, tail)
 		}
 

@@ -92,6 +92,58 @@ func TestCheckPhraseEndsRepeatInRow(t *testing.T) {
 	assert.Empty(t, outcome.tailHint)
 }
 
+// storyTakesSpeech has a failed take glued to the end of a kept sentence by the punctuation and said again in full:
+//
+//	0–2 сегодня про бег | 3–6 моя ученица боялась начать | 7–9 через месяц она. |
+//	10–16 через месяц она пробежала первые десять километров | 17–20 пишите вопросы в комментариях
+const storyTakesSpeech = "сегодня про бег. | моя ученица боялась начать | через месяц она. | " +
+	"через месяц она пробежала первые десять километров. | пишите вопросы в комментариях."
+
+// TestCheckPhraseEndsFailedTake (T3.26): a failed take at the end of a kept sentence, said again right after it, is
+// cleaned without a hint; the end of the take said again (the story) still gets one.
+func TestCheckPhraseEndsFailedTake(t *testing.T) {
+	t.Parallel()
+
+	src := speech(storyTakesSpeech)
+
+	plan, err := roughcut.BuildPlanEdited(src, src.Duration, testSettings(), &roughcut.Edit{})
+	require.NoError(t, err)
+
+	req := &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan, Cleanup: true}
+	require.Contains(t, Prompt(req), "Похожие фразы", "the take said again is hinted")
+
+	tests := []struct {
+		name    string
+		cleanup []roughcut.WordRange
+		hint    string
+	}{
+		{name: "the failed take", cleanup: []roughcut.WordRange{{From: 7, To: 9}}},
+		{
+			name: "the failed take and the end of the story", cleanup: []roughcut.WordRange{{From: 7, To: 9}, {From: 15, To: 16}},
+			hint: "слова 15–16 «десять километров»",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			outcome, err := Apply(req, &Input{Decision: EditDecision, Reason: testReason, CleanupWords: tt.cleanup})
+			require.NoError(t, err)
+			assert.NotContains(t, outcome.tailHint, "слова 7–9", "the failed take is no end of a sentence")
+
+			if tt.hint == "" {
+				assert.Empty(t, outcome.tailHint)
+
+				return
+			}
+
+			assert.Contains(t, outcome.tailHint, tt.hint)
+			assert.Contains(t, outcome.tailHint, "оборванный или неудачный дубль")
+		})
+	}
+}
+
 // TestSubmitTailHint (T3.26): the hint about the cut end of a sentence comes back once without taking an attempt; the
 // same decision again is accepted with the line in the details, the end brought back is accepted at once.
 func TestSubmitTailHint(t *testing.T) {
@@ -113,6 +165,7 @@ func TestSubmitTailHint(t *testing.T) {
 		{name: "the end brought back after the hint", inputs: []string{tailCut, linkCut}, toolErrors: 1},
 		{name: "the link only", inputs: []string{linkCut}},
 		{name: "the hint takes no attempt", inputs: []string{tailCut, broken, linkCut}, toolErrors: 2},
+		{name: "no hint on the last attempt", inputs: []string{broken, tailCut}, toolErrors: 1, detail: true},
 	}
 
 	for _, tt := range tests {

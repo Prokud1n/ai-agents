@@ -231,48 +231,82 @@ func TestApplyCleanupKeepsTheSpeech(t *testing.T) {
 // takesSpeech is a short video (about 18 s) of a long preparation, a failed take of the intro, the take said again and
 // a short point:
 //
-//	0–3 раз два три начинаем | 4–8 так стоп заново камера пишет | 9–14 это последний дубль я точно справлюсь |
+//	0–3 раз два три начинаем | 4–8 так стоп заново камера пишет | 9–14 сейчас поправлю волосы и встану ровно |
 //	15–22 сегодня развеиваю главные мифы про утренний бег натощак |
 //	23–30 развеиваю мифы про утренний бег на голодный желудок | 31–36 бег натощак не сжигает больше жира
-const takesSpeech = "раз два три начинаем. | так стоп заново камера пишет. | это последний дубль я точно справлюсь. | " +
+const takesSpeech = "раз два три начинаем. | так стоп заново камера пишет. | сейчас поправлю волосы и встану ровно. | " +
 	"сегодня развеиваю главные мифы про утренний бег натощак. | " +
 	"развеиваю мифы про утренний бег на голодный желудок. | бег натощак не сжигает больше жира."
+
+// rowSpeech has a word said twice in a row at the start of a long sentence:
+//
+//	0–3 раз два три начинаем | 4–8 так стоп заново камера пишет |
+//	9–20 бег бег натощак не сжигает жир и не ускоряет обмен веществ совсем | 21–23 пейте воду утром
+const rowSpeech = "раз два три начинаем. | так стоп заново камера пишет. | " +
+	"бег бег натощак не сжигает жир и не ускоряет обмен веществ совсем. | пейте воду утром."
 
 var (
 	takesPrep    = roughcut.WordRange{From: 0, To: 14}
 	takesFailed  = roughcut.WordRange{From: 15, To: 22}
+	takesAgain   = roughcut.WordRange{From: 23, To: 30}
 	takesContent = roughcut.WordRange{From: 31, To: 36}
 )
 
-// TestApplyCleanupFloorWithoutTakes (T3.26): the failed takes the cleaning cuts do not count against cleanupFloor — a
-// short video loses more than half of its speech to the preparation and a failed take and is still cleaned; a
-// cleaning that cuts the content, not a take, is refused as before.
-func TestApplyCleanupFloorWithoutTakes(t *testing.T) {
-	t.Parallel()
+// floorRequest is the first version of the speech without a caption, only cleaned by the editor.
+func floorRequest(t *testing.T, text string) *Request {
+	t.Helper()
 
-	src := speech(takesSpeech)
+	src := speech(text)
 
 	plan, err := roughcut.BuildPlanEdited(src, src.Duration, testSettings(), &roughcut.Edit{})
 	require.NoError(t, err)
-	require.InDelta(t, 18, plan.Duration, 2, "a video of about 18 s")
 
-	req := &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan, Cleanup: true}
-	require.Contains(t, Prompt(req), "Похожие фразы", "the intro said again is hinted")
+	return &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan, Cleanup: true}
+}
+
+// TestApplyCleanupFloorWithoutTakes (T3.26): the failed takes the cleaning cuts do not count against cleanupFloor — a
+// short video loses more than half of its speech to the preparation and a failed take and is still cleaned. A
+// cleaning that cuts the content, both takes, the later take or most of a sentence with a word said twice in it is
+// refused as before.
+func TestApplyCleanupFloorWithoutTakes(t *testing.T) {
+	t.Parallel()
+
+	takes := floorRequest(t, takesSpeech)
+	require.InDelta(t, 18, takes.Plan.Duration, 2, "a video of about 18 s")
+	require.Contains(t, Prompt(takes), "Похожие фразы", "the intro said again is hinted")
+
+	row := floorRequest(t, rowSpeech)
 
 	tests := []struct {
 		name    string
+		req     *Request
 		cleanup []roughcut.WordRange
 		refused bool
 	}{
-		{name: "the preparation and the failed take", cleanup: []roughcut.WordRange{takesPrep, takesFailed}},
-		{name: "the preparation and the content", cleanup: []roughcut.WordRange{takesPrep, takesContent}, refused: true},
+		{name: "the preparation and the failed take", req: takes, cleanup: []roughcut.WordRange{takesPrep, takesFailed}},
+		{
+			name: "the preparation and the content", req: takes, refused: true,
+			cleanup: []roughcut.WordRange{takesPrep, takesContent},
+		},
+		{
+			name: "both takes", req: takes, refused: true,
+			cleanup: []roughcut.WordRange{takesPrep, takesFailed, takesAgain},
+		},
+		{
+			name: "the later take, the earlier kept", req: takes, refused: true,
+			cleanup: []roughcut.WordRange{takesPrep, takesAgain},
+		},
+		{
+			name: "most of a sentence with a word said twice", req: row, refused: true,
+			cleanup: []roughcut.WordRange{{From: 0, To: 8}, {From: 9, To: 15}},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			outcome, err := Apply(req, &Input{Decision: EditDecision, Reason: testReason, CleanupWords: tt.cleanup})
+			outcome, err := Apply(tt.req, &Input{Decision: EditDecision, Reason: testReason, CleanupWords: tt.cleanup})
 			if tt.refused {
 				var check *CheckError
 				require.ErrorAs(t, err, &check)
@@ -282,8 +316,8 @@ func TestApplyCleanupFloorWithoutTakes(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Less(t, outcome.Duration, cleanupFloor(plan.Duration), "less than the floor is left: %.1f of %.1f s",
-				outcome.Duration, plan.Duration)
+			assert.Less(t, outcome.Duration, cleanupFloor(tt.req.Plan.Duration),
+				"less than the floor is left: %.1f of %.1f s", outcome.Duration, tt.req.Plan.Duration)
 			assert.True(t, outcome.CleanedTakes, "a failed take is cleaned")
 		})
 	}

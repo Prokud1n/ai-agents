@@ -113,25 +113,32 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 }
 
 // hint is the text of the hints of the outcome not given yet (each once), marked as given; "" without one, or on the
-// last attempt.
+// last attempt. Each hint ends with its own way to keep the decision; two hints at once share one at the end.
 func (s *Session) hint(outcome *Outcome) string {
 	if s.attempts >= maxAttempts {
 		return ""
 	}
 
-	var parts []string
+	var parts, retries []string
 
 	if outcome.endingHint != "" && !s.endingHinted {
 		s.endingHinted = true
-		parts = append(parts, "Проверь "+outcome.endingHint+"."+endingRetryHint)
+		parts, retries = append(parts, "Проверь "+outcome.endingHint+"."), append(retries, endingRetryHint)
 	}
 
 	if outcome.tailHint != "" && !s.tailHinted {
 		s.tailHinted = true
-		parts = append(parts, "Проверь "+outcome.tailHint+"."+tailRetryHint)
+		parts, retries = append(parts, "Проверь "+outcome.tailHint+"."), append(retries, tailRetryHint)
 	}
 
-	return strings.Join(parts, " ")
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return parts[0] + retries[0]
+	default:
+		return strings.Join(parts, " ") + tailRetryHint
+	}
 }
 
 func (s *Session) apply(decoder *json.Decoder, in *Input) (*Outcome, error) {

@@ -192,7 +192,7 @@ func checkCleanupFloor(
 
 	restored, err := mergeEdit(req, &withTakes, trimmed.ranges)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to merge the edit with the failed takes: %w", err)
 	}
 
 	restored.Mode, restored.CutTime = edit.Mode, edit.CutTime
@@ -209,34 +209,6 @@ func checkCleanupFloor(
 	return checkFailedf("после чистки от ролика остаётся %.1f с из %.1f с, а должно остаться хотя бы %.1f с "+
 		"(вырезанные неудачные дубли из подсказок повторов в этом не считаются): вырезай только неудачные дубли, "+
 		"повторы подряд и подготовку к съёмке, содержательные фразы оставь", plan.Duration, whole, floor)
-}
-
-// takeWords marks the words of the phrases the hints of the cleaning name as said again: a phrase of a similar pair
-// whose other phrase stays in the reel (kept — the reel after the cleaning; cutting both takes is not cleaning a
-// take), and a phrase with words said again in a row that stays in part.
-func takeWords(req *Request, kept []bool) []bool {
-	list := normalizedPhrases(req.Transcript, req.Plan)
-	marked := make([]bool, len(req.Transcript.Words))
-	markPhrase := func(p *normPhrase) { mark(marked, roughcut.WordRange{From: p.from, To: p.to}, true) }
-
-	pairs := similarPairs(req.Transcript.Words, list)
-	for k := range pairs {
-		for side := range pairs[k] {
-			other := &pairs[k][1-side]
-			if anyKept(kept, roughcut.WordRange{From: other.from, To: other.to}) {
-				markPhrase(&pairs[k][side])
-			}
-		}
-	}
-
-	repeats := inRowRepeats(list)
-	for k := range repeats {
-		if anyKept(kept, roughcut.WordRange{From: repeats[k].from, To: repeats[k].to}) {
-			markPhrase(&repeats[k])
-		}
-	}
-
-	return marked
 }
 
 // withoutWords are the ranges without the marked words.
