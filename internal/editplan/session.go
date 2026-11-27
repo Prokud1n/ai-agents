@@ -201,7 +201,7 @@ func (s *Session) hint(outcome *Outcome) string {
 // withoutHidden is the decision of the last attempt accepted with the notes the reel would not show put or dropped,
 // when they are all it failed by (T3.29): the trainer gets the reel selected, not the automatic cut. Otherwise nil and
 // the check it fails then (the reason of the refusal).
-func (s *Session) withoutHidden(in *Input) (*Outcome, string) {
+func (s *Session) withoutHidden(in *Input) (accepted *Outcome, failure string) {
 	in.dropHidden = true
 
 	outcome, err := Apply(s.req, in)
