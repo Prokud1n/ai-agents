@@ -26,6 +26,10 @@ type CreateSubtitlesData struct {
 	Notes []Note
 	// Branding is the trainer's handle over the reel and the end card with it; nil or an empty handle: none.
 	Branding *Branding
+
+	// joints are the starts of the fragments of the cut on its timeline (BurnSubtitlesData.Cut, cutJoints): the
+	// question under a heading is timed from the joint it starts at (leadUnderSections). Nil without a cut.
+	joints []float64
 }
 
 // NoteKind is what a screen note is.

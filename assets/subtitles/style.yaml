@@ -42,17 +42,23 @@ layout:
   # The first word of a sentence with a small letter, as she writes («первое: мои подопечные»); names inside a sentence
   # keep their capital («в Москве»).
   lowercase_sentences: true
-  # Fix the frequent misses of the speech recognition: «кто-то», «онлайн-тренировки», «всё равно», «ещё», a capital
-  # in the middle of a sentence («спросит Ну тогда поедем» is two sentences). Only in the subtitles.
+  # Fix the frequent misses of the speech recognition: «кто-то», «онлайн-тренировки», «всё равно», «ещё»,
+  # «тренажёр», «офлайн», a capital in the middle of a sentence («спросит Ну тогда поедем» is two sentences), «?» after
+  # a clear question («а что если…», «а вдруг…», «почему…»; the first sentence of a section with «а если» always). The
+  # hyphens, «ё» and spellings go to the hook, the screen notes, the headings and the exercise titles too.
   orthography: true
   # A subtitle after a pause fades in over this many ms (subtitles that follow each other do not); 0: none.
   fade_in: 200
   # Whole phrases, as she writes them: a subtitle ends at the end of a sentence or at a pause of at least gap seconds;
   # a phrase too long for the lines (or longer than max_duration) is split at a comma or before a conjunction into
   # pieces of at least split_words words; a piece of fewer than min_words words or said in less than min_duration
-  # seconds is glued to its neighbor (in its sentence first) when they fit two lines, otherwise it stays on the
-  # screen until the next subtitle across a pause up to hold_gap. Lines are cut by sense: not after a preposition, a
-  # conjunction or «не», not before «же»/«ли». enabled false: the short pieces of before.
+  # seconds is glued to its neighbor in its sentence when they fit two lines, otherwise it stays on the screen until
+  # the next subtitle across a pause up to hold_gap. The end of a sentence never goes with the start of the next one: a
+  # short sentence of its own («второе», «и третье») stands alone, or, when it would be on the screen less than
+  # min_duration_short seconds, goes with the whole next sentence (an ordinal with the first piece of a long one:
+  # «второе: они …»; 0: it always stands alone); a chain of
+  # one-word sentences («подскажу. поправлю. поддержу.») is shown with commas. Lines are cut by sense: not after a
+  # preposition, a conjunction or «не», not before «же»/«ли». enabled false: the short pieces of before.
   phrases:
     enabled: true
     gap: 0.25
@@ -61,6 +67,7 @@ layout:
     split_words: 4
     hold_gap: 0.8
     max_duration: 5
+    min_duration_short: 0.6
 
 # No accents: max_per_cue 0 and longest_word false (the look of an accent is kept for an explicit list of accents).
 accent:
@@ -123,7 +130,8 @@ hook:
   margin_side: 60
   max_lines: 3
   # The fewest lines that keep the hook at least this large (percent): a long hook is made smaller as a whole in two
-  # lines (her two lines take about 440..620 px) rather than given a third one that reaches the face.
+  # lines (her two lines take about 440..620 px) rather than given a third one that reaches the face; with fit_scale
+  # set, two lines down to 50 % (a hook of up to about 75 characters), a third line only for a hook longer still.
   fit_scale: 75
   # No speech subtitles while the hook is shown (her hook stands alone); a phrase that starts under it is shown from
   # its end.
@@ -155,8 +163,11 @@ section:
   fade: 150
   # The question under a heading is shown with its speech, but not before this many seconds after the heading, so the
   # heading is read first (after the editor cut the reading «страх номер один» out of the sound the heading starts on
-  # the question); the speech is never delayed more. A pause without text under the heading is a pause in the sound.
-  lead: 0.35
+  # the question). When the heading stands up to 0.3 s after a joint of the cut (on the late start the speech
+  # recognition gives the first word), the seconds count from the joint, never before the heading: the question shows
+  # at most 0.3 s after the voice. The speech is never delayed more. A pause without text under the heading is a pause
+  # in the sound.
+  lead: 0.2
 
 # The top line over the whole reel, as the interface of a camera: REELS_TOPBAR_LEFT at the left edge («tg:
 # @ana_prokudina») and REELS_TOPBAR_RIGHT at the right one («2x»), small translucent gray Manrope (the right text

@@ -55,6 +55,13 @@ func withBreak(t token, b breakKind) token {
 	return t
 }
 
+// openEnd marks the strong break of the token as the end of a segment without a sentence mark.
+func openEnd(t token) token {
+	t.open = true
+
+	return t
+}
+
 func withAccent(t token, a accentKind) token {
 	t.Accent = a
 

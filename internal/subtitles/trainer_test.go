@@ -153,9 +153,14 @@ func TestTrainerSubtitles(t *testing.T) {
 	assert.Contains(t, ass, ",,PDF с планом")
 
 	glued, _ := buildDocument(&CreateSubtitlesData{
+		Transcript: speech("Да. Начнём с разминки для спины и плеч."),
+	}, &style)
+	assert.Contains(t, glued, "да. начнём с разминки", "a short sentence said quickly goes with the next one")
+
+	alone, _ := buildDocument(&CreateSubtitlesData{
 		Transcript: speech("Да.", "Начнём с разминки для спины и плеч."),
 	}, &style)
-	assert.Contains(t, glued, "да. начнём с разминки", "a short phrase is glued to the next one")
+	assert.Contains(t, alone, "}да\n", "a short sentence shown long enough stands alone")
 	assert.Contains(t, ass, "первое: мои подопечные")
 	assert.NotContains(t, ass, "Первое")
 	assert.Contains(t, ass, "в Москве и Тбилиси")

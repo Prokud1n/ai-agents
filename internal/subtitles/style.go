@@ -185,7 +185,9 @@ type Layout struct {
 	// names inside a sentence keep their capital («в Москве»).
 	LowercaseSentences bool `yaml:"lowercase_sentences"`
 	// Orthography fixes the frequent misses of Whisper in the subtitles (fixOrthography): the hyphen of «кто-то» and
-	// «онлайн-тренировки», the «ё» of «всё равно» and «ещё», a capital in the middle of a sentence («спросит Ну тогда»).
+	// «онлайн-тренировки», the «ё» of «всё равно», «ещё» and «тренажёр», «офлайн», a capital in the middle of a
+	// sentence («спросит Ну тогда»), «?» after a clear question; the hook, the notes and the headings get the
+	// hyphens, «ё» and spellings (textOrthography).
 	Orthography bool `yaml:"orthography"`
 	// FadeIn is the fade-in of a phrase subtitle after a gap (not between subtitles that follow each other), ms; 0:
 	// none.

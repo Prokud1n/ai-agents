@@ -8,11 +8,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
 	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
-// fiveMythsHook is a hook one word longer than the trainer's: three lines at full size before T3.23.
-const fiveMythsHook = "развеиваю пять мифов об онлайн-тренировках"
+// fiveMythsHook is a hook one word longer than the trainer's: three lines at full size before T3.23; twoClauseHook is a
+// hook of two clauses, as long as the one the editor's model wrote for a short reel: three lines over the face before
+// T3.27.
+const (
+	fiveMythsHook = "развеиваю пять мифов об онлайн-тренировках"
+	twoClauseHook = "ролик для тех, кто считает, что онлайн-тренировки не для них"
+	// longHook is about 75 characters: two lines at about half the size.
+	longHook = "ролик для всех тех, кто давно считает, что онлайн-тренировки дома не для них"
+)
 
 // talkSegment is a Whisper segment of the synthetic talking head: its text with punctuation and the pause after it. A
 // word followed by «|» is followed by a pause inside the sentence (the speaker takes a breath).
@@ -68,9 +76,10 @@ func talkHead(segments []talkSegment) *transcription.Result {
 	return result
 }
 
-// syntheticTalk is about 50 s of a talking head: phrases of 4–12 words, pauses of 0.15–0.6 s, the punctuation of
+// syntheticTalk is about a minute of a talking head: phrases of 4–12 words, pauses of 0.15–0.6 s, the punctuation of
 // Whisper (two sentences in a segment, commas, a question, a capital it did not end a sentence before, short
-// sentences, breaths after «и» and before the end of a sentence).
+// sentences, breaths after «и» and before the end of a sentence, an ordinal sentence, a chain of one-word sentences,
+// a question with a period, a pause inside «онлайн | тренировки», a short sentence before a longer one).
 var syntheticTalk = []talkSegment{
 	{text: "Привет! Поговорим о том, почему тренировки дома работают.", pause: 0.45},
 	{text: "Многие думают, что без тренера рядом ничего не получится.", pause: 0.3},
@@ -83,37 +92,42 @@ var syntheticTalk = []talkSegment{
 	{text: "Я работаю с людьми из разных стран, и| каждый из них занимается в своём темпе.", pause: 0.15},
 	{text: "Думаете, онлайн тренировки менее эффективны?", pause: 0.3},
 	{text: "Нет, если есть план, обратная связь и| ваше желание.", pause: 0.45},
-	{text: "Третье.", pause: 0.2},
+	{text: "И третье.", pause: 0.2},
 	{text: "Еще никто не пожалел, что начал заниматься со мной онлайн.", pause: 0.6},
 	{text: "Расскажите, что вам мешает начать, и| мы вместе подберём простую программу.", pause: 0.3},
+	{text: "Подскажу. Поправлю. Поддержу.", pause: 0.3},
+	{text: "А вдруг онлайн| тренировки без тренажеров ничего не дадут.", pause: 0.4},
+	{text: "Я веду и оффлайн занятия. Оставьте отзыв под видео. И я отвечу каждому из вас лично.", pause: 0.3},
 }
 
-// TestSyntheticTalkPhrases: on a talking head of about 50 s the trainer's subtitles are whole phrases: at most two of
-// fewer than three words, every one shown at least 1.5 s (the last aside), at most two lines of at most 30 characters,
-// no line ending with a preposition, a conjunction or «не», the orthography fixed.
+// TestSyntheticTalkPhrases: on a talking head of about a minute the trainer's subtitles are whole phrases: no subtitle has
+// the end of one sentence and the start of the next one (T3.27), a short one (fewer than three words or shown less
+// than 1.5 s) is a sentence of its own («второе», «и третье»), the others are shown at least 1.5 s (the last aside),
+// at most two lines of at most 30 characters, no line ending with a preposition, a conjunction or «не», the
+// orthography fixed, a chain of one-word sentences with commas.
 func TestSyntheticTalkPhrases(t *testing.T) {
 	t.Parallel()
 
 	style := DefaultStyle()
 	result := talkHead(syntheticTalk)
-	require.InDelta(t, 50, result.Duration, 10, "about 50 s")
+	require.InDelta(t, 60, result.Duration, 10, "about a minute")
 
 	cues := speechCues(&CreateSubtitlesData{Transcript: result}, &style, nil, 0, 0)
 	require.NotEmpty(t, cues)
 
-	short, shortest := 0, 100.0
+	short := 0
 	all := make([]string, 0, len(cues))
 
 	for i, c := range cues {
 		text := cueString(c)
 		all = append(all, text)
 
-		if len(c.tokens()) < trainerPhraseMinWords {
-			short++
-		}
+		assert.Zero(t, sentenceCrossings(cues, i), "the end of a sentence with the start of the next one: %q", text)
 
-		if i+1 < len(cues) {
-			shortest = min(shortest, c.End-c.Start)
+		if len(c.tokens()) < trainerPhraseMinWords || (i+1 < len(cues) && c.End-c.Start < trainerPhraseMinDuration) {
+			short++
+
+			assert.True(t, cueIsSentence(cues, i), "a short subtitle is a sentence of its own: %q", text)
 		}
 
 		assert.LessOrEqual(t, len(c.Lines), 2, text)
@@ -127,18 +141,51 @@ func TestSyntheticTalkPhrases(t *testing.T) {
 		}
 	}
 
-	t.Logf("subtitles: %d, shorter than 3 words: %d, the shortest shown: %.2f s\n%s", len(cues), short, shortest,
-		strings.Join(all, "\n"))
+	t.Logf("subtitles: %d, short ones (sentences of their own): %d\n%s", len(cues), short, strings.Join(all, "\n"))
 
-	assert.LessOrEqual(t, short, 2, "subtitles of fewer than three words")
-	assert.GreaterOrEqual(t, shortest, trainerPhraseMinDuration-1e-9, "the shortest subtitle (the last aside)")
+	assert.Equal(t, 5, short, "short subtitles: привет, кто-то спросит, первое, второе, и третье")
 
-	joined := strings.Join(all, " ")
-	for _, want := range []string{"онлайн-тренер", "кто-то", "всё равно", "ещё никто", "онлайн-тренировки", "эффективны?"} {
+	joined := strings.Join(all, " | ")
+	for _, want := range []string{
+		"онлайн-тренер", "кто-то", "всё равно", "ещё никто", "онлайн-тренировки", "эффективны?", "| второе |",
+		"| и третье |", "подскажу, поправлю, поддержу", "а вдруг онлайн-тренировки", "тренажёров", "дадут?",
+		"офлайн-занятия",
+	} {
 		assert.Contains(t, joined, want)
 	}
 
 	assert.NotContains(t, joined, " А ", "a capital in the middle of a sentence")
+}
+
+// sentenceCrossings counts the ends of sentences inside the subtitle i that are not the end of a short sentence of its
+// own going with the whole next one: one that starts the subtitle when the subtitle starts and ends sentences.
+func sentenceCrossings(cues []cue, i int) int {
+	tokens := cues[i].tokens()
+	n := 0
+
+	for j, tk := range tokens[:len(tokens)-1] {
+		if sentenceEnds(tk) && (!cueIsSentence(cues, i) || j >= maxEnumeratorWords) {
+			n++
+		}
+	}
+
+	return n
+}
+
+// cueIsSentence: the subtitle i starts and ends with sentences: the one before it ends a sentence, and so does it.
+func cueIsSentence(cues []cue, i int) bool {
+	tokens := cues[i].tokens()
+	if !sentenceEnds(tokens[len(tokens)-1]) {
+		return false
+	}
+
+	if i == 0 {
+		return true
+	}
+
+	prev := cues[i-1].tokens()
+
+	return sentenceEnds(prev[len(prev)-1])
 }
 
 // TestSyntheticTalkOldPieces: the phrase style of before keeps its short pieces (the phrases are the trainer's only).
@@ -216,9 +263,26 @@ func TestPhraseGroups(t *testing.T) {
 			expected: []string{"Мы начинаем с простого упражнения сегодня."},
 		},
 		{
-			name:     "a short sentence goes with the next one",
+			name:     "an ordinal said quickly goes with the next sentence",
 			input:    "Первое. Тренер видит технику по видео.",
-			expected: []string{"Первое. Тренер видит технику по видео."},
+			expected: []string{"Первое: тренер видит технику по видео."},
+		},
+		{
+			name:  "an ordinal said quickly goes with the first piece of a long sentence",
+			input: "Второе. Они видят технику по видео, и поправляют её сразу после подхода.",
+			expected: []string{
+				"Второе: они видят технику по видео,", "и поправляют её сразу после подхода.",
+			},
+		},
+		{
+			name:     "a short sentence goes with the whole next one only",
+			input:    "Привет. Тренер видит технику по видео, и поправляет её сразу после подхода.",
+			expected: []string{"Привет.", "Тренер видит технику по видео,", "и поправляет её сразу после подхода."},
+		},
+		{
+			name:     "the end of a sentence is not glued to the next one",
+			input:    "Мы занимаемся по видео дома каждый день вместе. Да. Это работает.",
+			expected: []string{"Мы занимаемся по видео дома каждый день вместе.", "Да. Это работает."},
 		},
 	}
 
@@ -392,6 +456,10 @@ func TestValidatePhrases(t *testing.T) {
 		{name: "no words", input: "layout:\n  phrases:\n    min_words: 0\n", expectedErr: "min_words"},
 		{name: "durations", input: "layout:\n  phrases:\n    max_duration: 2\n", expectedErr: "max_duration"},
 		{name: "a hold too long", input: "layout:\n  phrases:\n    hold_gap: 5\n", expectedErr: "hold_gap"},
+		{
+			name: "a short sentence held longer than a phrase", input: "layout:\n  phrases:\n    min_duration_short: 2\n",
+			expectedErr: "min_duration_short",
+		},
 		{name: "off, not checked", input: "layout:\n  phrases:\n    enabled: false\n    gap: 3\n"},
 		{name: "a fade too long", input: "layout:\n  fade_in: 900\n", expectedErr: "layout.fade_in"},
 		{name: "a hook fit too small", input: "hook:\n  fit_scale: 40\n", expectedErr: "hook.fit_scale"},
@@ -436,6 +504,48 @@ func TestFixOrthography(t *testing.T) {
 		{name: "это всё", input: "Вот и все.", expected: "Вот и всё."},
 		{name: "ещё", input: "Еще раз.", expected: "Ещё раз."},
 		{name: "её stays", input: "Спросите ее.", expected: "Спросите ее."},
+		{name: "тренажёр", input: "Тренажеры и тренажерами, тренажерный зал.", expected: "Тренажёры и тренажёрами, тренажёрный зал."},
+		{name: "офлайн", input: "Офлайн и оффлайн тренировки.", expected: "Офлайн и офлайн-тренировки."},
+		{name: "онлайн-тренировка across a pause", input: "Мне онлайн| тренировка нравится.", expected: "Мне онлайн-тренировка нравится."},
+		{name: "а что если", input: "А что если не получится.", expected: "А что если не получится?"},
+		{name: "а вдруг", input: "А вдруг станет хуже", expected: "А вдруг станет хуже?"},
+		{name: "почему", input: "Почему это работает.", expected: "Почему это работает?"},
+		{name: "можно ли", input: "Можно ли заниматься дома.", expected: "Можно ли заниматься дома?"},
+		{name: "а если", input: "А если нет времени.", expected: "А если нет времени?"},
+		{name: "а если честно", input: "А если честно, это сложно.", expected: "А если честно, это сложно."},
+		{name: "а если with a comma", input: kneeAdvice, expected: kneeAdvice},
+		{name: "a statement with если", input: "Если болит колено, делайте мягче.", expected: "Если болит колено, делайте мягче."},
+		{name: "почему with its answer", input: "Почему так, потому что спина устаёт.", expected: "Почему так, потому что спина устаёт."},
+		{name: "как stays", input: "Как я уже говорила.", expected: "Как я уже говорила."},
+		{name: "an exclamation stays", input: "А вдруг получится!", expected: "А вдруг получится!"},
+		{name: "вряд ли stays", input: "Вряд ли это поможет.", expected: "Вряд ли это поможет."},
+		{name: "навряд ли stays", input: "Навряд ли он придёт.", expected: "Навряд ли он придёт."},
+		{name: "едва ли stays", input: "Едва ли это сложно.", expected: "Едва ли это сложно."},
+		{name: "то ли stays", input: "То ли дождь, то ли снег.", expected: "То ли дождь, то ли снег."},
+		{name: "чуть ли не stays", input: "Чуть ли не каждый день.", expected: "Чуть ли не каждый день."},
+		{name: "не ли stays", input: "Не ли это странно.", expected: "Не ли это странно."},
+		{name: "сколько себя помню stays", input: "Сколько себя помню, я бегала.", expected: "Сколько себя помню, я бегала."},
+		{name: "сколько раз stays", input: "Сколько раз я это слышала.", expected: "Сколько раз я это слышала."},
+		{name: "сколько нужно gets ?", input: "Сколько нужно заниматься.", expected: "Сколько нужно заниматься?"},
+		{name: "сколько раз в gets ?", input: "Сколько раз в неделю бегать.", expected: "Сколько раз в неделю бегать?"},
+		{name: "разве что stays", input: "Разве что утром.", expected: "Разве что утром."},
+		{name: "разве gets ?", input: "Разве это сложно.", expected: "Разве это сложно?"},
+		{name: "зачем with a comma stays", input: "Зачем это нужно, я расскажу.", expected: "Зачем это нужно, я расскажу."},
+		{name: "откуда with a comma stays", input: "Откуда силы берутся, непонятно.", expected: "Откуда силы берутся, непонятно."},
+		{name: "а что если честно stays", input: "А что если честно, мне лень.", expected: "А что если честно, мне лень."},
+		{name: "а если, что gets ?", input: "А если болит колено, что делать.", expected: "А если болит колено, что делать?"},
+		{name: "а почему gets ?", input: "А почему это важно.", expected: "А почему это важно?"},
+		{name: "ну и зачем gets ?", input: "Ну и зачем это.", expected: "Ну и зачем это?"},
+		{name: "так что если stays", input: "Так что если не получится, не страшно.", expected: "Так что если не получится, не страшно."},
+		{name: "так что если without a comma stays", input: "Так что если что, пишите.", expected: "Так что если что, пишите."},
+		{name: "так почему gets ?", input: "Так почему это работает.", expected: "Так почему это работает?"},
+		{name: "а что если, ничего stays", input: "А что если не получится, ничего страшного.", expected: "А что если не получится, ничего страшного."},
+		{name: "а вдруг, кто знает stays", input: "А вдруг получится, кто знает.", expected: "А вдруг получится, кто знает."},
+		{name: "а что если, чем gets ?", input: "А что если дома хуже, чем в зале.", expected: "А что если дома хуже, чем в зале?"},
+		{name: "сколько раз в жизни stays", input: "Сколько раз в жизни я это слышала.", expected: "Сколько раз в жизни я это слышала."},
+		{name: "ЕЩЁ in capitals", input: "ЕЩЕ РАЗ.", expected: "ЕЩЁ РАЗ."},
+		{name: "четвёртое", input: "Четвертое правило.", expected: "Четвёртое правило."},
+		{name: "четверть stays", input: "Четверть часа.", expected: "Четверть часа."},
 		{name: "всё-таки", input: "Все таки начнём.", expected: "Всё-таки начнём."},
 		{name: "из-за", input: "Из за спины.", expected: "Из-за спины."},
 		{name: "по-моему before a comma", input: "По моему, хорошо.", expected: "По-моему, хорошо."},
@@ -455,8 +565,108 @@ func TestFixOrthography(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			tokens := tokensFromTranscript(speech(tt.input))
-			assert.Equal(t, tt.expected, strings.Join(texts(fixOrthography(tokens)), " "))
+			assert.Equal(t, tt.expected, strings.Join(texts(fixOrthography(timed(tt.input))), " "))
+		})
+	}
+}
+
+// TestCompoundAcrossSegments: the parts of «онлайн-тренировка» are joined across the end of a Whisper segment that the
+// next one goes on with a small letter (a slow question under a heading), not across the end of a sentence, a next
+// segment with a capital (a new sentence: no «?» after the answer either) or a long pause.
+func TestCompoundAcrossSegments(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    []token
+		expected string
+	}{
+		{
+			name:     "the next segment goes on",
+			input:    tokensFromTranscript(speech("А что если онлайн", "тренировка хуже, чем оффлайн.")),
+			expected: "А что если онлайн-тренировка хуже, чем офлайн?",
+		},
+		{
+			name:     "a sentence ended",
+			input:    tokensFromTranscript(speech("Я работаю онлайн.", "Тренировка начинается.")),
+			expected: "Я работаю онлайн. Тренировка начинается.",
+		},
+		{
+			name:     "the next segment with a capital",
+			input:    tokensFromTranscript(speech("Мы работаем онлайн", "Тренировки идут по вечерам.")),
+			expected: "Мы работаем онлайн Тренировки идут по вечерам.",
+		},
+		{
+			name:     "no «?» after the answer",
+			input:    tokensFromTranscript(speech("А что если вы спросите", "Отвечу по порядку.")),
+			expected: "А что если вы спросите? Отвечу по порядку.",
+		},
+		{
+			name:     "a pause over compoundMaxGap",
+			input:    []token{tok("онлайн", 0, 0.5), withBreak(tok("тренировка.", 1.6, 2), strongBreak)},
+			expected: "онлайн тренировка.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, strings.Join(texts(fixOrthography(tt.input)), " "))
+		})
+	}
+}
+
+// TestTextOrthography: the hook and the exercise titles written by the editor's model get the dictionary (a word in
+// capitals stays in capitals), only in the styles with the orthography.
+func TestTextOrthography(t *testing.T) {
+	t.Parallel()
+
+	style := DefaultStyle()
+	assert.Equal(t, []string{"ОНЛАЙН-ТРЕНИРОВКИ", "БЕЗ", "ТРЕНАЖЁРОВ"}, hookWords("онлайн тренировки без тренажеров", &style))
+	assert.Equal(t, []string{"ЕЩЁ", "РАЗ"}, textOrthography([]string{"ЕЩЕ", "РАЗ"}))
+	assert.Contains(t, titleEvents([]Title{{Text: "Еще 12 раз", Start: 1, End: 2}}, &style), "ЕЩЁ 12 РАЗ")
+
+	words := WordsStyle()
+	kept := hookWords("еще", &words)
+	require.Len(t, kept, 1)
+	assert.Equal(t, "еще", kept[0], "only the styles with the orthography")
+}
+
+// kneeAdvice is an advice that starts like a question: no «?».
+const kneeAdvice = "А если болит колено, делайте мягче."
+
+// TestSectionQuestion: the first sentence of a section that starts with «а если» gets «?» even with a comma (the
+// heading asks it), unless its last clause answers the condition («…, делайте мягче»); the same sentence elsewhere does
+// not.
+func TestSectionQuestion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		question string
+		heading  bool
+		expected string
+	}{
+		{name: "a question with a comma", question: "А если нет времени, хотя бы на зарядку.", heading: true, expected: "зарядку?"},
+		{name: "not under a heading", question: "А если нет времени, хотя бы на зарядку.", expected: "зарядку."},
+		{name: "an advice", question: kneeAdvice, heading: true, expected: "мягче."},
+		{name: "a conclusion with «то»", question: "А если устали, то отдохните.", heading: true, expected: "отдохните."},
+		{name: "not afraid", question: "А если не вышло, не страшно.", heading: true, expected: "страшно."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tokens := fixOrthography(tokensFromTranscript(speech("Мы начинаем.", tt.question)))
+
+			headings := []noteBlock{{start: tokens[0].Start, end: 10}} // the heading on another sentence
+			if tt.heading {
+				headings = []noteBlock{{start: tokens[2].Start, end: 10}}
+			}
+
+			assert.Equal(t, tt.expected, sectionQuestions(tokens, headings)[len(tokens)-1].Text)
 		})
 	}
 }
@@ -543,22 +753,22 @@ func TestLeadUnderSections(t *testing.T) {
 		{
 			name:     "the question on the heading (its reading cut out) a moment after it",
 			input:    []cue{{Start: 9.95, End: 13}, {Start: 13, End: 15}},
-			expected: []cue{{Start: 10.35, End: 13}, {Start: 13, End: 15}},
+			expected: []cue{{Start: 10.2, End: 13}, {Start: 13, End: 15}},
 		},
 		{
 			name:     "a short question is not lost",
 			input:    []cue{{Start: 10, End: 10.5}, {Start: 12, End: 13}},
-			expected: []cue{{Start: 10.35, End: 10.85}, {Start: 12, End: 13}},
+			expected: []cue{{Start: 10.2, End: 10.7}, {Start: 12, End: 13}},
 		},
 		{
 			name:     "the next subtitle close to the heading",
 			input:    []cue{{Start: 10, End: 10.4}, {Start: 10.6, End: 12}},
-			expected: []cue{{Start: 10.35, End: 10.6}, {Start: 10.6, End: 12}},
+			expected: []cue{{Start: 10.2, End: 10.6}, {Start: 10.6, End: 12}},
 		},
 		{
 			name:     "two subtitles start in the lead",
 			input:    []cue{{Start: 10, End: 10.1}, {Start: 10.1, End: 12}},
-			expected: []cue{{Start: 10.35, End: 12}},
+			expected: []cue{{Start: 10.2, End: 12}},
 		},
 		{
 			name:     "a phrase left too short before the heading goes",
@@ -572,9 +782,35 @@ func TestLeadUnderSections(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, leadUnderSections(tt.input, heading, trainerSectionLead))
+			assert.Equal(t, tt.expected, leadUnderSections(tt.input, heading, trainerSectionLead, nil))
 		})
 	}
+}
+
+// TestLeadFromJoint: the heading stands 0.2 s after the joint the question starts at (on the late start Whisper gives
+// its first word): the question shows at most 0.3 s after the joint, not before the heading; a joint further before the
+// heading is not its own, and the lead counts from the heading.
+func TestLeadFromJoint(t *testing.T) {
+	t.Parallel()
+
+	heading := []noteBlock{{start: 10.2, end: 14}}
+	question := []cue{{Start: 10.15, End: 13}}
+
+	got := leadUnderSections(question, heading, trainerSectionLead, []float64{0, 10})
+	require.Len(t, got, 1)
+	assert.InDelta(t, 10.2, got[0].Start, 1e-9, "with the heading")
+	assert.LessOrEqual(t, got[0].Start-10, 0.3, "at most 0.3 s after the voice")
+
+	early := leadUnderSections(question, []noteBlock{{start: 10.05, end: 14}}, trainerSectionLead, []float64{10})
+	assert.InDelta(t, 10.2, early[0].Start, 1e-9, "lead after the joint")
+
+	far := leadUnderSections(question, heading, trainerSectionLead, []float64{9.5})
+	assert.InDelta(t, 10.4, far[0].Start, 1e-9, "lead after the heading")
+
+	assert.Equal(t, []float64{0, 2, 2.5}, cutJoints(&ffmpeg.Cut{Segments: []ffmpeg.Segment{
+		{Start: 5, End: 7}, {Start: 10, End: 10.5}, {Start: 20, End: 21},
+	}}))
+	assert.Nil(t, cutJoints(nil))
 }
 
 // TestTrainerSectionLead: in the document the question under a heading is shown with its speech and the heading stays
@@ -599,8 +835,8 @@ func TestTrainerSectionLead(t *testing.T) {
 		},
 		{
 			name: "the reading cut out", input: speech(hookPhrase, question), at: "А",
-			// the question 1.9..4.7: from 2.25 s
-			expected: []string{"Dialogue: 0,0:00:02.25,0:00:04.75,Main,", "Dialogue: 2,0:00:01.90,0:00:04.80,Section,"},
+			// the question 1.9..4.7: from 2.1 s (section.lead 0.2 s: at most 0.3 s after the voice)
+			expected: []string{"Dialogue: 0,0:00:02.10,0:00:04.75,Main,", "Dialogue: 2,0:00:01.90,0:00:04.80,Section,"},
 		},
 	}
 
@@ -635,7 +871,7 @@ func TestFadeIns(t *testing.T) {
 }
 
 // TestTrainerHookTwoLines: the trainer's hook takes two lines made smaller rather than three; with the fit of before
-// the same hook takes three.
+// the same hook takes three; a hook of two clauses takes two lines too (T3.27), smaller.
 func TestTrainerHookTwoLines(t *testing.T) {
 	t.Parallel()
 
@@ -653,6 +889,27 @@ func TestTrainerHookTwoLines(t *testing.T) {
 	before := style
 	before.Hook.FitScale = 0
 	assert.Equal(t, 3, before.hookLineCount(hook))
+
+	// A hook of two clauses: two lines made smaller still (at least minHookShrinkScale), its bottom above the face.
+	assert.Equal(t, 2, style.hookLineCount(twoClauseHook))
+
+	long := hookWords(twoClauseHook, &style)
+	lines := selectLines(long, &style)
+	sel = selectionOf(long, lines, &style)
+	require.Len(t, lines, 2)
+	assert.GreaterOrEqual(t, fitScaleOf(long, lines, &style), minHookShrinkScale, "the lines fit between the margins")
+	assert.Less(t, sel.scale, trainerHookFitScale)
+	assert.LessOrEqual(t, sel.center.y+float64(2*style.Hook.Size*sel.scale)/percentBase/2, float64(longHookBottom))
+
+	// About 75 characters: still two lines, at trainerTwoLineScale at the least.
+	t.Logf("%d characters", utf8.RuneCountInString(longHook))
+	assert.Equal(t, 2, style.hookLineCount(longHook))
+
+	longest := hookWords(longHook, &style)
+	lines = selectLines(longest, &style)
+	require.Len(t, lines, 2)
+	assert.GreaterOrEqual(t, fitScaleOf(longest, lines, &style), trainerTwoLineScale)
+	assert.Equal(t, 3, before.hookLineCount(longHook), "three lines with the fit of before")
 }
 
 // TestTrainerDocumentHookRepeat: in the document the phrase that says the hook again right after it is not shown, and
