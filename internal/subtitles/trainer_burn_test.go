@@ -34,6 +34,12 @@ const (
 	refSubtitlesTop  = 470
 	refTopbarTop     = 272
 	refTopbarBottom  = 301
+	// Her hook takes two lines, the capitals 440..620 px; ours, a word longer, takes two lines made smaller (T3.23).
+	refHookTop    = 440
+	refHookBottom = 620
+	hookTolerance = 20
+	// longHook is a hook one word longer than hers: three lines at full size before T3.23.
+	longHook = "развеиваю три страха об онлайн-тренировках"
 )
 
 // inkRows are the first and the last row of the box [x0, x1) × [y0, y1) with a pixel the check accepts; -1, -1 for
@@ -66,8 +72,9 @@ func isInk(v byte) bool { return v >= inkLevel }
 
 // TestBurnTrainerStyleWithFFmpeg: libass draws the trainer's style (the default) as in her reel: the hook alone (no
 // subtitles under it), small at the right in its selection frame with the cursor, then large in the middle without
-// them; the section heading alone while the phrase that reads it out is said, then above the question in the
-// subtitles; the top line over the reel — at the places measured on her reel within rowTolerance.
+// them, in two lines (a long one made smaller) within her hook's rows; the section heading alone while the phrase that
+// reads it out is said and for the quiet after it, then above the question in the subtitles (faded in); the top line
+// over the reel — at the places measured on her reel within rowTolerance.
 func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
@@ -84,11 +91,11 @@ func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", input)
 
 	// The hook until the heading at 1.9 s, where «страх номер один» is said (1.9..2.95 s, not in the subtitles); the
-	// heading stays to the end of the question (3.45..5.55 s).
+	// heading stays to the end of the question (3.45..5.55 s), which is shown from 3.9 s (the quiet of 2 s) fading in.
 	transcript := speech(hookPhrase, fear1Phrase, "А что если онлайн-тренировка менее эффективна?")
 	transcript.Duration = trainerReel
 	data := CreateSubtitlesData{
-		Transcript: transcript, Hook: trainerHook, Notes: []Note{{Kind: SectionNote, Text: fear1, Start: 1.9}},
+		Transcript: transcript, Hook: longHook, Notes: []Note{{Kind: SectionNote, Text: fear1, Start: 1.9}},
 		Branding: &Branding{TopbarLeft: tgLeft, TopbarRight: speedRight},
 	}
 
@@ -114,13 +121,23 @@ func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 	assert.Zero(t, countPixels(grown, area{x0: 0, y0: 400, x1: FrameWidth, y1: 700}, isWhite), "no frame, no cursor")
 	assert.Zero(t, countPixels(grown, area{x0: 0, y0: 700, x1: FrameWidth, y1: 1100}, isInk), "no subtitles under it")
 
+	top, bottom := inkRows(grown, area{x0: 0, y0: 380, x1: FrameWidth, y1: 800}, isPeach)
+	t.Logf("the hook's capitals: %d..%d px (hers: %d..%d)", top, bottom, refHookTop, refHookBottom)
+	assert.InDelta(t, refHookTop, top, hookTolerance, "two lines of the hook, as hers")
+	assert.InDelta(t, refHookBottom, bottom, hookTolerance, "not a third line over the face")
+
 	reading := grayFrame(ctx, t, output, 2.6)
 	assert.Positive(t, countPixels(reading, area{x0: 0, y0: 340, x1: FrameWidth, y1: 452}, isPeach), "the heading")
 	assert.Zero(t, countPixels(reading, area{x0: 0, y0: 452, x1: FrameWidth, y1: 1100}, isInk),
 		"«страх номер один» is not doubled in the subtitles")
 
-	section := grayFrame(ctx, t, output, 4)
-	top, bottom := inkRows(section, area{x0: 0, y0: 340, x1: FrameWidth, y1: 452}, isPeach)
+	quiet := grayFrame(ctx, t, output, 3.6)
+	assert.Positive(t, countPixels(quiet, area{x0: 0, y0: 340, x1: FrameWidth, y1: 452}, isPeach), "the heading")
+	assert.Zero(t, countPixels(quiet, area{x0: 0, y0: 452, x1: FrameWidth, y1: 1100}, isInk),
+		"the heading stands alone for the quiet, the question waits")
+
+	section := grayFrame(ctx, t, output, 4.6)
+	top, bottom = inkRows(section, area{x0: 0, y0: 340, x1: FrameWidth, y1: 452}, isPeach)
 	assert.InDelta(t, refSectionTop, top, rowTolerance, "the heading's capitals")
 	assert.InDelta(t, refSectionBottom, bottom, rowTolerance)
 

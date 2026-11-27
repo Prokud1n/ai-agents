@@ -184,6 +184,14 @@ type Layout struct {
 	// LowercaseSentences writes the first word of a sentence with a small letter, as the trainer does in her reels;
 	// names inside a sentence keep their capital («в Москве»).
 	LowercaseSentences bool `yaml:"lowercase_sentences"`
+	// Orthography fixes the frequent misses of Whisper in the subtitles (fixOrthography): the hyphen of «кто-то» and
+	// «онлайн-тренировки», the «ё» of «всё равно» and «ещё», a capital in the middle of a sentence («скажет Да не»).
+	Orthography bool `yaml:"orthography"`
+	// FadeIn is the fade-in of a phrase subtitle after a gap (not between subtitles that follow each other), ms; 0:
+	// none.
+	FadeIn int `yaml:"fade_in"`
+	// Phrases groups the speech into whole phrases (groupPhrases) instead of the short pieces of before.
+	Phrases PhraseLayout `yaml:"phrases"`
 }
 
 // The accent font and color of the default style: the key words, the exercise titles and the hook's key word.
@@ -219,6 +227,11 @@ const (
 // Sizes are ASS font sizes, the height of a line (for Manrope it is 1.37 of the em, for Fira 1.2): 60 is the 44 px
 // letters of her subtitles, 122 the 102 px ones of her hook. While the hook is shown the speech is not (her hook stands
 // alone), and the words that read a section heading out («страх номер один») are not shown under it.
+//
+// Since T3.23 the speech is in whole phrases of one or two lines cut by sense (layout.phrases), with the orthography
+// Whisper misses (layout.orthography) and a fade-in after a pause; the hook takes two lines made smaller rather than
+// three (hook.fit_scale), a phrase that repeats it is not shown, and a heading stands alone for two seconds
+// (section.quiet).
 func DefaultStyle() Style {
 	style := PhraseStyle()
 	style.Text = TextStyle{Font: regularFont, Size: 60, Color: white}
@@ -236,6 +249,9 @@ func DefaultStyle() Style {
 		CharWidth:          0.41,
 		TrimEndPunctuation: true,
 		LowercaseSentences: true,
+		Orthography:        true,
+		FadeIn:             200,
+		Phrases:            trainerPhrases(),
 	}
 	style.Hook = HookStyle{
 		TextStyle:     TextStyle{Font: defaultAccentFont, Size: 122, Uppercase: true, Color: peach},
@@ -249,9 +265,11 @@ func DefaultStyle() Style {
 		Margin:        410,
 		MarginSide:    60,
 		MaxLines:      3,
+		FitScale:      trainerHookFitScale,
 		Until:         SectionHookUntil,
 		Animation:     SelectHookAnimation,
 		HideSubtitles: true,
+		HideRepeat:    true,
 	}
 	style.Handle.Enabled = false
 	style.Section = SectionStyle{
@@ -261,6 +279,7 @@ func DefaultStyle() Style {
 		MinDuration: 2.5,
 		MaxDuration: 6,
 		Fade:        150,
+		Quiet:       trainerSectionQuiet,
 	}
 	style.Topbar = defaultTopbar()
 	style.Topbar.Enabled = true
@@ -424,6 +443,7 @@ func (s *Style) Validate() error {
 	errs = append(errs, validateText("text", &s.Text)...)
 	errs = append(errs, validateText("accent", &s.Accent.TextStyle)...)
 	errs = append(errs, validateLayout(&s.Layout)...)
+	errs = append(errs, validatePhrases(&s.Layout)...)
 	errs = append(errs, validateFit(s)...)
 	errs = append(errs, validateTitle(s)...)
 	errs = append(errs, validateHook(s)...)

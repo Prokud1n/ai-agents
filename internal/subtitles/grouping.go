@@ -352,7 +352,7 @@ func buildCues(groups [][]unit, style *Style, explicit bool) []cue {
 		c := cue{
 			Start: units[0].first().Start,
 			End:   units[len(units)-1].last().End,
-			Lines: layoutLines(units, style.lineChars(), style.Layout.MaxLines),
+			Lines: cueLines(units, style),
 		}
 
 		if style.Layout.TrimEndPunctuation {
@@ -383,6 +383,20 @@ func withAccents(units []unit, style *Style, allowLongest bool) []unit {
 	}
 
 	return out
+}
+
+// cueLines puts a subtitle on lines: by sense in the phrases of the style (phraseLines) unless it has accents, otherwise
+// layoutLines.
+func cueLines(units []unit, style *Style) [][]token {
+	accented := slices.ContainsFunc(units, func(u unit) bool {
+		return slices.ContainsFunc(u.tokens, func(t token) bool { return t.Accent != noAccent })
+	})
+
+	if style.Layout.Phrases.Enabled && !accented {
+		return phraseLines(units, style.lineChars())
+	}
+
+	return layoutLines(units, style.lineChars(), style.Layout.MaxLines)
 }
 
 // layoutLines puts a subtitle on lines. A long phrase (more than one line) with accented words puts them on

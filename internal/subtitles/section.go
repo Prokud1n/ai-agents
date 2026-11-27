@@ -22,6 +22,12 @@ const (
 	// out («страх номер один»): the heading stays for the phrase after it. The words that read it out start this
 	// close to it too (hideReadings).
 	readingWindow = 0.3
+	// trainerSectionQuiet: the trainer's heading stands about two seconds without subtitles under it (T3.23);
+	// maxSectionQuiet is the limit of section.quiet in a style file. maxQuietLag: the quiet never keeps a subtitle
+	// more than this after its words start.
+	trainerSectionQuiet = 2.0
+	maxSectionQuiet     = 4.0
+	maxQuietLag         = 1.0
 )
 
 // SectionStyle is the look and the place of the section headings of a talking head («СТРАХ 1», «СТРАХ 2»): one line
@@ -39,6 +45,9 @@ type SectionStyle struct {
 	MaxDuration float64 `yaml:"max_duration"`
 	// Fade in and out, in milliseconds.
 	Fade int `yaml:"fade"`
+	// Quiet is how long no speech subtitle is shown under a heading that has just appeared, seconds (quietUnderSections:
+	// at most until maxQuietLag after the start of the next phrase); 0: none.
+	Quiet float64 `yaml:"quiet"`
 }
 
 // defaultSection is the look of the trainer's headings: peach Fira Sans Extra Condensed ExtraBold capitals, the
@@ -70,6 +79,10 @@ func validateSection(s *Style) []error {
 	if c.Fade < 0 || c.Fade > maxHookFade || float64(2*c.Fade) >= c.MinDuration*millisPerSecond {
 		errs = append(errs, fmt.Errorf("section.fade must be 0..%d ms and shorter than half of section.min_duration",
 			maxHookFade))
+	}
+
+	if c.Quiet < 0 || c.Quiet > maxSectionQuiet {
+		errs = append(errs, fmt.Errorf("section.quiet must be 0..%.0f s", maxSectionQuiet))
 	}
 
 	if len(errs) > 0 || !c.Enabled {
@@ -189,7 +202,8 @@ func sectionBlocks(sections []Note, hookEnd, reelEnd float64, result *transcript
 		}
 
 		blocks = append(blocks, noteBlock{
-			start: roundCS(start), end: roundCS(end), entries: []string{n.Text}, lines: 1, fadeIn: true, fadeOut: true,
+			start: roundCS(start), end: roundCS(end), at: n.Start, entries: []string{n.Text}, lines: 1, fadeIn: true,
+			fadeOut: true,
 		})
 	}
 

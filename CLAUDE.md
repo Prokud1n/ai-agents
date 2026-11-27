@@ -375,6 +375,24 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   разделы, субтитры (и под хуком), подписи — врозь. Проверка — `subtitles.TestBurnTrainerStyleWithFFmpeg` (пиксели
   против замеров рилс тренера ± 12 px; в media-image), `mediaworker.TestIntegrationTrainerStyle` (умолчания
   `config.Editor`: отбор под 60 с, хук и 3 раздела, правка «убери разделы»).
+- Фразы субтитров тренера (T3.23, только при `layout.phrases.enabled` — в стиле тренера; `PhraseStyle`/`WordsStyle`
+  не меняются, `TestSyntheticTalkOldPieces`). `subtitles.speechCues`: токены → `fixOrthography` (`orthography.go`,
+  `layout.orthography`: дефисы `hyphenHosts`+то/нибудь/либо — не «то,», `hyphenPairs`, `hyphenBeforeBreak` «по-моему,»,
+  `compoundPrefixes` онлайн-/фитнес- по основам; «ё» — `yoWords`, «всё» по соседям; слово-связка с заглавной посреди
+  предложения → `strongBreak` перед ним, строчную даёт `lowerSentenceStarts`) → `hideReadings` → `phraseGroups`
+  (`phrases.go`: граница — `strongBreak` или пауза ≥ `gap`, но не после проклитики; длинная — `bestCut`: куски
+  ≥ `split_words`, оба влезают, предложение > запятая > союз, баланс; короткий кусок — `glueSide` к соседу в своём
+  предложении, иначе следующему, через паузу ≤ `hold_gap`, не через начало раздела; не влез — `rebalance` двигает
+  разрез) → `cueLines`/`phraseLines` (штраф строке, кончающейся проклитикой, или следующей с энклитики; бонус —
+  пунктуация) → `hideHookRepeat` (`hook.hide_repeat`: начало ≤ конец хука + 1 с, ≥ ½ слов хука и ≥ ½ своих, окончания
+  — `sameWord`) → `timeCuesWith(phraseTiming)` (≥ `min_duration`, держится до следующего через `hold_gap`) →
+  `hideUnderHook` → `quietUnderSections` (`section.quiet` 2 с после появления раздела, не позже начала следующей
+  фразы + `maxQuietLag` 1 с; заходящий в раздел — до его начала). `renderASS`: `\fad(layout.fade_in,0)` только после
+  зазора (`fadeIns`). Хук: `hook.fit_scale` 75 — `selectLines` берёт меньше строк с уменьшением, а не третью строку.
+  `hideReadings`: `noteBlock.at` (раздел ждал хук — чтение ищется и там), `strongBreak` внутри чтения не обрывает его,
+  ведущее «и/а/итак/ну/так» прячется вместе. Проверка — `TestSyntheticTalkPhrases` (≈50 с: < 3 слов ≤ 2, ≥ 1,5 с,
+  ≤ 2 строк по 30), `TestBurnTrainerStyleWithFFmpeg` (хук длиннее её — две строки в её 440..620 ± 20 px, тишина под
+  разделом).
 - Чистка первой версии и невыполнимые просьбы (T3.19a). `EDITOR_CLEANUP` (по умолчанию `true`) →
   `job.Decide = подпись || cleanup` (каждая первая версия ждёт модель) и `editplan.Request.Cleanup`.
   `Request.Cleaning()` — первая версия talk без отбора (с подписью и без): поле `cleanup_words` (вырезается как
