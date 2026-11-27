@@ -38,6 +38,8 @@ type token struct {
 	End    float64
 	Break  breakKind
 	Accent accentKind
+	// open: the strong break is only the end of a Whisper segment, without a sentence mark: the sentence may go on.
+	open bool
 }
 
 // segmentWord is a word of a segment text with its punctuation; a dash or ellipsis written apart is appended
@@ -79,7 +81,7 @@ func tokensFromTranscript(result *transcription.Result) []token {
 
 		punctuate(tokens, idx, splitSegment(result.Segments[seg].Text))
 		last := idx[len(idx)-1]
-		tokens[last].Break = strongBreak
+		tokens[last].Break, tokens[last].open = strongBreak, breakAfter(tokens[last].Text) != strongBreak
 	}
 
 	// Obscene words are masked on the screen («х*йня»); Norm keeps the word for matching.

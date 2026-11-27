@@ -393,7 +393,7 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   кончающейся проклитикой, или следующей с энклитики; бонус — пунктуация) → `hideHookRepeat` (`hook.hide_repeat`:
   начало ≤ конец хука + 1 с, совпало ≥ ⅔ содержательных слов хука и ≥ ½ своих — `contentWords` без служебных и
   стоп-слов, окончания — `sameWord`) → `timeCuesWith(phraseTiming)` (≥ `min_duration`, держится до следующего через
-  `hold_gap`) → `hideUnderHook` → `leadUnderSections` (`section.lead` 0,35 с: субтитр, чья речь начинается с
+  `hold_gap`) → `hideUnderHook` → `leadUnderSections` (`section.lead` 0,2 с с T3.27, было 0,35: субтитр, чья речь начинается с
   раздела, — вовремя, но не раньше раздела + lead, никогда не выкидывается; заходящий в раздел — до его начала; речь
   не задерживается: тишина под разделом — только пауза в звуке). `sectionShown` — до конца первой фразы раздела,
   ≥ `min_duration`. `renderASS`: `\fad(layout.fade_in,0)` только после зазора (`fadeIns`). Хук: `hook.fit_scale` 75 —
@@ -402,6 +402,25 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   только «номер/пункт» или число, ведущее «и/а/итак/ну/так» прячется вместе. Проверка — `TestSyntheticTalkPhrases`
   (≈50 с: < 3 слов ≤ 2, ≥ 1,5 с, ≤ 2 строк по 30), `TestTrainerSectionLead`, `TestBurnTrainerStyleWithFFmpeg` (её хук
   ± 12 px; хук длиннее — две строки, низ ≤ 640; «чтение сказано» — раздел один, «чтение вырезано» — раздел и вопрос).
+- Предложения и орфография субтитров тренера (T3.27). Граница предложения — `sentenceEnds` (`strongBreak` без
+  `token.open`: `open` — конец сегмента Whisper без знака, предложение может продолжаться). `glueSide` клеит короткий
+  кусок только внутри предложения; короткое предложение целиком (`wholeSentence`), видное меньше
+  `layout.phrases.min_duration_short` (0,8 с; `shownFor` — до следующего через `hold_gap`), — только к следующему
+  предложению целиком (`introduction`: порядковое «второе.» → «второе:», `isEnumerator` по `readingNumbers`), иначе
+  стоит отдельно; назад через границу — никогда, `rebalance` — только внутри предложения. `commaChains` (в
+  `speechCues` при `phrases.enabled`): ≥ 2 подряд односложных предложений с точкой (не порядковые) в пределах
+  `hold_gap` — через запятые. Орфография: `respell` («оффлайн» → «офлайн»), `yoStems` («тренажёр» во всех формах),
+  `joinHyphen` для `compoundPrefixes` — через паузу ≤ `compoundMaxGap` 1 с и через `open`-конец сегмента (причина
+  «онлайн тренировка» в вопросе под СТРАХ 1: медленный вопрос — пауза ≥ 0,3 с или конец сегмента между словами, а не
+  обход `fixOrthography`: речь идёт только через `speechCues`); `questionMarks` — «?» вместо точки/в конце предложения
+  (`asksQuestion`: «а что если», «что если», «а вдруг»; «а если» без запятой и не «а если честно»; «почему/зачем/
+  сколько/откуда/разве/неужели», «… ли» — без «потому/ни»; «!», «?», «…» не трогаются). Тексты модели (хук, пункты,
+  разделы) — `cleanWords(…, layout.orthography)` → `textOrthography` (дефисы, «ё», написания, без «?»). Хук:
+  `selectLines` при `hook.fit_scale` берёт две строки, если они влезают при `minHookShrinkScale` 60 % (`fitScaleOf` —
+  масштаб без ограничения), третья — только для хука ещё длиннее. Проверка — `TestSyntheticTalkPhrases` (склеек через
+  границу 0, короткие — только целые предложения), `TestPhraseGroups`, `TestFixOrthography`,
+  `TestCompoundAcrossSegments`, `TestTrainerHookTwoLines` и «a hook of two clauses» в
+  `TestBurnTrainerStyleWithFFmpeg` (низ ≤ 640), `TestTrainerSectionLead` (вопрос с 2,10 с).
 - Чистка первой версии и невыполнимые просьбы (T3.19a). `EDITOR_CLEANUP` (по умолчанию `true`) →
   `job.Decide = подпись || cleanup` (каждая первая версия ждёт модель) и `editplan.Request.Cleanup`.
   `Request.Cleaning()` — первая версия talk без отбора (с подписью и без): поле `cleanup_words` (вырезается как

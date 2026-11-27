@@ -102,13 +102,18 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 }
 
 // speechCues are the subtitles of the phrase layout with their times: the tokens of the transcript (with the
-// orthography of the style, sentences in small letters, without the words that read a drawn heading out), grouped into
-// phrases (or the pieces of before), the hook's repeat dropped, timed, cut at the end card (limit), off the screen under
-// the hook (hook.hide_subtitles), the question under a heading shown section.lead after it.
+// orthography of the style, a chain of one-word sentences with commas, sentences in small letters, without the words
+// that read a drawn heading out), grouped into phrases (or the pieces of before), the hook's repeat dropped, timed, cut
+// at the end card (limit), off the screen under the hook (hook.hide_subtitles), the question under a heading shown
+// section.lead after it.
 func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, hookEnd, limit float64) []cue {
 	tokens := tokensFromTranscript(data.Transcript)
 	if style.Layout.Orthography {
 		tokens = fixOrthography(tokens)
+	}
+
+	if p := &style.Layout.Phrases; p.Enabled {
+		tokens = commaChains(tokens, p.HoldGap)
 	}
 
 	if style.Layout.LowercaseSentences {

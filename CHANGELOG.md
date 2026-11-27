@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The trainer's subtitles keep the sentences apart (T3.27): the end of a sentence is never shown with the start of the
+  next one; a short sentence of its own («второе», «и третье») stands alone, or, said quicker than 0.8 s
+  (`layout.phrases.min_duration_short`), goes with the whole next sentence («первое: …»); a chain of one-word
+  sentences the speech recognition ends with periods («помогу. расскажу. объясню.») is one subtitle with commas.
+  Orthography: «онлайн-тренировка» also across a pause or the end of a recognized segment without a period (a slow
+  question under a heading), «тренажёр» in all its forms, «офлайн» for «оффлайн», «?» after a clear question («а что
+  если…», «а вдруг…», «а если…» without a comma, «почему…», «зачем…», «можно ли…»); the hook, the screen notes and the
+  headings get the hyphens, «ё» and spellings too. The question under a section heading appears 0.2 s after it
+  (`section.lead` was 0.35 s). The trainer's hook takes two lines made smaller (down to 60 %) rather than three: a hook
+  of two clauses no longer reaches the face.
 - The picture of a talking head as in the trainer's own reels (T3.25): darker and slightly warmer, the top of the frame
   (the light wall under the subtitles) in a soft shadow, so the white subtitles read; a source that is already dark is
   darkened less or not at all (its brightness is measured on a few key frames). `MEDIA_WORKER_GRADE`,

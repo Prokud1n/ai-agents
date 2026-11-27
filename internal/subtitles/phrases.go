@@ -1,16 +1,21 @@
 package subtitles
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 )
 
 // PhraseLayout groups the speech of the phrase layout into whole phrases, as the trainer writes her subtitles (T3.23): a
 // subtitle is a phrase of one or two lines that ends at the end of a sentence or at a pause; a phrase too long for the
 // lines is split where the sense allows it (a comma, a conjunction) into pieces of at least SplitWords words; a piece
-// shorter than MinWords words or MinDuration seconds is glued to a neighbor when they fit together, and otherwise
-// stays on the screen until the next subtitle (across a pause up to HoldGap). Disabled: the pieces of before
+// shorter than MinWords words or MinDuration seconds is glued to a neighbor in its sentence when they fit together, and
+// otherwise stays on the screen until the next subtitle (across a pause up to HoldGap). The end of a sentence is never
+// glued to the start of the next one (T3.27): a short sentence of its own («второе.», «и третье.») stands alone, or,
+// when it would be on the screen less than MinDurationShort, goes with the whole next sentence («первое: …»); a chain
+// of one-word sentences («помогу. расскажу. объясню.») is one sentence with commas. Disabled: the pieces of before
 // (groupCues).
 type PhraseLayout struct {
 	Enabled bool `yaml:"enabled"`
@@ -25,6 +30,9 @@ type PhraseLayout struct {
 	HoldGap float64 `yaml:"hold_gap"`
 	// MaxDuration is the longest subtitle, seconds: a longer phrase is split.
 	MaxDuration float64 `yaml:"max_duration"`
+	// MinDurationShort: a short sentence of its own stands alone when it is on the screen at least this long (until
+	// the next subtitle), otherwise it goes with the whole next sentence when they fit; 0: it always stands alone.
+	MinDurationShort float64 `yaml:"min_duration_short"`
 }
 
 // The trainer's phrases and the limits of their values in a style file.
@@ -35,6 +43,8 @@ const (
 	trainerPhraseSplitWords  = 4
 	trainerPhraseHoldGap     = 0.8
 	trainerPhraseMaxDuration = 5.0
+	// trainerPhraseMinShort: her «второе», «и третье» stand alone 0.5..0.7 s; a shorter one goes with its sentence.
+	trainerPhraseMinShort = 0.8
 
 	minPhraseGap      = 0.1
 	maxPhraseGap      = 1.0
@@ -44,6 +54,9 @@ const (
 	maxPhraseHoldGap  = 2.0
 	maxLayoutFadeIn   = 500
 )
+
+// maxEnumeratorWords: an ordinal sentence that goes with the next one has at most this many words («и третье.»).
+const maxEnumeratorWords = 2
 
 // Cut preferences of a long phrase and of the lines of a subtitle.
 const (
@@ -77,6 +90,8 @@ func trainerPhrases() PhraseLayout {
 		SplitWords:  trainerPhraseSplitWords,
 		HoldGap:     trainerPhraseHoldGap,
 		MaxDuration: trainerPhraseMaxDuration,
+
+		MinDurationShort: trainerPhraseMinShort,
 	}
 }
 
@@ -101,6 +116,13 @@ func validatePhrases(l *Layout) []error {
 		errs = append(errs, fmt.Errorf("layout.phrases.min_words and split_words must be 1..%d", maxPhraseWords))
 	}
 
+	return append(errs, validatePhraseTimes(p)...)
+}
+
+// validatePhraseTimes checks the durations and the hold of the phrases.
+func validatePhraseTimes(p *PhraseLayout) []error {
+	var errs []error
+
 	if p.MinDuration < minPhraseDuration || p.MaxDuration > maxPhraseDuration || 2*p.MinDuration > p.MaxDuration {
 		errs = append(errs, fmt.Errorf("layout.phrases.min_duration and max_duration must be %.1f..%.0f s, the "+
 			"maximum at least twice the minimum", minPhraseDuration, maxPhraseDuration))
@@ -108,6 +130,10 @@ func validatePhrases(l *Layout) []error {
 
 	if p.HoldGap < 0 || p.HoldGap > maxPhraseHoldGap {
 		errs = append(errs, fmt.Errorf("layout.phrases.hold_gap must be 0..%.0f s", maxPhraseHoldGap))
+	}
+
+	if p.MinDurationShort < 0 || p.MinDurationShort > p.MinDuration {
+		errs = append(errs, errors.New("layout.phrases.min_duration_short must be 0..min_duration"))
 	}
 
 	return errs
@@ -294,7 +320,13 @@ func mergeShort(pieces [][]unit, limits layoutLimits, p *PhraseLayout, barriers 
 		}
 
 		from := min(i, with)
-		joined := slices.Concat(merged[from], merged[from+1])
+		head := merged[from]
+
+		if sentenceEnds(head[len(head)-1].last()) {
+			head = introduction(head)
+		}
+
+		joined := slices.Concat(head, merged[from+1])
 		merged = slices.Replace(merged, from, from+2, joined)
 		i = from
 	}
@@ -302,9 +334,63 @@ func mergeShort(pieces [][]unit, limits layoutLimits, p *PhraseLayout, barriers 
 	return merged
 }
 
-// rebalance moves the cut between the short piece i and a neighbor too long to take it whole (the next one first)
-// to the best place that leaves neither of them short (the sense of the place, then the balance): «привет!» and a
-// long phrase become «привет! поговорим о том,» and the rest. The pieces stay as they are when no such place is.
+// sentenceEnds: a sentence ends after the word (not only a Whisper segment without a sentence mark).
+func sentenceEnds(t token) bool {
+	return t.Break == strongBreak && !t.open
+}
+
+// wholeSentence: the piece i is a sentence of its own: the one before it ends a sentence, and so does the piece.
+func wholeSentence(pieces [][]unit, i int) bool {
+	if i > 0 && !sentenceEnds(pieces[i-1][len(pieces[i-1])-1].last()) {
+		return false
+	}
+
+	return sentenceEnds(pieces[i][len(pieces[i])-1].last())
+}
+
+// shownFor is how long the piece i stays on the screen: until the next one when the pause before it is up to
+// hold_gap; +Inf otherwise (it stays at least min_duration).
+func shownFor(pieces [][]unit, i int, p *PhraseLayout) float64 {
+	piece := pieces[i]
+	if i+1 >= len(pieces) || pieces[i+1][0].first().Start-piece[len(piece)-1].last().End > p.HoldGap {
+		return math.Inf(1)
+	}
+
+	return pieces[i+1][0].first().Start - piece[0].first().Start
+}
+
+// isEnumerator: the word is an ordinal that counts the points of a talk: «первое», «третье», «во-вторых».
+func isEnumerator(norm string) bool {
+	if _, ok := readingNumbers[norm]; !ok {
+		return false
+	}
+
+	return strings.HasSuffix(norm, "ое") || strings.HasSuffix(norm, "ье") || strings.HasSuffix(norm, "ых")
+}
+
+// introduction is the short sentence that goes with the next one: an ordinal («второе.», «и третье.») ends with a
+// colon instead of its period («второе: …»); any other sentence stays as it is. piece is not changed.
+func introduction(piece []unit) []unit {
+	words := wordCount(piece)
+	last := piece[len(piece)-1].last()
+
+	if words > maxEnumeratorWords || !isEnumerator(last.Norm) || sentenceMark(last.Text) != "." {
+		return piece
+	}
+
+	out := slices.Clone(piece)
+	u := &out[len(out)-1]
+	u.tokens = slices.Clone(u.tokens)
+	t := &u.tokens[len(u.tokens)-1]
+	t.Text, t.Break = strings.TrimSuffix(t.Text, ".")+":", softBreak
+
+	return out
+}
+
+// rebalance moves the cut between the short piece i and a neighbor in its sentence too long to take it whole (the next
+// one first) to the best place that leaves neither of them short (the sense of the place, then the balance): «каждый
+// | из нас может начать прямо сегодня утром» becomes two even pieces. Not across the end of a sentence: the pieces stay
+// as they are when no such place is.
 func rebalance(pieces [][]unit, i int, limits layoutLimits, p *PhraseLayout, barriers []float64) [][]unit {
 	for _, with := range []int{i + 1, i - 1} {
 		if with < 0 || with >= len(pieces) {
@@ -313,9 +399,9 @@ func rebalance(pieces [][]unit, i int, limits layoutLimits, p *PhraseLayout, bar
 
 		from := min(i, with)
 		a, b := pieces[from], pieces[from+1]
+		prev := a[len(a)-1].last()
 
-		if b[0].first().Start-a[len(a)-1].last().End > p.HoldGap ||
-			crossesBarrier(a[len(a)-1].last(), b[0].first(), barriers) {
+		if sentenceEnds(prev) || b[0].first().Start-prev.End > p.HoldGap || crossesBarrier(prev, b[0].first(), barriers) {
 			continue
 		}
 
@@ -350,50 +436,38 @@ func evenCut(joined []unit, limits layoutLimits, p *PhraseLayout) (head, tail []
 	return head, tail, ok
 }
 
-// glueSide is the neighbor the short piece i is glued to: within its sentence first (a pause between them, not the end
-// of a sentence), then the next one before the previous one; only across a pause up to hold_gap, not across a heading,
-// and when the joined piece fits. false when none fits.
+// glueSide is the neighbor the short piece i is glued to: within its sentence (a pause between them, not the end of a
+// sentence), the next one before the previous one; a short sentence of its own on the screen less than
+// min_duration_short goes with the whole next sentence; never the end of a sentence with the start of the next one. Only
+// across a pause up to hold_gap, not across a heading, and when the joined piece fits. false when none fits.
 func glueSide(pieces [][]unit, i int, limits layoutLimits, p *PhraseLayout, barriers []float64) (int, bool) {
-	type side struct {
-		with     int
-		sentence bool
-	}
-
-	var sides []side
-
 	for _, with := range []int{i + 1, i - 1} {
 		if with < 0 || with >= len(pieces) {
 			continue
 		}
 
 		a, b := pieces[min(i, with)], pieces[max(i, with)]
-		prev, next := a[len(a)-1].last(), b[0].first()
-
-		if next.Start-prev.End > p.HoldGap || crossesBarrier(prev, next, barriers) ||
-			!fitsPhrase(slices.Concat(a, b), limits, p) {
-			continue
+		if !sentenceEnds(a[len(a)-1].last()) && gluable(a, b, limits, p, barriers) {
+			return with, true
 		}
-
-		sides = append(sides, side{with: with, sentence: prev.Break != strongBreak})
 	}
 
-	// Stable: the next piece stays before the previous one among the same kind.
-	slices.SortStableFunc(sides, func(x, y side) int {
-		switch {
-		case x.sentence == y.sentence:
-			return 0
-		case x.sentence:
-			return -1
-		default:
-			return 1
-		}
-	})
-
-	if len(sides) == 0 {
-		return 0, false
+	next := i + 1
+	if next < len(pieces) && wholeSentence(pieces, i) && sentenceEnds(pieces[next][len(pieces[next])-1].last()) &&
+		shownFor(pieces, i, p) < p.MinDurationShort && gluable(pieces[i], pieces[next], limits, p, barriers) {
+		return next, true
 	}
 
-	return sides[0].with, true
+	return 0, false
+}
+
+// gluable: the piece a and the next piece b may be one subtitle: a pause up to hold_gap between them, no heading, and
+// together they fit.
+func gluable(a, b []unit, limits layoutLimits, p *PhraseLayout, barriers []float64) bool {
+	prev, next := a[len(a)-1].last(), b[0].first()
+
+	return next.Start-prev.End <= p.HoldGap && !crossesBarrier(prev, next, barriers) &&
+		fitsPhrase(slices.Concat(a, b), limits, p)
 }
 
 // crossesBarrier: a heading starts between the words (within readingWindow of them).
@@ -488,4 +562,40 @@ func linesAt(units []unit, cuts []int) [][]token {
 	}
 
 	return lines
+}
+
+// commaChains joins a chain of one-word sentences (the periods Whisper puts into an enumeration: «Помогу. Расскажу.
+// Объясню.») into one sentence with commas («помогу, расскажу, объясню.»): at least two in a row, each with a period,
+// said within holdGap of each other; ordinals («Первое.», «Второе.») stay sentences. tokens is not changed.
+func commaChains(tokens []token, holdGap float64) []token {
+	single := make([]bool, len(tokens))
+	for i := range tokens {
+		single[i] = oneWordSentence(tokens, i)
+	}
+
+	out := slices.Clone(tokens)
+
+	for i := 0; i+1 < len(out); i++ {
+		if !single[i] || !single[i+1] || tokens[i+1].Start-tokens[i].End > holdGap {
+			continue
+		}
+
+		out[i].Text, out[i].Break = strings.TrimSuffix(out[i].Text, ".")+",", softBreak
+
+		if capitals(out[i+1].Text) == 1 {
+			out[i+1].Text = lowerFirstLetter(out[i+1].Text)
+		}
+	}
+
+	return out
+}
+
+// oneWordSentence: the token i is a sentence of one word ending with a period, not an ordinal.
+func oneWordSentence(tokens []token, i int) bool {
+	t := tokens[i]
+	if i > 0 && !sentenceEnds(tokens[i-1]) {
+		return false
+	}
+
+	return sentenceEnds(t) && sentenceMark(t.Text) == "." && !isEnumerator(t.Norm)
 }

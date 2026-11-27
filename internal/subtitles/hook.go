@@ -195,17 +195,19 @@ func (s *Style) hookSplit(words []string) [][2]int {
 	return splitHook(words, s.hookLineChars(), s.hookMaxLines())
 }
 
-// hookWords are the words of the hook as it is drawn, in capitals when the style says so, obscene words masked.
-// Defense in depth (the app checks the text): control characters become spaces, invisible format characters are
-// dropped, the text is cut to hookMaxRunes by whole words.
+// hookWords are the words of the hook as it is drawn, in capitals when the style says so, obscene words masked, with
+// the dictionary's orthography when the style has it (layout.orthography). Defense in depth (the app checks the text):
+// control characters become spaces, invisible format characters are dropped, the text is cut to hookMaxRunes by whole
+// words.
 func hookWords(hook string, style *Style) []string {
-	return cleanWords(hook, style.Hook.Uppercase)
+	return cleanWords(hook, style.Hook.Uppercase, style.Layout.Orthography)
 }
 
-// cleanWords are the words of a text drawn on the screen (the hook, a note, a heading), in capitals when upper: control
-// characters become spaces, invisible format characters are dropped, obscene words are masked, the text is cut to
-// hookMaxRunes by whole words.
-func cleanWords(text string, upper bool) []string {
+// cleanWords are the words of a text drawn on the screen (the hook, a note, a heading), in capitals when upper, with
+// the hyphens, «ё» and the spellings of the dictionary when orthography (textOrthography: the editor's model writes
+// «онлайн тренировка» too): control characters become spaces, invisible format characters are dropped, obscene words
+// are masked, the text is cut to hookMaxRunes by whole words.
+func cleanWords(text string, upper, orthography bool) []string {
 	clean := strings.Map(func(r rune) rune {
 		switch {
 		case unicode.IsControl(r):
@@ -218,6 +220,9 @@ func cleanWords(text string, upper bool) []string {
 	}, text)
 
 	words := strings.Fields(censor(clean))
+	if orthography {
+		words = textOrthography(words)
+	}
 
 	// Cut to hookMaxRunes by whole words (a single long word is cut inside).
 	for len(words) > 1 && lineRunes(words) > hookMaxRunes {

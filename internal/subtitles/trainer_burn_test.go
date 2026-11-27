@@ -76,8 +76,8 @@ func isInk(v byte) bool { return v >= inkLevel }
 // subtitles under it), small at the right in its selection frame with the cursor, then large in the middle without
 // them, in her hook's rows; the section heading alone while the phrase that reads it out is said, then above the
 // question in the subtitles; the top line over the reel — at the places measured on her reel within rowTolerance. A
-// hook a word longer takes two lines made smaller; with the reading cut out of the sound the heading starts on the
-// question, and its subtitle is shown with it under the heading.
+// hook a word longer takes two lines made smaller, a hook of two clauses too; with the reading cut out of the sound the
+// heading starts on the question, and its subtitle is shown with it under the heading.
 func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
@@ -121,8 +121,20 @@ func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 		assert.Positive(t, top, "the hook is drawn")
 		assert.LessOrEqual(t, bottom, longHookBottom, "two lines, no third one over the face")
 
-		// The question 1.9..3.95 s, its subtitle from 2.25 s under the heading.
+		// The question 1.9..3.95 s, its subtitle from 2.1 s under the heading.
 		checkSection(t, grayFrame(t.Context(), t, output, 3.0))
+	})
+
+	t.Run("a hook of two clauses", func(t *testing.T) {
+		t.Parallel()
+
+		output := renderTrainer(t, svc, twoClauseHook, speech(hookPhrase, trainerQuestion))
+
+		top, bottom := inkRows(grayFrame(t.Context(), t, output, 1.7), area{x0: 0, y0: 380, x1: FrameWidth, y1: 800},
+			isPeach)
+		t.Logf("the hook of two clauses: %d..%d px", top, bottom)
+		assert.Positive(t, top, "the hook is drawn")
+		assert.LessOrEqual(t, bottom, longHookBottom, "two lines, no third one over the face")
 	})
 }
 

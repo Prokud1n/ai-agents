@@ -44,6 +44,9 @@ const (
 	// says otherwise; trainerHookFitScale is the trainer's: two lines made smaller rather than three (T3.23).
 	selectFitScale      = 93
 	trainerHookFitScale = 75
+	// fitHookLines: with hook.fit_scale the hook takes at most this many lines while they fit at minHookShrinkScale
+	// (T3.27: a hook of two clauses took three lines over the face).
+	fitHookLines = 2
 )
 
 // hookFitScale is the smallest scale of the hook that does not take one more line (hook.fit_scale).
@@ -58,7 +61,8 @@ func (s *Style) hookFitScale() int {
 // selectLines wraps the hook of the select animation: the fewest lines (up to the hook's max_lines) that keep it at
 // least selectFitScale of its size — without a short word at the end of a line when that is as good, otherwise as the
 // trainer does («РАЗВЕИВАЮ СТРАХИ ОБ» over «ОНЛАЙН-ТРЕНИРОВКАХ») — or, when none does, the larger of the two wraps of
-// the fewest lines that keep it at least hook.fit_scale; none such: the largest of them.
+// the fewest lines that keep it at least hook.fit_scale; with hook.fit_scale set, two lines that fit at
+// minHookShrinkScale rather than three; none such: the largest of them.
 func selectLines(words []string, style *Style) [][2]int {
 	var best [][2]int
 
@@ -80,8 +84,10 @@ func selectLines(words []string, style *Style) [][2]int {
 			}
 		}
 
-		// Fewer lines made smaller (hook.fit_scale) rather than one more line.
-		if lineScale >= style.hookFitScale() {
+		// Fewer lines made smaller (hook.fit_scale) rather than one more line; the trainer's hook (hook.fit_scale set)
+		// takes two lines made smaller still, down to minHookShrinkScale, rather than a third one over the face.
+		if lineScale >= style.hookFitScale() || (n == fitHookLines && style.Hook.FitScale > 0 &&
+			fitScaleOf(words, lineBest, style) >= minHookShrinkScale) {
 			return lineBest
 		}
 
@@ -106,13 +112,8 @@ type selection struct {
 // between the hook's side margins (no smaller than minHookShrinkScale) and the frame's width; libass makes a line as
 // tall as the font size.
 func selectionOf(words []string, lines [][2]int, style *Style) selection {
-	widest := 1.0
-	for _, line := range lines {
-		widest = max(widest, style.hookTextWidth(strings.Join(words[line[0]:line[1]], " ")))
-	}
-
-	room := float64(FrameWidth - 2*style.hookMarginSide())
-	scale := max(min(int(math.Floor(percentBase*room/widest)), fullScaleX), minHookShrinkScale)
+	widest := linesWidth(words, lines, style)
+	scale := max(min(fitScaleOf(words, lines, style), fullScaleX), minHookShrinkScale)
 	share := float64(scale) / percentBase
 	height := float64(len(lines)*style.Hook.Size) * share
 	frame := point{x: widest*share + 2*selectPad, y: height + 2*selectPad}
@@ -127,6 +128,24 @@ func selectionOf(words []string, lines [][2]int, style *Style) selection {
 	start := point{x: right - selectStartScale*frame.x/2, y: center.y + selectDrop}
 
 	return selection{scale: scale, frame: frame, start: start, center: center}
+}
+
+// linesWidth is the width of the widest line of the hook at its full size, px (at least 1).
+func linesWidth(words []string, lines [][2]int, style *Style) float64 {
+	widest := 1.0
+	for _, line := range lines {
+		widest = max(widest, style.hookTextWidth(strings.Join(words[line[0]:line[1]], " ")))
+	}
+
+	return widest
+}
+
+// fitScaleOf is the scale (percent) at which the widest line of the hook fills the width between its side margins:
+// above fullScaleX for a short hook, below minHookShrinkScale for one that does not fit.
+func fitScaleOf(words []string, lines [][2]int, style *Style) int {
+	room := float64(FrameWidth - 2*style.hookMarginSide())
+
+	return int(math.Floor(percentBase * room / linesWidth(words, lines, style)))
 }
 
 // selectTimes are the moments of the animation within the hook's time, ms: the growth starts and ends, the frame and

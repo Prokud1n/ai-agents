@@ -23,8 +23,9 @@ const (
 	// close to it too (hideReadings).
 	readingWindow = 0.3
 	// trainerSectionLead: under the trainer's heading the subtitle of the question appears this much after it, so the
-	// heading is read first (T3.23); maxSectionLead is the limit of section.lead in a style file.
-	trainerSectionLead = 0.35
+	// heading is read first (T3.23; 0.2 s since T3.27: with the late start Whisper gives a word the question
+	// appears at most 0.3 s after the voice); maxSectionLead is the limit of section.lead in a style file.
+	trainerSectionLead = 0.2
 	maxSectionLead     = 1.0
 )
 
@@ -155,7 +156,7 @@ func firstSection(notes []Note, style *Style) (float64, bool) {
 	first, found := 0.0, false
 
 	for _, n := range notes {
-		if n.Kind != SectionNote || len(cleanWords(n.Text, style.Section.Uppercase)) == 0 {
+		if n.Kind != SectionNote || len(cleanWords(n.Text, style.Section.Uppercase, style.Layout.Orthography)) == 0 {
 			continue
 		}
 
@@ -174,7 +175,7 @@ func sectionBlocks(sections []Note, hookEnd, reelEnd float64, result *transcript
 	sorted := make([]Note, 0, len(sections))
 
 	for _, n := range sections {
-		if words := cleanWords(n.Text, style.Section.Uppercase); len(words) > 0 {
+		if words := cleanWords(n.Text, style.Section.Uppercase, style.Layout.Orthography); len(words) > 0 {
 			n.Text = strings.Join(words, " ")
 			sorted = append(sorted, n)
 		}
