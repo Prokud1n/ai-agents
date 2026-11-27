@@ -158,7 +158,7 @@ func TestEndingOnlyFirstVersion(t *testing.T) {
 		expected bool
 	}{
 		{name: "the first version", version: 1, expected: true},
-		{name: "a revision", version: 2},
+		{name: "the second version", version: 2},
 	}
 
 	for _, tt := range tests {

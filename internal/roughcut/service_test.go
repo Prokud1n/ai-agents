@@ -24,6 +24,9 @@ var errRender = errors.New("render failed")
 
 const testFrameRate = 25
 
+// testClipPath is the source of the cuts in the tests.
+const testClipPath = "/videos/clip.mp4"
+
 var testRate = ffmpeg.Rational{Num: testFrameRate, Den: 1}
 
 type fakeMedia struct {
@@ -123,7 +126,7 @@ func TestServiceCut(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "out")
 
 			result, err := newTestService(t, media).Cut(t.Context(), &CutData{
-				Source: "/videos/clip.mp4", Transcript: src, OutDir: dir, PlanOnly: tt.planOnly,
+				Source: testClipPath, Transcript: src, OutDir: dir, PlanOnly: tt.planOnly,
 			})
 			require.NoError(t, err)
 
@@ -172,7 +175,7 @@ func TestServiceCutSectionOnCutReading(t *testing.T) {
 	}
 
 	result, err := newTestService(t, media).Cut(t.Context(), &CutData{
-		Source: "/videos/clip.mp4", Transcript: src, OutDir: filepath.Join(t.TempDir(), "out"), PlanOnly: true,
+		Source: testClipPath, Transcript: src, OutDir: filepath.Join(t.TempDir(), "out"), PlanOnly: true,
 		Edit: edit,
 	})
 	require.NoError(t, err)
@@ -206,7 +209,7 @@ func TestServiceCutNoteOnQuietStart(t *testing.T) {
 	}
 
 	result, err := newTestService(t, media).Cut(t.Context(), &CutData{
-		Source: "/videos/clip.mp4", Transcript: src, OutDir: filepath.Join(t.TempDir(), "out"), PlanOnly: true,
+		Source: testClipPath, Transcript: src, OutDir: filepath.Join(t.TempDir(), "out"), PlanOnly: true,
 		Edit: edit,
 	})
 	require.NoError(t, err)

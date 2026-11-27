@@ -165,7 +165,7 @@ func TestApplySectionOnCutReading(t *testing.T) {
 			},
 		},
 		{
-			name: "too far before the speech", remove: []roughcut.WordRange{{From: 3, To: 5}}, err: "не видно в ролике",
+			name: "too far before the speech", remove: []roughcut.WordRange{{From: 3, To: 5}}, err: "их начало вырезано",
 			notes: []NoteInput{{Kind: roughcut.SectionNote, Text: sectionTwo, Word: new(3)}},
 		},
 	}

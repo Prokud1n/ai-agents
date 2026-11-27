@@ -171,8 +171,8 @@ func cutsRepeats(req *Request, cut func(i int) bool) bool {
 		repeated = append(repeated, pair[0], pair[1])
 	}
 
-	for _, p := range repeated {
-		for i := p.from; i <= p.to; i++ {
+	for k := range repeated {
+		for i := repeated[k].from; i <= repeated[k].to; i++ {
 			if cut(i) {
 				return true
 			}
