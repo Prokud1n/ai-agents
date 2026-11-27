@@ -529,6 +529,23 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `TestTrimSilentEdges`, `TestRemapScreenNotesShift`, `TestNoteShownSlack`, `TestServiceCutSectionOnCutReading`,
   `TestServiceCutNoteOnQuietStart`, `editplan.TestSubmitEndingHint`, `TestApplySectionOnCutReading`, `TestCleanedTakes`,
   `TestRolePromptSelectionLikeTrainer`.
+- Отбор и склейка (T3.26). `editplan.checkPhraseEnds` (`phraseend.go`, первая версия при `CleansTakes`): `cleanup_words`
+  вырезали конец предложения (до знака `roughcut.SentenceEnds`, паузы > `phraseGap` или конца речи), чьё начало
+  осталось, — строка «Конец фразы в чистке: …» в `Edit.Details` и `Outcome.tailHint` (`Session.hint`: каждая подсказка
+  — `endingHint`, `tailHint` — один раз, без траты попытки и не на последней попытке; две сразу — одна общая фраза
+  «отправь то же решение»); предложение целиком (связка, реакция), повтор подряд в конце и слова дубля (`takeWords`) —
+  не подсказка. `cleanupFloor` (`checkCleanupFloor`): план меряется с возвращёнными словами дублей (`takes.go`,
+  `takeWords` по плану после чистки: ранняя фраза пары `similarPairs` в пределах `maxTakeGap` 20 с, если поздняя
+  осталась хотя бы наполовину или всеми значимыми словами; фраза, сказанная заново следующей, если следующая осталась;
+  одна копия группы, повторённой подряд внутри фразы, — вырезанная при оставленной другой) — вырезанные дубли не в счёт
+  пола. Стык (`speechLevels.silentEdge`): если внутри слова найдено окно речи, а после него тихий отрезок под порогом
+  речи (комната, вдох — выше уровня тишины) длиннее `maxQuietEnding` 0,15 с, это не окончание: в `pause`
+  (`speechEnd`/`speechStart`) край — речь + 0,15 с, у выреза (`around`: `cutSpeechEnd`/`cutSpeechStart`) — сама речь;
+  слово без окна речи (тихое целиком) сохраняет тихий край (раньше одно окно выше пола + 5 dB у края Whisper оставляло
+  слово целиком: 0,93 и 0,65 с тишины на стыках). Проверка — `roughcut.TestCutGridAroundRoomInStretchedWords` (и
+  заметка на растянутом слове), `TestSilentEdgeQuietEnding`, `TestPauseKeepsQuietEndings`, `TestCutGridAroundQuietWord`,
+  `editplan.TestCheckPhraseEnds`, `TestCheckPhraseEndsFailedTake`, `TestSubmitTailHint`,
+  `TestApplyCleanupFloorWithoutTakes`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

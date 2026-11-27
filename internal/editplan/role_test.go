@@ -13,7 +13,8 @@ const roleFile = "../../agents/editor/agent.md"
 
 // TestRolePromptSelectionLikeTrainer (T3.22): the role prompt has the rules of the trainer's selection — the climax of
 // the last point stays, the introduction after the call goes, links and reactions and the spoken section headings are
-// cut, names distorted by the recognition are corrected.
+// cut, names distorted by the recognition are corrected; the cleaning keeps the end of a kept sentence and the failed
+// takes do not count against its floor (T3.26).
 func TestRolePromptSelectionLikeTrainer(t *testing.T) {
 	t.Parallel()
 
@@ -33,6 +34,9 @@ func TestRolePromptSelectionLikeTrainer(t *testing.T) {
 		"вырежи из звука через remove_words (если в задаче можно\n  вырезать), не через cleanup_words",
 		"Раздел можно ставить на\n  вырезанное чтение",
 		"«в Новосибе» → «Новосибирске»",
+		"- cleanup_words не трогают конец оставленного предложения или истории",
+		"кроме оборванного или неудачного дубля в конце\n  предложения — его вырезай",
+		"Неудачные дубли и повторы из подсказок в это не\n  считаются",
 	} {
 		assert.Contains(t, role, rule)
 	}

@@ -80,6 +80,8 @@ type sourceLight struct {
 	// thirds: false when the frame pads a source wider than 9:16 with bars above and below it, or the shape of the
 	// source is unknown with the pad — the shadow of the top is then the configured one, as in T3.25.
 	thirds bool
+	// aspect of the picture of the source as shown, width over height (0 unknown).
+	aspect float64
 }
 
 // measured: the brightness of the source is known (a mean above 0, no NaN).
@@ -88,8 +90,9 @@ func (l *sourceLight) measured() bool {
 }
 
 // framedThirds: the thirds of a source of the display aspect (width over height, 0 unknown) are the thirds of the
-// reel's frame of the fit. The crop fills the frame (a wider source loses its sides, not its top), the pad of a source
-// as tall as 9:16 or taller adds bars at the sides; only a wider padded source gets bars above and below.
+// reel's frame of the fit. The crop fills the frame: a wider source loses its sides, a taller one a little of its top
+// and bottom edges (the thirds move a little). The pad of a source as tall as 9:16 or taller adds bars at the sides;
+// only a wider padded source gets bars above and below.
 func framedThirds(fit ffmpeg.FitMode, aspect float64) bool {
 	return fit != ffmpeg.PadFitMode || (aspect > 0 && aspect <= verticalAspect*(1+aspectTolerance))
 }
@@ -220,7 +223,10 @@ func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, light *sourceLig
 // topNote says why the shadow of the top did not take the top topGap under the bottom ("" — it did, or it was not
 // fitted).
 func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded ffmpeg.Luma) string {
-	if !light.thirds {
+	switch {
+	case !light.thirds && light.aspect <= 0:
+		return "; размер кадра неизвестен — тень как задана"
+	case !light.thirds:
 		return "; кадр с полями сверху и снизу — тень как задана"
 	}
 
@@ -232,12 +238,17 @@ func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded 
 	case meanTopLimit:
 		why = "тень на пределе по средней"
 	case strengthTopLimit:
-		why = fmt.Sprintf("тень на пределе (%.0f%%)", maxFittedTop*percent)
+		why = fmt.Sprintf("тень на пределе (%.0f%%)", grade.Top*percent)
 	default:
 		return ""
 	}
 
-	if gap := graded.Bottom - graded.Top; gap >= 0 {
+	gap := graded.Bottom - graded.Top
+
+	switch {
+	case math.Abs(gap) < half:
+		return "; " + why + ", верх и низ одной яркости"
+	case gap > 0:
 		return fmt.Sprintf("; %s, верх темнее низа на %.0f", why, gap)
 	}
 
@@ -249,13 +260,13 @@ type lumaMeter interface {
 	MeanLuma(ctx context.Context, path string, moments []float64, toneMap bool) (ffmpeg.Luma, error)
 }
 
-// sourceLuma is the brightness of the picture of the source (the mean and the upper and the lower third): key frames
-// at gradeSamples moments spread evenly over the whole source, so every version of a draft (a revision cuts
-// differently) gets the grade of the first one, and whether its thirds are the frame's (framedThirds). Not measured (the
-// grade as configured) without a meter, with the grade off, in a workout or when the measurement fails (logged: the
-// draft is still made); only a cancelled context is an error.
+// sourceLuma is the brightness of the picture of the source (the mean and the upper and the lower third) and whether
+// its thirds are the frame's (framedThirds). The key frames are taken at gradeSamples moments spread evenly over the
+// whole source, so every version of a draft (a revision cuts differently) gets the grade of the first one. Not
+// measured (the grade as configured) without a meter, with the grade off, in a workout or when the measurement fails
+// (logged: the draft is still made); only a cancelled context is an error.
 func (p *Pipeline) sourceLuma(ctx context.Context, w *jobWork) (*sourceLight, error) {
-	light := &sourceLight{thirds: framedThirds(p.fit, w.aspect)}
+	light := &sourceLight{thirds: framedThirds(p.fit, w.aspect), aspect: w.aspect}
 	if p.meter == nil || !p.sound.grade.on || w.cut.Plan.Mode.Effective() != roughcut.TalkMode {
 		return light, nil
 	}

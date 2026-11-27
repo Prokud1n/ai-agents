@@ -132,10 +132,10 @@ func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan
 		return cleaning{}, fmt.Errorf("failed to build the plan without the cleaning: %w", err)
 	}
 
-	if floor := cleanupFloor(whole.Duration); only && plan.Duration < floor {
-		return cleaning{}, checkFailedf("после чистки от ролика остаётся %.1f с из %.1f с, а должно остаться хотя бы "+
-			"%.1f с: вырезай только неудачные дубли, повторы подряд и подготовку к съёмке, содержательные фразы оставь",
-			plan.Duration, whole.Duration, floor)
+	if only {
+		if err := checkCleanupFloor(req, in, trimmed, edit, plan, whole.Duration); err != nil {
+			return cleaning{}, err
+		}
 	}
 
 	words := req.Transcript.Words
@@ -166,6 +166,63 @@ func cleanupOf(req *Request, in *Input, trimmed *trim, edit *roughcut.Edit, plan
 	return cleaning{
 		fragments: fragments, seconds: max(whole.Duration-plan.Duration, 0), takes: cutsRepeats(req, cleanedWord),
 	}, nil
+}
+
+// checkCleanupFloor refuses a cleaning that leaves less than cleanupFloor of the reel without it (whole seconds). The
+// failed takes it cut do not count against the floor (T3.26): a short video of two takes of one phrase loses half of
+// its speech to the cleaning by right, and a floor counting them made the model keep a broken take. So the reel is
+// measured with the words of the phrases the hints name as said again (takeWords) brought back; a cleaning that cuts
+// the content itself is refused as before.
+func checkCleanupFloor(
+	req *Request,
+	in *Input,
+	trimmed *trim,
+	edit *roughcut.Edit,
+	plan *roughcut.Plan,
+	whole float64,
+) error {
+	floor := cleanupFloor(whole)
+	if plan.Duration >= floor {
+		return nil
+	}
+
+	excused := takeWords(req, keptSet(req.Transcript.Words, plan.Keep))
+	withTakes := *in
+	withTakes.Remove, withTakes.CleanupWords = withoutWords(in.Remove, excused), withoutWords(in.CleanupWords, excused)
+
+	restored, err := mergeEdit(req, &withTakes, trimmed.ranges)
+	if err != nil {
+		return fmt.Errorf("failed to merge the edit with the failed takes: %w", err)
+	}
+
+	restored.Mode, restored.CutTime = edit.Mode, edit.CutTime
+
+	measured, err := roughcut.BuildPlanEdited(req.Transcript, req.Plan.SourceDuration, req.Plan.Settings, &restored)
+	if err != nil {
+		return fmt.Errorf("failed to build the plan with the failed takes: %w", err)
+	}
+
+	if measured.Duration >= floor {
+		return nil
+	}
+
+	return checkFailedf("после чистки от ролика остаётся %.1f с из %.1f с, а должно остаться хотя бы %.1f с "+
+		"(вырезанные неудачные дубли из подсказок повторов в этом не считаются): вырезай только неудачные дубли, "+
+		"повторы подряд и подготовку к съёмке, содержательные фразы оставь", plan.Duration, whole, floor)
+}
+
+// withoutWords are the ranges without the marked words.
+func withoutWords(cut []roughcut.WordRange, excused []bool) []roughcut.WordRange {
+	marked := make([]bool, len(excused))
+	for _, r := range cut {
+		mark(marked, r, true)
+	}
+
+	for i := range marked {
+		marked[i] = marked[i] && !excused[i]
+	}
+
+	return ranges(marked)
 }
 
 // cutsRepeats: a word of a phrase the hints of the cleaning name as said again (writeRepeats) is cut.
