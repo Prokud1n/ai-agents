@@ -28,7 +28,7 @@ func talkHead(segments []talkSegment) *transcription.Result {
 		breathTime = 0.32
 	)
 
-	result := &transcription.Result{Language: "ru"}
+	result := &transcription.Result{}
 	at := 0.0
 
 	for _, seg := range segments {

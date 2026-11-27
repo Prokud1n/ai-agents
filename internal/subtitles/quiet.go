@@ -160,17 +160,15 @@ func quietAfter(cues []cue, start, quiet float64) []cue {
 // fadeIns are the fade-ins of the subtitles, ms (layout.fade_in): a subtitle after a gap fades in, at most over half of
 // its time; one that follows the previous without a gap does not (the text would blink).
 func fadeIns(cues []cue, fadeIn int) []int {
-	fades := make([]int, len(cues))
-	if fadeIn <= 0 {
-		return fades
-	}
+	fades := make([]int, 0, len(cues))
 
 	for i, c := range cues {
-		if i > 0 && cues[i-1].End >= c.Start {
-			continue
+		fade := 0
+		if fadeIn > 0 && (i == 0 || cues[i-1].End < c.Start) {
+			fade = min(fadeIn, int((c.End-c.Start)*millisPerSecond)/2)
 		}
 
-		fades[i] = min(fadeIn, int((c.End-c.Start)*millisPerSecond)/2)
+		fades = append(fades, fade)
 	}
 
 	return fades

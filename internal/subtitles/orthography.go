@@ -1,6 +1,7 @@
 package subtitles
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -35,12 +36,15 @@ var hyphenBeforeBreak = wordSet("помоему", "потвоему", "посв�
 // compoundPrefixes are the first parts of compound nouns («онлайн-тренировка», «фитнес-клуб»): written with a hyphen
 // before a word that starts with one of their stems.
 var compoundPrefixes = map[string][]string{
-	"онлайн": {"тренир", "тренер", "заняти", "курс", "формат", "марафон", "консульт", "программ", "урок", "школ",
-		"сопровожд", "ведени", "встреч", "клиент"},
-	"офлайн":  {"тренир", "тренер", "заняти", "формат", "встреч"},
-	"оффлайн": {"тренир", "тренер", "заняти", "формат", "встреч"},
+	"онлайн": slices.Concat(offlineStems, []string{"курс", "марафон", "консульт", "программ", "урок", "школ",
+		"сопровожд", "ведени", "клиент"}),
+	"офлайн":  offlineStems,
+	"оффлайн": offlineStems,
 	"фитнес":  {"тренер", "клуб", "зал", "браслет", "трекер", "модел", "блог", "индустри", "тренир"},
 }
+
+// offlineStems are the stems after «офлайн» (and «онлайн»).
+var offlineStems = []string{"тренир", "тренер", "заняти", "формат", "встреч"}
 
 // yoWords are words always written with «ё» in the subtitles.
 var yoWords = map[string]string{

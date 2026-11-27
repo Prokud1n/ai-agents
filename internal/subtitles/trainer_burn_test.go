@@ -64,6 +64,16 @@ func inkRows(frame []byte, b area, check func(level byte) bool) (first, last int
 	return first, last
 }
 
+// assertHookRows: the hook in its place takes two lines within the rows of hers.
+func assertHookRows(t *testing.T, frame []byte) {
+	t.Helper()
+
+	top, bottom := inkRows(frame, area{x0: 0, y0: 380, x1: FrameWidth, y1: 800}, isPeach)
+	t.Logf("the hook's capitals: %d..%d px (hers: %d..%d)", top, bottom, refHookTop, refHookBottom)
+	assert.InDelta(t, refHookTop, top, hookTolerance, "two lines of the hook, as hers")
+	assert.InDelta(t, refHookBottom, bottom, hookTolerance, "not a third line over the face")
+}
+
 func isPeach(v byte) bool { return v >= peachLow && v <= peachHigh }
 
 func isWhite(v byte) bool { return v >= whiteLevel }
@@ -121,10 +131,7 @@ func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 	assert.Zero(t, countPixels(grown, area{x0: 0, y0: 400, x1: FrameWidth, y1: 700}, isWhite), "no frame, no cursor")
 	assert.Zero(t, countPixels(grown, area{x0: 0, y0: 700, x1: FrameWidth, y1: 1100}, isInk), "no subtitles under it")
 
-	top, bottom := inkRows(grown, area{x0: 0, y0: 380, x1: FrameWidth, y1: 800}, isPeach)
-	t.Logf("the hook's capitals: %d..%d px (hers: %d..%d)", top, bottom, refHookTop, refHookBottom)
-	assert.InDelta(t, refHookTop, top, hookTolerance, "two lines of the hook, as hers")
-	assert.InDelta(t, refHookBottom, bottom, hookTolerance, "not a third line over the face")
+	assertHookRows(t, grown)
 
 	reading := grayFrame(ctx, t, output, 2.6)
 	assert.Positive(t, countPixels(reading, area{x0: 0, y0: 340, x1: FrameWidth, y1: 452}, isPeach), "the heading")
@@ -137,7 +144,7 @@ func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 		"the heading stands alone for the quiet, the question waits")
 
 	section := grayFrame(ctx, t, output, 4.6)
-	top, bottom = inkRows(section, area{x0: 0, y0: 340, x1: FrameWidth, y1: 452}, isPeach)
+	top, bottom := inkRows(section, area{x0: 0, y0: 340, x1: FrameWidth, y1: 452}, isPeach)
 	assert.InDelta(t, refSectionTop, top, rowTolerance, "the heading's capitals")
 	assert.InDelta(t, refSectionBottom, bottom, rowTolerance)
 
