@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The editor runs on Opus (T3.32, `model: claude-opus-5-5` in `agents/editor/agent.md`; the other agents stay on
+  `LLM_DEFAULT_MODEL`): its price is already in `LLM_PRICES` of `.env.dist`, so its cost is recorded.
 - Light by the frame (T3.28): the brightness of the source is measured with its upper and lower thirds (the same key
   frames, the same pass), and the shadow of the top is fitted to them — a light wall over dark clothes gets a stronger
   shadow (up to 70 %) and a weaker exposure curve, so the upper third of the reel is darker than the lower third (the

@@ -107,7 +107,7 @@ start-хуке, чтобы их не ограничивал `APP_START_TIMEOUT`.
   `gateway.AckHandler` через `fx.Decorate` **на верхнем уровне** опций (`teamchat.Module` — `fx.Options`, а не
   `fx.Module`: декоратор внутри модуля не дошёл бы до `gateway.Module`); `Notifier` шлёт черновики от бота агента.
   Без токенов `tasks.Notifier` — `tasks.LogNotifier`. Имя агента = роль бота (`agents/marketer`, `agents/copywriter`);
-  за Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`); Монтажёр (`agents/editor`) — модель решает
+  за Дизайнера пока отвечает `teamchat` фиксированным текстом (`stubTexts`); Монтажёр (`agents/editor`, модель Opus — `model` в `agent.md`, T3.32) — модель решает
   только, что вырезать (`internal/editplan`), а монтирует конвейер в `media-worker` (раздел ниже); на текст в чате он
   отвечает подсказкой прислать видео.
   Из медиа `teamchat` принимает только видео для Монтажёра (`gateway.MediaFilter` разрешает шлюзу скачать только его):
