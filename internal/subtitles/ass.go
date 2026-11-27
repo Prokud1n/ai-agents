@@ -120,7 +120,12 @@ func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, h
 		tokens = lowerSentenceStarts(tokens)
 	}
 
-	tokens = markAccents(hideReadings(tokens, headings), data.Accents, style.Accent.Words)
+	tokens = hideReadings(tokens, headings)
+	if style.Layout.Orthography {
+		tokens = sectionQuestions(tokens, headings)
+	}
+
+	tokens = markAccents(tokens, data.Accents, style.Accent.Words)
 	limits := layoutLimits{maxLines: style.Layout.MaxLines, maxLineChars: style.lineChars()}
 	units := buildUnits(tokens, limits.maxLineChars)
 	explicit := len(parsePhrases(data.Accents)) > 0
@@ -146,7 +151,7 @@ func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, h
 		timed = hideUnderHook(timed, hookEnd)
 	}
 
-	return leadUnderSections(timed, headings, style.Section.Lead)
+	return leadUnderSections(timed, headings, style.Section.Lead, data.joints)
 }
 
 // glueBarriers are the moments no phrase is glued across: the end of the hook (a piece under it and one after it are
@@ -167,13 +172,19 @@ func glueBarriers(headings []noteBlock, hookEnd float64) []float64 {
 	return barriers
 }
 
-// titleEvents are the dialogue lines of the exercise titles: the Title style, above the subtitles, the text escaped
-// and in capitals when the style says so. libass wraps a long title within the side margins.
+// titleEvents are the dialogue lines of the exercise titles: the Title style, above the subtitles, the text escaped,
+// with the dictionary's orthography (layout.orthography) and in capitals when the style says so. libass wraps a long
+// title within the side margins.
 func titleEvents(titles []Title, style *Style) string {
 	var b strings.Builder
 
 	for _, t := range titles {
-		text := censor(strings.Join(strings.Fields(t.Text), " "))
+		words := strings.Fields(t.Text)
+		if style.Layout.Orthography {
+			words = textOrthography(words)
+		}
+
+		text := censor(strings.Join(words, " "))
 		if style.Title.Uppercase {
 			text = strings.ToUpper(text)
 		}

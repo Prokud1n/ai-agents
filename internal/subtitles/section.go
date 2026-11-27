@@ -22,9 +22,10 @@ const (
 	// out («страх номер один»): the heading stays for the phrase after it. The words that read it out start this
 	// close to it too (hideReadings).
 	readingWindow = 0.3
-	// trainerSectionLead: under the trainer's heading the subtitle of the question appears this much after it, so the
-	// heading is read first (T3.23; 0.2 s since T3.27: with the late start Whisper gives a word the question
-	// appears at most 0.3 s after the voice); maxSectionLead is the limit of section.lead in a style file.
+	// trainerSectionLead: under the trainer's heading the subtitle of the question appears this much after the joint
+	// it starts at (the heading stands up to jointWindow after it, on the late start Whisper gives the word), not
+	// before the heading, so it shows at most 0.3 s after the voice; without a joint — this much after the heading
+	// (T3.23: 0.35 s; T3.27: 0.2 s). maxSectionLead is the limit of section.lead in a style file.
 	trainerSectionLead = 0.2
 	maxSectionLead     = 1.0
 )
@@ -45,7 +46,8 @@ type SectionStyle struct {
 	// Fade in and out, in milliseconds.
 	Fade int `yaml:"fade"`
 	// Lead: a subtitle whose speech starts with a heading (its reading cut out of the sound, the heading starts on the
-	// question) appears this many seconds after the heading, not before it (leadUnderSections); its speech is never
+	// question) appears this many seconds after the joint of the cut it starts at when the heading stands up to 0.3 s
+	// after that joint, otherwise after the heading; never before the heading (leadUnderSections); its speech is never
 	// delayed more. 0: at once.
 	Lead float64 `yaml:"lead"`
 }

@@ -35,7 +35,7 @@ func TestTokensFromTranscript(t *testing.T) {
 				withBreak(tok("Привет,", 0, 0.5), softBreak),
 				withBreak(tok("друзья!", 0.6, 1), strongBreak),
 				openEnd(withBreak(tok("Присед", 1.2, 2), strongBreak)),
-				openEnd(withBreak(tok(wordKnees, 3, 4), strongBreak)),
+				withBreak(tok(wordKnees, 3, 4), strongBreak),
 			},
 		},
 		{
@@ -66,7 +66,7 @@ func TestTokensFromTranscript(t *testing.T) {
 				Segments: []seg{{Start: 0, End: 2, Text: "держим спину"}},
 				Words:    []w{{Word: wordHold, Start: 0, End: 1}, {Word: wordBack, Start: 1, End: 2}},
 			},
-			expected: []token{tok(wordHold, 0, 1), openEnd(withBreak(tok(wordBack, 1, 2), strongBreak))},
+			expected: []token{tok(wordHold, 0, 1), withBreak(tok(wordBack, 1, 2), strongBreak)},
 		},
 		{
 			name: "a segment whose words are not in words does not shift the next one",
@@ -78,7 +78,7 @@ func TestTokensFromTranscript(t *testing.T) {
 				Words: []w{{Word: "Чужое", Start: 0, End: 1}, {Word: wordHold, Start: 2, End: 3}, {Word: wordBack, Start: 3, End: 4}},
 			},
 			expected: []token{
-				openEnd(withBreak(tok("Чужое", 0, 1), strongBreak)),
+				withBreak(tok("Чужое", 0, 1), strongBreak),
 				withBreak(tok("Держим,", 2, 3), softBreak),
 				withBreak(tok("спину!", 3, 4), strongBreak),
 			},

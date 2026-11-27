@@ -14,8 +14,9 @@ import (
 // shorter than MinWords words or MinDuration seconds is glued to a neighbor in its sentence when they fit together, and
 // otherwise stays on the screen until the next subtitle (across a pause up to HoldGap). The end of a sentence is never
 // glued to the start of the next one (T3.27): a short sentence of its own («второе.», «и третье.») stands alone, or,
-// when it would be on the screen less than MinDurationShort, goes with the whole next sentence («первое: …»); a chain
-// of one-word sentences («помогу. расскажу. объясню.») is one sentence with commas. Disabled: the pieces of before
+// when it would be on the screen less than MinDurationShort, goes with the whole next sentence (an ordinal — with the
+// first piece of the next one: «первое: …»); a chain of one-word sentences («подскажу. поправлю. поддержу.») is one
+// sentence with commas. Disabled: the pieces of before
 // (groupCues).
 type PhraseLayout struct {
 	Enabled bool `yaml:"enabled"`
@@ -43,8 +44,9 @@ const (
 	trainerPhraseSplitWords  = 4
 	trainerPhraseHoldGap     = 0.8
 	trainerPhraseMaxDuration = 5.0
-	// trainerPhraseMinShort: her «второе», «и третье» stand alone 0.5..0.7 s; a shorter one goes with its sentence.
-	trainerPhraseMinShort = 0.8
+	// trainerPhraseMinShort: her «второе», «и третье» stand alone 0.5..0.7 s; one shown shorter goes with the next
+	// sentence (an ordinal — with its first piece).
+	trainerPhraseMinShort = 0.6
 
 	minPhraseGap      = 0.1
 	maxPhraseGap      = 1.0
@@ -320,13 +322,13 @@ func mergeShort(pieces [][]unit, limits layoutLimits, p *PhraseLayout, barriers 
 		}
 
 		from := min(i, with)
-		head := merged[from]
+		head, tail := merged[from], merged[from+1]
 
 		if sentenceEnds(head[len(head)-1].last()) {
-			head = introduction(head)
+			head, tail = introduction(head, tail)
 		}
 
-		joined := slices.Concat(head, merged[from+1])
+		joined := slices.Concat(head, tail)
 		merged = slices.Replace(merged, from, from+2, joined)
 		i = from
 	}
@@ -368,21 +370,38 @@ func isEnumerator(norm string) bool {
 	return strings.HasSuffix(norm, "ое") || strings.HasSuffix(norm, "ье") || strings.HasSuffix(norm, "ых")
 }
 
-// introduction is the short sentence that goes with the next one: an ordinal («второе.», «и третье.») ends with a
-// colon instead of its period («второе: …»); any other sentence stays as it is. piece is not changed.
-func introduction(piece []unit) []unit {
-	words := wordCount(piece)
+// isOrdinalSentence: the piece is an ordinal sentence of its own with a period: «второе.», «и третье.».
+func isOrdinalSentence(piece []unit) bool {
 	last := piece[len(piece)-1].last()
 
-	if words > maxEnumeratorWords || !isEnumerator(last.Norm) || sentenceMark(last.Text) != "." {
-		return piece
+	return wordCount(piece) <= maxEnumeratorWords && isEnumerator(last.Norm) && sentenceMark(last.Text) == "."
+}
+
+// introduction is the short sentence head that goes with the next one, tail: an ordinal («второе.», «и третье.») ends
+// with a colon instead of its period, and the word after it gets a small letter when it has one capital («второе: они
+// …»); any other sentence stays as it is. head and tail are not changed.
+func introduction(head, tail []unit) (newHead, newTail []unit) {
+	if !isOrdinalSentence(head) {
+		return head, tail
 	}
 
-	out := slices.Clone(piece)
-	u := &out[len(out)-1]
-	u.tokens = slices.Clone(u.tokens)
-	t := &u.tokens[len(u.tokens)-1]
-	t.Text, t.Break = strings.TrimSuffix(t.Text, ".")+":", softBreak
+	newHead = withToken(head, len(head)-1, len(head[len(head)-1].tokens)-1, func(t *token) {
+		t.Text, t.Break = strings.TrimSuffix(t.Text, ".")+":", softBreak
+	})
+	newTail = withToken(tail, 0, 0, func(t *token) {
+		if capitals(t.Text) == 1 {
+			t.Text = lowerFirstLetter(t.Text)
+		}
+	})
+
+	return newHead, newTail
+}
+
+// withToken is a copy of the units with the token k of the unit u changed by change; units is not changed.
+func withToken(units []unit, u, k int, change func(t *token)) []unit {
+	out := slices.Clone(units)
+	out[u].tokens = slices.Clone(out[u].tokens)
+	change(&out[u].tokens[k])
 
 	return out
 }
@@ -438,8 +457,9 @@ func evenCut(joined []unit, limits layoutLimits, p *PhraseLayout) (head, tail []
 
 // glueSide is the neighbor the short piece i is glued to: within its sentence (a pause between them, not the end of a
 // sentence), the next one before the previous one; a short sentence of its own on the screen less than
-// min_duration_short goes with the whole next sentence; never the end of a sentence with the start of the next one. Only
-// across a pause up to hold_gap, not across a heading, and when the joined piece fits. false when none fits.
+// min_duration_short goes with the whole next sentence, an ordinal («второе.») with the first piece of the next one;
+// never the end of a sentence with the start of the next one otherwise. Only across a pause up to hold_gap, not across
+// a heading, and when the joined piece fits. false when none fits.
 func glueSide(pieces [][]unit, i int, limits layoutLimits, p *PhraseLayout, barriers []float64) (int, bool) {
 	for _, with := range []int{i + 1, i - 1} {
 		if with < 0 || with >= len(pieces) {
@@ -453,8 +473,13 @@ func glueSide(pieces [][]unit, i int, limits layoutLimits, p *PhraseLayout, barr
 	}
 
 	next := i + 1
-	if next < len(pieces) && wholeSentence(pieces, i) && sentenceEnds(pieces[next][len(pieces[next])-1].last()) &&
-		shownFor(pieces, i, p) < p.MinDurationShort && gluable(pieces[i], pieces[next], limits, p, barriers) {
+	if next >= len(pieces) || !wholeSentence(pieces, i) || shownFor(pieces, i, p) >= p.MinDurationShort {
+		return 0, false
+	}
+
+	// The whole next sentence, or, for an ordinal («второе:»), the first piece of a long one.
+	whole := sentenceEnds(pieces[next][len(pieces[next])-1].last())
+	if (whole || isOrdinalSentence(pieces[i])) && gluable(pieces[i], pieces[next], limits, p, barriers) {
 		return next, true
 	}
 
@@ -564,8 +589,8 @@ func linesAt(units []unit, cuts []int) [][]token {
 	return lines
 }
 
-// commaChains joins a chain of one-word sentences (the periods Whisper puts into an enumeration: «Помогу. Расскажу.
-// Объясню.») into one sentence with commas («помогу, расскажу, объясню.»): at least two in a row, each with a period,
+// commaChains joins a chain of one-word sentences (the periods Whisper puts into an enumeration: «Подскажу. Поправлю.
+// Поддержу.») into one sentence with commas («подскажу, поправлю, поддержу.»): at least two in a row, each with a period,
 // said within holdGap of each other; ordinals («Первое.», «Второе.») stay sentences. tokens is not changed.
 func commaChains(tokens []token, holdGap float64) []token {
 	single := make([]bool, len(tokens))

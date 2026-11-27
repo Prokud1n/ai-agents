@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"unicode"
+
+	"github.com/Prokud1n/ai-agents/internal/providers/ffmpeg"
 )
 
 const (
@@ -15,6 +17,8 @@ const (
 	stemTail = 2
 	// leadTolerance: a subtitle that starts this little before a heading is its section's (its lead-in).
 	leadTolerance = readingWindow
+	// jointWindow: a heading this little after a joint of the cut stands on the question that starts at the joint.
+	jointWindow = readingWindow
 )
 
 // textWords are the words of a text as they are compared: lower case letters and digits, ё as е, the parts of a word
@@ -128,24 +132,64 @@ func cueString(c cue) string {
 // heading is read first, without delaying the speech: a subtitle whose speech starts with the heading (from
 // leadTolerance before it — the editor may have cut its reading out of the sound, the heading then starts on the
 // question) is shown from lead after the heading at the earliest, up to the next subtitle at the latest (dropped only
-// when the next one starts there too); a subtitle that runs into the
-// heading from before ends at its start (one left shorter than minNoteShown is not shown). cues is not changed.
-func leadUnderSections(cues []cue, headings []noteBlock, lead float64) []cue {
+// when the next one starts there too); a subtitle that runs into the heading from before ends at its start (one left
+// shorter than minNoteShown is not shown). The editor puts the heading on the late start Whisper gives the first
+// word, about 0.2 s after the joint where the question starts: when a joint of the cut (joints) is up to jointWindow
+// before the heading, lead counts from the joint (but not before the heading), so the question shows at most
+// max(lead, jointWindow) after the voice. cues is not changed.
+func leadUnderSections(cues []cue, headings []noteBlock, lead float64, joints []float64) []cue {
 	out := cues
 
 	for _, h := range headings {
-		out = leadAfter(out, h.start, lead)
+		from := h.start
+
+		if j, ok := jointBefore(joints, h.start); ok {
+			from = j
+		}
+
+		out = leadAfter(out, h.start, max(from+lead, h.start))
 	}
 
 	return out
 }
 
-// leadAfter is leadUnderSections for the heading that starts at start.
-func leadAfter(cues []cue, start, lead float64) []cue {
+// jointBefore is the last joint up to jointWindow before the time (or at it); false when there is none.
+func jointBefore(joints []float64, at float64) (float64, bool) {
+	found, ok := 0.0, false
+
+	for _, j := range joints {
+		if j <= at && at-j <= jointWindow {
+			found, ok = j, true
+		}
+	}
+
+	return found, ok
+}
+
+// cutJoints are the starts of the fragments of the cut on its timeline; nil without a cut.
+func cutJoints(cut *ffmpeg.Cut) []float64 {
+	if cut == nil {
+		return nil
+	}
+
+	joints := make([]float64, 0, len(cut.Segments))
+	at := 0.0
+
+	for _, s := range cut.Segments {
+		joints = append(joints, at)
+		at += s.End - s.Start
+	}
+
+	return joints
+}
+
+// leadAfter is leadUnderSections for the heading that starts at start: its question is shown from shownFrom at the
+// earliest.
+func leadAfter(cues []cue, start, shownFrom float64) []cue {
 	out := make([]cue, 0, len(cues))
 
 	shown := func(c cue) float64 { // where a subtitle of the section starts on the screen
-		return max(c.Start, start+lead)
+		return max(c.Start, shownFrom)
 	}
 
 	for i, c := range cues {
@@ -158,8 +202,8 @@ func leadAfter(cues []cue, start, lead float64) []cue {
 			continue
 		}
 
-		if c.Start < start+lead {
-			c.Start = start + lead
+		if c.Start < shownFrom {
+			c.Start = shownFrom
 			c.End = max(c.End, c.Start+minNoteShown)
 
 			// Not over the next subtitle: one shifted up to it is a scrap.

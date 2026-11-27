@@ -400,27 +400,35 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `selectLines` берёт меньше строк с уменьшением, а не третью строку. `hideReadings` (запасной путь для планов, где
   чтение не вырезано): `noteBlock.at` (раздел ждал хук — чтение ищется и там), после `strongBreak` чтение продолжают
   только «номер/пункт» или число, ведущее «и/а/итак/ну/так» прячется вместе. Проверка — `TestSyntheticTalkPhrases`
-  (≈50 с: < 3 слов ≤ 2, ≥ 1,5 с, ≤ 2 строк по 30), `TestTrainerSectionLead`, `TestBurnTrainerStyleWithFFmpeg` (её хук
+  (≈1 мин: с T3.27 склеек через границу предложения 0, короткие — только целые предложения, ровно 5; остальные ≥ 1,5 с, ≤ 2 строк по 30), `TestTrainerSectionLead`, `TestBurnTrainerStyleWithFFmpeg` (её хук
   ± 12 px; хук длиннее — две строки, низ ≤ 640; «чтение сказано» — раздел один, «чтение вырезано» — раздел и вопрос).
 - Предложения и орфография субтитров тренера (T3.27). Граница предложения — `sentenceEnds` (`strongBreak` без
-  `token.open`: `open` — конец сегмента Whisper без знака, предложение может продолжаться). `glueSide` клеит короткий
-  кусок только внутри предложения; короткое предложение целиком (`wholeSentence`), видное меньше
-  `layout.phrases.min_duration_short` (0,8 с; `shownFor` — до следующего через `hold_gap`), — только к следующему
-  предложению целиком (`introduction`: порядковое «второе.» → «второе:», `isEnumerator` по `readingNumbers`), иначе
-  стоит отдельно; назад через границу — никогда, `rebalance` — только внутри предложения. `commaChains` (в
-  `speechCues` при `phrases.enabled`): ≥ 2 подряд односложных предложений с точкой (не порядковые) в пределах
-  `hold_gap` — через запятые. Орфография: `respell` («оффлайн» → «офлайн»), `yoStems` («тренажёр» во всех формах),
-  `joinHyphen` для `compoundPrefixes` — через паузу ≤ `compoundMaxGap` 1 с и через `open`-конец сегмента (причина
-  «онлайн тренировка» в вопросе под СТРАХ 1: медленный вопрос — пауза ≥ 0,3 с или конец сегмента между словами, а не
-  обход `fixOrthography`: речь идёт только через `speechCues`); `questionMarks` — «?» вместо точки/в конце предложения
-  (`asksQuestion`: «а что если», «что если», «а вдруг»; «а если» без запятой и не «а если честно»; «почему/зачем/
-  сколько/откуда/разве/неужели», «… ли» — без «потому/ни»; «!», «?», «…» не трогаются). Тексты модели (хук, пункты,
-  разделы) — `cleanWords(…, layout.orthography)` → `textOrthography` (дефисы, «ё», написания, без «?»). Хук:
-  `selectLines` при `hook.fit_scale` берёт две строки, если они влезают при `minHookShrinkScale` 60 % (`fitScaleOf` —
-  масштаб без ограничения), третья — только для хука ещё длиннее. Проверка — `TestSyntheticTalkPhrases` (склеек через
-  границу 0, короткие — только целые предложения), `TestPhraseGroups`, `TestFixOrthography`,
-  `TestCompoundAcrossSegments`, `TestTrainerHookTwoLines` и «a hook of two clauses» в
-  `TestBurnTrainerStyleWithFFmpeg` (низ ≤ 640), `TestTrainerSectionLead` (вопрос с 2,10 с).
+  `token.open`; `markOpenEnds`: `open` — конец сегмента Whisper без знака, если следующий сегмент начинается со
+  строчной — предложение продолжается; с заглавной — новое предложение). `glueSide` клеит короткий кусок только внутри
+  предложения; короткое предложение целиком (`wholeSentence`), видное меньше `layout.phrases.min_duration_short` (0,6 с;
+  у тренера отдельные «второе» 0,5–0,7 с; `shownFor` — до следующего через `hold_gap`), — к следующему предложению
+  целиком, порядковое (`isOrdinalSentence`: ≤ 2 слов, `isEnumerator` по `readingNumbers`, точка) — и к первому куску
+  длинного; `introduction`: «второе.» → «второе:», следующее слово со строчной (одна заглавная). Иначе стоит отдельно;
+  назад через границу — никогда, `rebalance` — только внутри предложения. `commaChains` (в `speechCues` при
+  `phrases.enabled`): ≥ 2 подряд односложных предложений с точкой (не порядковые) в пределах `hold_gap` — через
+  запятые. Орфография: `respell` («оффлайн» → «офлайн»), `yoStems` («тренажёр», «четвёрт» + ы/а/о/у — не «четверть»),
+  `replaceWord` сохраняет капс; `joinHyphen` для `compoundPrefixes` — через паузу ≤ `compoundMaxGap` 1 с и через
+  `open`-конец (вероятная причина «онлайн тренировка» в вопросе под СТРАХ 1 — медленный вопрос: пауза ≥ 0,3 с или
+  конец сегмента между словами; пословных таймингов в данных нет; обхода `fixOrthography` нет — речь идёт только через
+  `speechCues`). `questionMarks`/`asksQuestion`: ведущие «ну/и/так» пропускаются; «а что если», «что если», «а вдруг»
+  (не + `conditionalAside`) — «?» и с запятой; «а если», `questionWords` (после «а» тоже; «разве что» — нет,
+  «сколько» — только с `howMuch` или «раз в»), «X ли» (не `liStops`: вряд/навряд/едва/то/чуть/не) — без запятой
+  или если после последней запятой вопросительное слово (`clauseQuestions`), без «потому/ни». `sectionQuestions`
+  (после `hideReadings`): первое предложение раздела с «а если / а что если / что если» — «?» и с запятой. Тексты модели
+  (хук, пункты, разделы, подписи упражнений `titleEvents`) — `textOrthography` при `layout.orthography` (без «?»).
+  Синхрон: `BurnSubtitles` передаёт стыки `cutJoints(data.Cut)` (`CreateSubtitlesData.joints`); `leadUnderSections`
+  считает `section.lead` 0,2 с от стыка, если раздел стоит ≤ `jointWindow` 0,3 с после него, иначе от раздела; не
+  раньше раздела. Хук: `selectLines` сравнивает варианты по `fitScaleOf` (без зажатия); при `hook.fit_scale` — две
+  строки до `trainerTwoLineScale` 50 % (`hookMinScale`), третья — только если не влезает и так. Проверка —
+  `TestSyntheticTalkPhrases`, `TestPhraseGroups`, `TestFixOrthography` (строки «stays»/«gets ?»),
+  `TestCompoundAcrossSegments`, `TestTextOrthography`, `TestSectionQuestion`, `TestLeadFromJoint`,
+  `TestTrainerHookTwoLines` (≈75 символов — 2 строки), `TestBurnTrainerStyleWithFFmpeg` («a hook of two clauses», «a
+  hook of about 75 characters»: низ ≤ 640), `TestTrainerSectionLead`.
 - Чистка первой версии и невыполнимые просьбы (T3.19a). `EDITOR_CLEANUP` (по умолчанию `true`) →
   `job.Decide = подпись || cleanup` (каждая первая версия ждёт модель) и `editplan.Request.Cleanup`.
   `Request.Cleaning()` — первая версия talk без отбора (с подписью и без): поле `cleanup_words` (вырезается как

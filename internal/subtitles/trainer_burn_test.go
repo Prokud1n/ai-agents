@@ -136,6 +136,18 @@ func TestBurnTrainerStyleWithFFmpeg(t *testing.T) {
 		assert.Positive(t, top, "the hook is drawn")
 		assert.LessOrEqual(t, bottom, longHookBottom, "two lines, no third one over the face")
 	})
+
+	t.Run("a hook of about 75 characters", func(t *testing.T) {
+		t.Parallel()
+
+		output := renderTrainer(t, svc, longHook, speech(hookPhrase, trainerQuestion))
+
+		top, bottom := inkRows(grayFrame(t.Context(), t, output, 1.7), area{x0: 0, y0: 380, x1: FrameWidth, y1: 800},
+			isPeach)
+		t.Logf("the hook of about 75 characters: %d..%d px", top, bottom)
+		assert.Positive(t, top, "the hook is drawn")
+		assert.LessOrEqual(t, bottom, longHookBottom, "two lines at half the size, no third one")
+	})
 }
 
 // trainerQuestion is the question of a section in the synthetic talk.

@@ -44,9 +44,11 @@ const (
 	// says otherwise; trainerHookFitScale is the trainer's: two lines made smaller rather than three (T3.23).
 	selectFitScale      = 93
 	trainerHookFitScale = 75
-	// fitHookLines: with hook.fit_scale the hook takes at most this many lines while they fit at minHookShrinkScale
-	// (T3.27: a hook of two clauses took three lines over the face).
-	fitHookLines = 2
+	// fitHookLines: with hook.fit_scale the hook takes at most this many lines while they fit at trainerTwoLineScale
+	// (T3.27: a hook of two clauses took three lines over the face); its 61 px capitals are still larger than the
+	// subtitles.
+	fitHookLines        = 2
+	trainerTwoLineScale = 50
 )
 
 // hookFitScale is the smallest scale of the hook that does not take one more line (hook.fit_scale).
@@ -62,18 +64,19 @@ func (s *Style) hookFitScale() int {
 // least selectFitScale of its size — without a short word at the end of a line when that is as good, otherwise as the
 // trainer does («РАЗВЕИВАЮ СТРАХИ ОБ» over «ОНЛАЙН-ТРЕНИРОВКАХ») — or, when none does, the larger of the two wraps of
 // the fewest lines that keep it at least hook.fit_scale; with hook.fit_scale set, two lines that fit at
-// minHookShrinkScale rather than three; none such: the largest of them.
+// trainerTwoLineScale rather than three; none such: the largest of them. The wraps are compared by the scale at which
+// they fill the width (fitScaleOf), not clamped.
 func selectLines(words []string, style *Style) [][2]int {
 	var best [][2]int
 
-	bestScale := 0
+	bestScale := -1
 
 	for n := 1; n <= style.hookMaxLines(); n++ {
-		lineBest, lineScale := [][2]int(nil), 0
+		lineBest, lineScale := [][2]int(nil), -1
 
 		for _, strict := range []bool{true, false} {
 			lines := evenSplit(words, n, strict)
-			scale := selectionOf(words, lines, style).scale
+			scale := fitScaleOf(words, lines, style)
 
 			if scale >= selectFitScale {
 				return lines
@@ -85,9 +88,9 @@ func selectLines(words []string, style *Style) [][2]int {
 		}
 
 		// Fewer lines made smaller (hook.fit_scale) rather than one more line; the trainer's hook (hook.fit_scale set)
-		// takes two lines made smaller still, down to minHookShrinkScale, rather than a third one over the face.
+		// takes two lines made smaller still, down to trainerTwoLineScale, rather than a third one over the face.
 		if lineScale >= style.hookFitScale() || (n == fitHookLines && style.Hook.FitScale > 0 &&
-			fitScaleOf(words, lineBest, style) >= minHookShrinkScale) {
+			lineScale >= trainerTwoLineScale) {
 			return lineBest
 		}
 
@@ -97,6 +100,16 @@ func selectLines(words []string, style *Style) [][2]int {
 	}
 
 	return best
+}
+
+// hookMinScale is the smallest scale of the hook of the select animation: trainerTwoLineScale with hook.fit_scale
+// (two lines rather than three), otherwise minHookShrinkScale.
+func (s *Style) hookMinScale() int {
+	if s.Hook.FitScale > 0 {
+		return trainerTwoLineScale
+	}
+
+	return minHookShrinkScale
 }
 
 // selection is the geometry of the select animation: the scale of the hook (percent of its size: a long hook is made
@@ -109,11 +122,11 @@ type selection struct {
 }
 
 // selectionOf lays the hook of the lines out: the widest line (hookTextWidth) sets the scale against the width
-// between the hook's side margins (no smaller than minHookShrinkScale) and the frame's width; libass makes a line as
+// between the hook's side margins (no smaller than hookMinScale) and the frame's width; libass makes a line as
 // tall as the font size.
 func selectionOf(words []string, lines [][2]int, style *Style) selection {
 	widest := linesWidth(words, lines, style)
-	scale := max(min(fitScaleOf(words, lines, style), fullScaleX), minHookShrinkScale)
+	scale := max(min(fitScaleOf(words, lines, style), fullScaleX), style.hookMinScale())
 	share := float64(scale) / percentBase
 	height := float64(len(lines)*style.Hook.Size) * share
 	frame := point{x: widest*share + 2*selectPad, y: height + 2*selectPad}
@@ -141,7 +154,7 @@ func linesWidth(words []string, lines [][2]int, style *Style) float64 {
 }
 
 // fitScaleOf is the scale (percent) at which the widest line of the hook fills the width between its side margins:
-// above fullScaleX for a short hook, below minHookShrinkScale for one that does not fit.
+// above fullScaleX for a short hook, below hookMinScale for one that does not fit.
 func fitScaleOf(words []string, lines [][2]int, style *Style) int {
 	room := float64(FrameWidth - 2*style.hookMarginSide())
 

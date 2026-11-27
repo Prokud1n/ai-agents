@@ -47,15 +47,19 @@ var compoundPrefixes = map[string][]string{
 var offlineStems = []string{"тренировк", "тренер", "заняти", "формат", "встреч"}
 
 // yoWords are words always written with «ё» in the subtitles; yoStems are stems written with «ё» in all their forms
-// («тренажёр», «тренажёрами», «тренажёрный»).
+// («тренажёр», «тренажёрами», «тренажёрный», «четвёртое»), when the letter after the stem is one of yoStemNext («четвёрт»
+// + «ый/ая/ое/ую», not «четверть»).
 var (
 	yoWords = map[string]string{
 		"еще": "ещё", "идет": "идёт", "придет": "придёт", "пойдет": "пойдёт", "подойдет": "подойдёт",
 		"найдет": "найдёт", "дает": "даёт", "живет": "живёт", "мое": "моё", "твое": "твоё", "свое": "своё",
-		"четвертое": "четвёртое", "четвертый": "четвёртый",
 	}
-	yoStems = map[string]string{"тренажер": "тренажёр"}
+	yoStems    = map[string]string{"тренажер": "тренажёр", stemFourth: "четвёрт"}
+	yoStemNext = map[string]string{stemFourth: "ыаоу"}
 )
+
+// stemFourth is the stem of «четвёртый».
+const stemFourth = "четверт"
 
 // respellings are words Whisper writes in a spelling of before: «оффлайн» is «офлайн».
 var respellings = map[string]string{"оффлайн": "офлайн"}
@@ -228,7 +232,7 @@ func withYo(tokens []token, i int) string {
 	}
 
 	for stem, yo := range yoStems {
-		if strings.HasPrefix(t.Norm, stem) && normalize(firstWord(t.Text)) == t.Norm {
+		if yoStemOf(t, stem) {
 			return replaceWord(t.Text, yo+strings.TrimPrefix(t.Norm, stem))
 		}
 	}
@@ -247,6 +251,22 @@ func withYo(tokens []token, i int) string {
 	return t.Text
 }
 
+// yoStemOf: the token is one word with the stem of yoStems and a letter of yoStemNext after it (when it has them).
+func yoStemOf(t token, stem string) bool {
+	if !strings.HasPrefix(t.Norm, stem) || normalize(firstWord(t.Text)) != t.Norm {
+		return false
+	}
+
+	next, ok := yoStemNext[stem]
+	if !ok {
+		return true
+	}
+
+	r, _ := utf8.DecodeRuneInString(strings.TrimPrefix(t.Norm, stem))
+
+	return strings.ContainsRune(next, r)
+}
+
 // firstWord is the first run of letters of the text («тренажерами,» → «тренажерами»).
 func firstWord(text string) string {
 	start := strings.IndexFunc(text, unicode.IsLetter)
@@ -262,8 +282,8 @@ func firstWord(text string) string {
 	return text[start : start+end]
 }
 
-// replaceWord puts the word (lower case) in place of the letters of text, keeping the punctuation around them and a
-// capital first letter.
+// replaceWord puts the word (lower case) in place of the letters of text, keeping the punctuation around them, a
+// capital first letter and a word in capitals.
 func replaceWord(text, word string) string {
 	start := strings.IndexFunc(text, unicode.IsLetter)
 	if start < 0 {
@@ -280,7 +300,12 @@ func replaceWord(text, word string) string {
 		end += size
 	}
 
-	if r, _ := utf8.DecodeRuneInString(text[start:]); unicode.IsUpper(r) {
+	letters := text[start:end]
+
+	switch r, _ := utf8.DecodeRuneInString(letters); {
+	case utf8.RuneCountInString(letters) > 1 && strings.ToUpper(letters) == letters:
+		word = strings.ToUpper(word) // a word in capitals stays in capitals: «ЕЩЁ»
+	case unicode.IsUpper(r):
 		first, size := utf8.DecodeRuneInString(word)
 		word = string(unicode.ToUpper(first)) + word[size:]
 	}
@@ -300,23 +325,39 @@ func startsSentence(t token) bool {
 	return proclitics[n] || enclitics[n] || stopWords[n] || sentenceStarters[n]
 }
 
-// Whisper often ends a question with a period. questionMarks puts «?» at the end of a sentence that is clearly a
-// question by its first words: «а что если…», «что если…», «а вдруг…», «почему…», «зачем…», «сколько…», «откуда…»,
-// «разве…», «неужели…», «можно ли…»; «а если…» only without a comma (not «а если честно, …», not «а если болит, делайте
-// мягче»), «почему…» not with its answer in it («почему так, потому что…») and not «сколько бы ни…». A sentence ending
-// with «!», «?» or «…» stays as it is.
 // The words of the question openers: «а что если», «а если».
 const (
 	wordAnd  = "а"
 	wordWhat = "что"
 	wordIf   = "если"
+	wordLi   = "ли"
+	// wordTimes and wordIn: «сколько раз в неделю» asks.
+	wordTimes = "раз"
+	wordIn    = "в"
 )
 
+// Whisper often ends a question with a period. questionMarks puts «?» at the end of a sentence that is clearly a
+// question by its first words (after a leading «ну», «и», «так»): «а что если…», «что если…», «а вдруг…» (not «а что
+// если честно»); «а если…», «почему…», «зачем…», «сколько нужно/стоит/времени/раз в…», «откуда…», «разве…» (not «разве
+// что»), «неужели…», «можно ли…» (not «вряд ли», «едва ли», «то ли», «чуть ли не», «не … ли») — these only without a
+// comma, or when the clause after the last comma starts with a question word («а если болит колено, что делать»), and
+// not with their answer in them («почему так, потому что…», «сколько бы ни…»). A sentence ending with «!», «?» or «…»
+// stays as it is.
 var (
 	questionOpeners  = [][]string{{wordAnd, wordWhat, wordIf}, {wordWhat, wordIf}, {wordAnd, "вдруг"}}
 	questionWords    = wordSet("почему", "зачем", "сколько", "откуда", "разве", "неужели")
 	questionAnswers  = wordSet("потому", "ни")
 	conditionalAside = wordSet("честно", "серьезно", "коротко", "кратко", "проще", "откровенно")
+	questionLeads    = wordSet("ну", "и", "так")
+	// liStops: «X ли» is not a question after these: «вряд ли», «едва ли», «то ли … то ли», «чуть ли не», «не … ли».
+	liStops = wordSet("вряд", "навряд", "едва", "то", "чуть", "не")
+	// howMuch: «сколько» asks with these after it («сколько нужно…»), not in «сколько себя помню», «сколько раз я
+	// слышала».
+	howMuch = wordSet("нужно", "надо", "стоит", "можно", "времени", "длится", "занимает", "займет", "весит", "лет",
+		"дней", "минут", "подходов", "повторений", "калорий")
+	// clauseQuestions start a clause that asks after a comma: «…, что делать».
+	clauseQuestions = wordSet("что", "как", "где", "куда", "когда", "кто", "какой", "какая", "какое", "какие", "чем",
+		"почему", "зачем", "сколько", "откуда")
 )
 
 // questionMarks returns the tokens with «?» at the end of the sentences that are questions (asksQuestion); tokens is
@@ -326,13 +367,12 @@ func questionMarks(tokens []token) []token {
 	start := 0
 
 	for i, t := range out {
-		if i+1 < len(out) && (t.Break != strongBreak || t.open) {
+		if i+1 < len(out) && !sentenceEnds(t) {
 			continue
 		}
 
 		if asksQuestion(out[start : i+1]) {
-			out[i].Text = withQuestionMark(t.Text)
-			out[i].Break, out[i].open = strongBreak, false
+			markQuestion(&out[i])
 		}
 
 		start = i + 1
@@ -341,37 +381,125 @@ func questionMarks(tokens []token) []token {
 	return out
 }
 
+// markQuestion puts «?» at the end of the token, the end of its sentence.
+func markQuestion(t *token) {
+	t.Text = withQuestionMark(t.Text)
+	t.Break, t.open = strongBreak, false
+}
+
 // asksQuestion: the words of a sentence (without a mark of its own other than a period) are a question.
 func asksQuestion(sentence []token) bool {
 	if mark := sentenceMark(sentence[len(sentence)-1].Text); mark != "" && mark != "." {
 		return false
 	}
 
+	norms := questionNorms(sentence)
+
+	if opener, ok := startsWithOpener(norms); ok {
+		return len(norms) == opener || !conditionalAside[norms[opener]]
+	}
+
+	core := norms
+	if core[0] == wordAnd && len(core) > 1 {
+		core = core[1:]
+	}
+
+	answered := slices.ContainsFunc(core, func(n string) bool { return questionAnswers[n] })
+	if answered || !asksByWord(norms[0] == wordAnd, core) {
+		return false
+	}
+
+	return clauseAsks(sentence)
+}
+
+// questionNorms are the normalized words of the sentence without its leading «ну», «и», «так».
+func questionNorms(sentence []token) []string {
 	norms := make([]string, 0, len(sentence))
 	for _, t := range sentence {
 		norms = append(norms, t.Norm)
 	}
 
-	if norms[0] == "ну" && len(norms) > 1 {
+	for len(norms) > 1 && questionLeads[norms[0]] {
 		norms = norms[1:]
 	}
 
+	return norms
+}
+
+// startsWithOpener: the words start with a question opener followed by more words; the opener's length.
+func startsWithOpener(norms []string) (int, bool) {
 	for _, opener := range questionOpeners {
 		if len(norms) > len(opener) && slices.Equal(norms[:len(opener)], opener) {
-			return true
+			return len(opener), true
 		}
 	}
 
+	return 0, false
+}
+
+// asksByWord: the first words of the sentence (core: without a leading «а») ask: «а если…», a question word, «X ли».
+func asksByWord(withAnd bool, core []string) bool {
 	switch {
-	case len(norms) > 2 && norms[0] == wordAnd && norms[1] == wordIf:
-		return !conditionalAside[norms[2]] && !slices.ContainsFunc(sentence[:len(sentence)-1], func(t token) bool {
-			return t.Break == softBreak
-		})
-	case questionWords[norms[0]], len(norms) > 2 && norms[1] == "ли":
-		return !slices.ContainsFunc(norms, func(n string) bool { return questionAnswers[n] })
-	default:
+	case len(core) < 2:
 		return false
+	case withAnd && core[0] == wordIf:
+		return !conditionalAside[core[1]]
+	case core[0] == "разве":
+		return core[1] != wordWhat
+	case core[0] == "сколько":
+		return howMuch[core[1]] || (core[1] == wordTimes && len(core) > 2 && core[2] == wordIn)
+	case questionWords[core[0]]:
+		return true
+	default:
+		return core[1] == wordLi && !liStops[core[0]]
 	}
+}
+
+// clauseAsks: the sentence has no comma, or the clause after its last comma starts with a question word.
+func clauseAsks(sentence []token) bool {
+	last := -1
+
+	for i, t := range sentence[:len(sentence)-1] {
+		if t.Break == softBreak {
+			last = i
+		}
+	}
+
+	return last < 0 || clauseQuestions[sentence[last+1].Norm]
+}
+
+// sectionQuestions puts «?» at the end of the first sentence of a section that starts with «а если», «а что если»
+// or «что если», commas or not: a section heading always asks it. tokens is not changed.
+func sectionQuestions(tokens []token, headings []noteBlock) []token {
+	out := slices.Clone(tokens)
+
+	for _, h := range headings {
+		from := slices.IndexFunc(out, func(t token) bool { return t.Start >= h.start-readingWindow })
+		if from < 0 || (from > 0 && !sentenceEnds(out[from-1])) {
+			continue
+		}
+
+		to := from
+		for to+1 < len(out) && !sentenceEnds(out[to]) {
+			to++
+		}
+
+		mark := sentenceMark(out[to].Text)
+		if (mark == "" || mark == ".") && conditionalQuestion(questionNorms(out[from:to+1])) {
+			markQuestion(&out[to])
+		}
+	}
+
+	return out
+}
+
+// conditionalQuestion: the words start with «а если», «а что если» or «что если» and go on not as an aside.
+func conditionalQuestion(norms []string) bool {
+	if opener, ok := startsWithOpener(norms); ok && norms[opener-1] == wordIf {
+		return !conditionalAside[norms[opener]]
+	}
+
+	return len(norms) > 2 && norms[0] == wordAnd && norms[1] == wordIf && !conditionalAside[norms[2]]
 }
 
 // sentenceMark is the mark that ends the text: «.», «!», «?», «…» (or «...»), «» for none.

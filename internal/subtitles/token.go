@@ -81,7 +81,7 @@ func tokensFromTranscript(result *transcription.Result) []token {
 
 		punctuate(tokens, idx, splitSegment(result.Segments[seg].Text))
 		last := idx[len(idx)-1]
-		tokens[last].Break, tokens[last].open = strongBreak, breakAfter(tokens[last].Text) != strongBreak
+		tokens[last].Break = strongBreak
 	}
 
 	// Obscene words are masked on the screen («х*йня»); Norm keeps the word for matching.
@@ -89,7 +89,19 @@ func tokensFromTranscript(result *transcription.Result) []token {
 		tokens[i].Text = censor(tokens[i].Text)
 	}
 
+	markOpenEnds(tokens)
+
 	return tokens
+}
+
+// markOpenEnds marks the ends of segments that do not end a sentence (token.open): without a sentence mark, the next
+// segment going on with a small letter («онлайн» | «тренировка хуже»). A next segment with a capital starts a sentence
+// («спросите» | «Отвечу…»), so the end stays a sentence end. tokens is owned by the caller.
+func markOpenEnds(tokens []token) {
+	for i := range tokens[:max(len(tokens)-1, 0)] {
+		t := &tokens[i]
+		t.open = t.Break == strongBreak && breakAfter(t.Text) != strongBreak && capitals(tokens[i+1].Text) == 0
+	}
 }
 
 // cleanWord collapses whitespace and drops backslashes: spoken text has none, and in ASS they start escapes.

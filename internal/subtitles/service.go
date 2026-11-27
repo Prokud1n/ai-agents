@@ -96,7 +96,9 @@ func (s *Service) BurnSubtitles(ctx context.Context, data *BurnSubtitlesData) (*
 		return nil, err
 	}
 
-	ass, cues := buildDocument(&data.CreateSubtitlesData, &style)
+	create := data.CreateSubtitlesData
+	create.joints = cutJoints(data.Cut)
+	ass, cues := buildDocument(&create, &style)
 
 	dir, err := os.MkdirTemp("", tempDirPattern)
 	if err != nil {
