@@ -186,15 +186,12 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		return nil, err
 	}
 
-	placed, hidden := placeNotes(req, in, edit.ScreenNotes, &plan)
-	if len(hidden) > 0 && !in.dropHidden {
-		return nil, hiddenNotesError(req, in, hidden)
-	}
-
-	edit.ScreenNotes = placed
+	source := edit.ScreenNotes
+	placed := placeNotes(req, in, source, &plan)
+	edit.ScreenNotes = placed.notes
 
 	sel := newSelection(req, in, mode, &plan)
-	sel.notes, sel.hidden = edit.ScreenNotes, hidden
+	sel.notes, sel.hidden, sel.source = edit.ScreenNotes, placed.dropped, source
 	if sel.cleanup {
 		if sel.cleaned, err = cleanupOf(req, in, &trimmed, &edit, &plan); err != nil {
 			return nil, err
@@ -202,7 +199,7 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 	}
 
 	edit.Notes, edit.Details = notes(req, in, reason, &sel), details(req, in, &sel)
-	edit.Details = append(edit.Details, hiddenNotesDetails(hidden)...)
+	edit.Details = append(edit.Details, placed.details...)
 	ending := checkEnding(req, in, &edit, &sel)
 	tail := checkPhraseEnds(req, in, &edit, &plan)
 	count := checkCounts(req, &edit, &plan, &sel)
@@ -213,14 +210,8 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		return nil, err
 	}
 
-	if err := checkNotesApart(in, &edit, &plan); err != nil {
+	if err := checkPlaced(req, in, &edit, &plan, &placed); err != nil {
 		return nil, err
-	}
-
-	if req.IsRevision() {
-		if err := checkChanged(req, &edit, &plan); err != nil {
-			return nil, err
-		}
 	}
 
 	cut, kept := countCandidates(in.Candidates)
@@ -231,8 +222,31 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
 		Selected: sel.on, Target: in.TargetSeconds, Cleaned: sel.cleaned.fragments,
 		CleanedTakes: sel.cleaned.takes, endingHint: ending, tailHint: tail, countHint: count, fragmentHint: fragment,
-		hidden: hidden,
 	}, nil
+}
+
+// checkPlaced runs the checks of the notes and of a revision on the edit built without the hidden notes, then refuses
+// the hidden ones (unless the last attempt drops them): a decision refused by them failed nothing else. A revision
+// that would change nothing without them is refused by them too: they were its change.
+func checkPlaced(req *Request, in *Input, edit *roughcut.Edit, plan *roughcut.Plan, placed *placement) error {
+	if err := checkNotesApart(in, edit, plan); err != nil {
+		return err
+	}
+
+	if req.IsRevision() {
+		err := checkChanged(req, edit, plan)
+		ownChange := errors.Is(err, errNothingChanged) && len(placed.hidden) > 0 && !in.dropHidden
+
+		if err != nil && !ownChange {
+			return err
+		}
+	}
+
+	if len(placed.hidden) > 0 && !in.dropHidden {
+		return hiddenNotesError(req, in, placed.hidden)
+	}
+
+	return nil
 }
 
 // checkInput checks the limits and that every index and ID exists.

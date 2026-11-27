@@ -115,14 +115,16 @@ func TestAnnounced(t *testing.T) {
 		text     string
 		expected int
 	}{
-		{name: "a word", text: "три показателя", expected: 3},
+		{name: "a word", text: "три правила", expected: 3},
+		{name: "frequent mistakes", text: "пять частых ошибок", expected: 5},
+		{name: "different ways", text: "три разных способа", expected: 3},
 		{name: "digits", text: "5 ошибок", expected: 5},
 		{name: "with an adjective", text: "две простые вещи", expected: 2},
 		{name: "times", text: "три раза"},
 		{name: "a week", text: "две недели"},
 		{name: "years", text: "пять лет"},
 		{name: "a countdown", text: "два три"},
-		{name: "one", text: "один показатель"},
+		{name: "one", text: "один способ"},
 		{name: "eleven", text: "11 ошибок"},
 		{name: "the last word", text: "три"},
 	}

@@ -172,6 +172,4 @@ type Outcome struct {
 	// fragmentHint: a revision left a word or two of a sentence it cut (checkFragments). Given back once each.
 	countHint    string
 	fragmentHint string
-	// hidden are the screen notes left out on the last attempt (Session.withoutHidden).
-	hidden []hiddenNote
 }

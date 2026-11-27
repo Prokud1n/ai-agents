@@ -206,7 +206,8 @@ func screenNotesLines(req *Request, in *Input, previous *roughcut.Edit, sel *sel
 	notes, hidden := sel.notes, hiddenNotesLine(sel.hidden)
 
 	switch {
-	case slices.Equal(notes, previous.ScreenNotes):
+	case slices.Equal(notes, previous.ScreenNotes) || slices.Equal(sel.source, previous.ScreenNotes):
+		// The same notes, maybe only placed otherwise (placeNotes): nothing to tell.
 		return hidden
 	case len(notes) == 0:
 		return append([]string{notesRemovedLine}, hidden...)

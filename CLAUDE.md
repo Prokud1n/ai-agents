@@ -578,18 +578,26 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
 - Надёжность отбора (T3.29, `internal/editplan`). `placeNotes` (`notesplace.go`, сразу после `buildSized`): элемент
   решения, который проверка app прячет (`NoteShown` с `NoteCheckSlack`), но воркер своим допуском показал бы
   (`NoteShown(…, 0)`), переносится на первое оставленное слово после него (`moveNote`: обе стороны видят его на
-  оставленном слове — расхождения app/воркер нет); дальше допуска не переносится (это ранний дубль чтения или вырезанный
-  пункт) — `hiddenNotesError` (`CheckError.hiddenNotes`): по ≤ 3 элементам вид и текст, слово и время, вырезанные слова
-  (`cleanup_words`/`remove_words`), ближайшее оставленное слово и действие, ≤ 1200 символов. Последняя попытка, не
-  прошедшая только из-за них, — `Session.withoutHidden`: `Input.dropHidden`, решение без этих элементов, строка
-  `hiddenNotesLine` в описании и `hiddenNotesDetails`. `checkNotesApart` — прежняя проверка «в одном месте».
-  `Session.hint`: подсказки по разу (`hintKinds`: ending, tail, count, fragment) и на последней попытке, ходов ≤
-  `maxSubmits` (попытки + подсказки). `checkCounts` (`counts.go`, при `sel.on`): оставленное число 2–10 (не перед
-  `measureStems`: раз, недели, месяцы…), в исходнике после него (≤ 120 с) все порядковые 1…N в начале предложения
-  (`ordinalWords`, допускается ведущее «и/а/ну/так/итак»), в ролике — меньше → `countHint` и строка «Структура: …».
-  `checkFragments` (`fragments.go`, только правки): от предложения прошлой версии осталось 1–2 слова, вырезано ≥ 3 →
-  `fragmentHint` и «Обрывок фразы в правке: …». `fixLines`: исправления слов — одна строка сразу после хука и пунктов,
-  ≤ 4 пар и «и ещё N», не сворачивается. Проверка — `TestApplyPlacesNotes`, `TestSubmitDropsHiddenNotes`,
+  оставленном слове — расхождения app/воркер нет); дальше допуска не переносится (ранний дубль чтения, вырезанный
+  пункт). Остальные проверки (`cleanupOf`, подписи, `checkNotesApart`, `checkChanged`) идут на ролике без невидимых
+  элементов, и только потом `checkPlaced` отдаёт `hiddenNotesError` (`CheckError.hiddenNotes`; правка, чьим
+  единственным изменением были они, — тоже она): по ≤ 3 элементам вид и текст, слово и время, вырезанные слова
+  (`cleanup_words`/`remove_words`), ближайшее оставленное слово (описание ≤ 250 символов) и действие (не режется).
+  Последняя попытка, не прошедшая только из-за них, — `Session.withoutHidden` (`Input.dropHidden`, `settleHidden`):
+  раздел ставится на первое оставленное слово после него (`sectionPlace`: между ними не начинается другой элемент,
+  там нет раздела, `checkNotesApart` проходит; строка в `Details`), остальное выбрасывается со строкой
+  `hiddenNotesLine` в описании и `hiddenNotesDetails`; иначе причина отказа — настоящая ошибка этой проверки.
+  `Session.hint`: подсказки по разу (`hintKinds`: ending, tail, count, fragment; `softRetryHint`) и на последней
+  попытке, ходов ≤ `maxSubmits`; решение, на которое выдана подсказка, запоминается (`hintedOutcome`): если
+  исправление не прошло последнюю попытку, принимается оно («Принято прежнее решение…»), а не запасной вариант.
+  `checkCounts` (`counts.go`, при `sel.on`): оставленное число 2–10 (не перед `measureWords` — целые формы: раз,
+  недели, месяцы…), в исходнике после него (≤ 120 с) все порядковые 1…N в начале предложения (`ordinalWords`,
+  допускается ведущее «и/а/ну/так/итак»), в ролике — меньше → `countHint` и строка «Структура: …». `checkFragments`
+  (`fragments.go`, только правки): от предложения прошлой версии осталось 1–2 слова, вырезано ≥ 3 → `fragmentHint` и
+  «Обрывок фразы в правке: …». `fixLines`: исправления слов — одна строка сразу после хука и пунктов, ≤ 4 пар и «и
+  ещё N», не сворачивается. «Не вошло» не называет чтение раздела и по месту, где его поставила модель
+  (`selection.source`); один перенос элементов не даёт строки «На экране». Проверка — `TestApplyPlacesNotes`,
+  `TestSubmitSettlesHiddenNotes`, `TestSubmitHiddenNotesOnlyChange`, `TestApplyHiddenAfterOtherChecks`,
   `TestCheckCounts`, `TestAnnounced`, `TestCheckFragments`, `TestSubmitFragmentHint`, `TestSubmitTailHint`,
   `TestDescribeChangesLimit`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота

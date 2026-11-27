@@ -39,8 +39,10 @@ const (
 	retryHint      = " Исправь и вызови submit_edit ещё раз — это последняя попытка. Если не понял, что менять, " +
 		"ответь decision unclear."
 	exhaustedHint = " Попытки исчерпаны."
-	noSessionText = "submit_edit работает только в задаче монтажа."
-	badInputText  = "Вход не разобран: нужен JSON-объект с полями из схемы submit_edit."
+	// previousAcceptedFormat: the correction after a hint failed the last attempt, the decision before it stands.
+	previousAcceptedFormat = "Принято прежнее решение: исправление не прошло проверку (%s)."
+	noSessionText          = "submit_edit работает только в задаче монтажа."
+	badInputText           = "Вход не разобран: нужен JSON-объект с полями из схемы submit_edit."
 )
 
 type sessionKey struct{}
@@ -56,6 +58,9 @@ type Session struct {
 	outcome  *Outcome
 	// hinted: the hint of the kind was given (once; the same decision again is accepted).
 	hinted [hintKinds]bool
+	// hintedOutcome is the last valid decision a hint was given on: when the model's correction fails the last
+	// attempt, it is the decision (the lines of the hints are in its details).
+	hintedOutcome *Outcome
 }
 
 func NewSession(req *Request) *Session {
@@ -104,6 +109,7 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 		if hint := s.hint(outcome); hint != "" {
 			// A hint, not a failed check: it does not take an attempt.
 			s.attempts--
+			s.hintedOutcome = outcome
 
 			return "", agents.NewToolError(hint)
 		}
@@ -119,19 +125,41 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 	}
 
 	if s.attempts >= maxAttempts {
-		if accepted, ok := s.withoutHidden(&in, check); ok {
-			s.outcome = accepted
-
-			return fmt.Sprintf(hiddenAcceptedText, hiddenNames(accepted.hidden)), nil
-		}
-
-		// The hook title that passed its checks is kept: the first version gets it with the automatic cut.
-		s.outcome = &Outcome{Kind: InvalidOutcome, Reason: check.Message, Edit: roughcut.Edit{Hook: checkedHook(s.req, &in)}}
-
-		return "План не прошёл проверку: " + check.Message + "." + exhaustedHint, nil
+		return s.lastAttempt(&in, check), nil
 	}
 
 	return "", agents.NewToolError("План не прошёл проверку: " + check.Message + "." + retryHint)
+}
+
+// lastAttempt ends the decision after the last attempt failed the check: accepted without the notes the reel would not
+// show when they are all it failed by (withoutHidden), else the decision a hint was given on, else refused
+// (InvalidOutcome; the hook title that passed its checks is kept: the first version gets it with the automatic cut).
+// The answer goes to the model, the run ends.
+func (s *Session) lastAttempt(in *Input, check *CheckError) string {
+	reason := check.Message
+
+	if check.hiddenNotes {
+		accepted, failure := s.withoutHidden(in)
+		if accepted != nil {
+			s.outcome = accepted
+
+			return hiddenAcceptedText
+		}
+
+		if failure != "" {
+			reason = failure
+		}
+	}
+
+	if s.hintedOutcome != nil {
+		s.outcome = s.hintedOutcome
+
+		return fmt.Sprintf(previousAcceptedFormat, reason)
+	}
+
+	s.outcome = &Outcome{Kind: InvalidOutcome, Reason: reason, Edit: roughcut.Edit{Hook: checkedHook(s.req, in)}}
+
+	return "План не прошёл проверку: " + reason + "." + exhaustedHint
 }
 
 // hint is the text of the hints of the outcome not given yet (each once), marked as given; "" without one, or past
@@ -144,9 +172,9 @@ func (s *Session) hint(outcome *Outcome) string {
 
 	pending := [hintKinds]struct{ text, retry string }{
 		endingHintKind:   {outcome.endingHint, endingRetryHint},
-		tailHintKind:     {outcome.tailHint, tailRetryHint},
-		countHintKind:    {outcome.countHint, tailRetryHint},
-		fragmentHintKind: {outcome.fragmentHint, tailRetryHint},
+		tailHintKind:     {outcome.tailHint, softRetryHint},
+		countHintKind:    {outcome.countHint, softRetryHint},
+		fragmentHintKind: {outcome.fragmentHint, softRetryHint},
 	}
 
 	var parts, retries []string
@@ -166,25 +194,30 @@ func (s *Session) hint(outcome *Outcome) string {
 	case 1:
 		return parts[0] + retries[0]
 	default:
-		return strings.Join(parts, " ") + tailRetryHint
+		return strings.Join(parts, " ") + softRetryHint
 	}
 }
 
-// withoutHidden is the decision of the last attempt accepted without the screen notes the reel would not show, when
-// they are all it failed by (T3.29): the trainer gets the reel selected, not the automatic cut; false otherwise.
-func (s *Session) withoutHidden(in *Input, check *CheckError) (*Outcome, bool) {
-	if !check.hiddenNotes {
-		return nil, false
-	}
-
+// withoutHidden is the decision of the last attempt accepted with the notes the reel would not show put or dropped,
+// when they are all it failed by (T3.29): the trainer gets the reel selected, not the automatic cut. Otherwise nil and
+// the check it fails then (the reason of the refusal).
+func (s *Session) withoutHidden(in *Input) (*Outcome, string) {
 	in.dropHidden = true
 
 	outcome, err := Apply(s.req, in)
-	if err != nil || outcome.Kind != EditOutcome || len(outcome.hidden) == 0 {
-		return nil, false
-	}
 
-	return outcome, true
+	var check *CheckError
+
+	switch {
+	case errors.As(err, &check):
+		return nil, check.Message
+	case err != nil:
+		return nil, err.Error()
+	case outcome.Kind != EditOutcome:
+		return nil, ""
+	default:
+		return outcome, ""
+	}
 }
 
 func (s *Session) apply(decoder *json.Decoder, in *Input) (*Outcome, error) {

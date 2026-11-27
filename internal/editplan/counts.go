@@ -11,21 +11,21 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
-// The announced number of points (T3.29). The trainer announces how many points follow («три показателя», «пять
+// The announced number of points (T3.29). The trainer announces how many points follow («три правила», «пять
 // ошибок») and numbers them at the start of a sentence («первое…», «во-вторых…», «и третье…»). A selection (or a
 // revision for the length) that keeps the announcement but cuts some of the numbered points leaves the viewer counting
 // three and seeing two. Such a decision gets a hint back once (like checkEnding: the same decision again is accepted)
 // and a line in the details.
 //
 // The heuristic is conservative: the number is a word or digits from 2 to maxCount kept in the reel, followed by a
-// word that is not a number or a measure of time, quantity or repetition («три раза в неделю», «два месяца»); the
+// word that is not a number or a measure of time, quantity or repetition (measureWords: «три раза в неделю», «два месяца»); the
 // source has every ordinal from the first to that number at the start of a sentence within maxCountGap after it, and
 // the reel keeps fewer of them. A number without its numbered points in the speech is never judged.
 const (
 	maxCount = 10
 	// maxCountGap after the announcement the numbered points are looked for, seconds.
 	maxCountGap = 120.0
-	// announceWords quoted of the announcement: the number and the next two words («три важных показателя»).
+	// announceWords quoted of the announcement: the number and the next two words («три важных правила»).
 	announceWords = 3
 	// minNounRunes: the word after the number is a word, not a letter or a particle.
 	minNounRunes = 3
@@ -51,11 +51,16 @@ var ordinalWords = map[string]int{
 	"в-девятых": 9, "десятое": 10, "в-десятых": 10,
 }
 
-// measureStems: a number followed by them counts time, quantity or repetitions, not points.
-var measureStems = []string{
-	timesWord, "секунд", "минут", "час", "день", "дня", "дней", "сутк", "недел", "месяц", "год", "лет", "кило", "грамм",
-	"литр", "метр", "километр", "сантиметр", "шаг", "подход", "повтор", "процент", "рубл", "тысяч", "сотн", "миллион",
-	"раунд", "круг",
+// measureWords: a number followed by them counts time, quantity or repetitions, not points. Whole forms: a stem would
+// also catch «разных», «частых», «годных».
+var measureWords = []string{
+	timesWord, "раза", "секунда", "секунды", "секунд", "секунду", "минута", "минуты", "минут", "минуту", "час", "часа",
+	"часов", "день", "дня", "дней", "сутки", "суток", "неделя", "недели", "недель", "неделю", "месяц", "месяца",
+	"месяцев", "год", "года", "лет", "кило", "килограмм", "килограмма", "килограммов", "грамм", "грамма", "граммов",
+	"литр", "литра", "литров", "метр", "метра", "метров", "километр", "километра", "километров", "сантиметр",
+	"сантиметра", "сантиметров", "шаг", "шага", "шагов", "подход", "подхода", "подходов", "повтор", "повтора",
+	"повторов", "повторения", "повторений", "процент", "процента", "процентов", "рубль", "рубля", "рублей", "тысячи",
+	"тысяч", "сотни", "сотен", "миллиона", "миллионов", "раунд", "раунда", "раундов", "круг", "круга", "кругов",
 }
 
 // leadWords may come before the ordinal at the start of a sentence («и третье»).
@@ -161,10 +166,8 @@ func announced(words []transcription.Word, i int) (int, bool) {
 		return 0, false
 	}
 
-	for _, stem := range measureStems {
-		if strings.HasPrefix(next, stem) {
-			return 0, false
-		}
+	if slices.Contains(measureWords, next) {
+		return 0, false
 	}
 
 	return count, true

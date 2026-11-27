@@ -23,7 +23,9 @@ const maxTailHints = 3 // the cut ends of sentences named in the hint
 
 // Model-facing text of the hint and the line of the decisions log.
 const (
-	tailRetryHint = " Исправь и вызови submit_edit ещё раз; если так и задумано, отправь то же решение ещё раз — оно " +
+	// softRetryHint ends a hint of a soft check (the end of a sentence, the points, a fragment): the same decision
+	// again is accepted.
+	softRetryHint = " Исправь и вызови submit_edit ещё раз; если так и задумано, отправь то же решение ещё раз — оно " +
 		"будет принято."
 	tailDetailFormat = "Конец фразы в чистке: слова %s «%s»"
 )

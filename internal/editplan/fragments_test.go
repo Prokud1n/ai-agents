@@ -85,6 +85,7 @@ func TestSubmitFragmentHint(t *testing.T) {
 	const (
 		fragment = `{"decision": "edit", "reason": "короче", "remove_words": [{"from": 7, "to": 12}]}`
 		whole    = `{"decision": "edit", "reason": "короче", "remove_words": [{"from": 7, "to": 13}]}`
+		broken   = `{"decision": "edit", "reason": "x", "remove_words": [{"from": 90, "to": 91}]}`
 	)
 
 	tests := []struct {
@@ -95,6 +96,10 @@ func TestSubmitFragmentHint(t *testing.T) {
 	}{
 		{name: sameAfterHint, inputs: []string{fragment, fragment}, toolErrors: 1, left: true},
 		{name: "the fragment cut after the hint", inputs: []string{fragment, whole}, toolErrors: 1},
+		{
+			name:   "the correction after the hint fails the last attempt: the hinted decision stands",
+			inputs: []string{broken, fragment, broken}, toolErrors: 2, left: true,
+		},
 	}
 
 	for _, tt := range tests {
