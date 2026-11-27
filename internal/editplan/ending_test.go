@@ -76,7 +76,10 @@ func TestSubmitEndingHint(t *testing.T) {
 			name: "the hint takes no attempt", inputs: []string{proofCut, broken, bothCut}, toolErrors: 2,
 			kind: EditOutcome,
 		},
-		{name: "a failed check first: accepted with the line", inputs: []string{broken, proofCut}, toolErrors: 1, kind: EditOutcome, detail: true},
+		{
+			name:   "a failed check first: the hint still given, the same decision accepted with the line",
+			inputs: []string{broken, proofCut, proofCut}, toolErrors: 2, kind: EditOutcome, detail: true,
+		},
 	}
 
 	for _, tt := range tests {

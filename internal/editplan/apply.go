@@ -74,6 +74,10 @@ type Input struct {
 	// CleanupWords are the failed takes, a phrase said again and the preparation for the shooting the cleaning of a
 	// first version cuts (Request.Cleaning): cut like Remove, counted in one line of the description.
 	CleanupWords []roughcut.WordRange `json:"cleanup_words"`
+
+	// dropHidden: the screen notes the reel would not show are left out instead of failing the check (the last
+	// attempt of a decision that fails only by them, Session); never from the model's JSON.
+	dropHidden bool
 }
 
 // FixInput corrects the subtitle word Index to Text; Word is the word the model means as it reads it in the
@@ -94,6 +98,9 @@ type CandidateDecision struct {
 // CheckError is an edit that failed the checks; Message goes back to the model.
 type CheckError struct {
 	Message string
+
+	// hiddenNotes: the decision failed because screen notes would not be seen in the reel (placeNotes).
+	hiddenNotes bool
 }
 
 func (e *CheckError) Error() string {
@@ -179,8 +186,15 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		return nil, err
 	}
 
+	placed, hidden := placeNotes(req, in, edit.ScreenNotes, &plan)
+	if len(hidden) > 0 && !in.dropHidden {
+		return nil, hiddenNotesError(req, in, hidden)
+	}
+
+	edit.ScreenNotes = placed
+
 	sel := newSelection(req, in, mode, &plan)
-	sel.notes = edit.ScreenNotes
+	sel.notes, sel.hidden = edit.ScreenNotes, hidden
 	if sel.cleanup {
 		if sel.cleaned, err = cleanupOf(req, in, &trimmed, &edit, &plan); err != nil {
 			return nil, err
@@ -188,15 +202,18 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 	}
 
 	edit.Notes, edit.Details = notes(req, in, reason, &sel), details(req, in, &sel)
+	edit.Details = append(edit.Details, hiddenNotesDetails(hidden)...)
 	ending := checkEnding(req, in, &edit, &sel)
 	tail := checkPhraseEnds(req, in, &edit, &plan)
+	count := checkCounts(req, &edit, &plan, &sel)
+	fragment := checkFragments(req, &edit, &plan)
 
 	shown, err := checkTitlesShown(&edit, &plan)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := checkNotesShown(in, &edit, &plan); err != nil {
+	if err := checkNotesApart(in, &edit, &plan); err != nil {
 		return nil, err
 	}
 
@@ -213,7 +230,8 @@ func applyEdit(req *Request, in *Input, reason string) (*Outcome, error) {
 		Changes:  describeChanges(req, in, &trimmed, &placedTitles{newTitles: news, keep: plan.Keep}, &sel),
 		Duration: plan.Duration, Reason: reason, Mode: mode, Titles: titleLines(shown), Untimed: untimedTitles(in),
 		Selected: sel.on, Target: in.TargetSeconds, Cleaned: sel.cleaned.fragments,
-		CleanedTakes: sel.cleaned.takes, endingHint: ending, tailHint: tail,
+		CleanedTakes: sel.cleaned.takes, endingHint: ending, tailHint: tail, countHint: count, fragmentHint: fragment,
+		hidden: hidden,
 	}, nil
 }
 

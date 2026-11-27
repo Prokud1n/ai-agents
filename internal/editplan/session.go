@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -15,6 +16,21 @@ import (
 // maxAttempts of the model to submit an edit that passes the checks: the first failure goes back to it with the
 // reason, the second ends the decision (InvalidOutcome).
 const maxAttempts = 2
+
+// hintKind is a soft check of a valid decision whose hint goes back to the model once (it does not take an attempt).
+type hintKind int
+
+const (
+	endingHintKind hintKind = iota
+	tailHintKind
+	countHintKind
+	fragmentHintKind
+	hintKinds
+)
+
+// maxSubmits bounds the calls of submit_edit in a session: the attempts and every hint once. No hint is given past it,
+// so the decision is accepted (or refused) and the run ends.
+const maxSubmits = maxAttempts + int(hintKinds)
 
 // Tool answers for the model.
 const (
@@ -36,11 +52,10 @@ type Session struct {
 
 	mu       sync.Mutex
 	attempts int
+	submits  int
 	outcome  *Outcome
-	// endingHinted: the hint about the ending of a selection was given (once; the same decision again is accepted).
-	endingHinted bool
-	// tailHinted: the hint about the end of a sentence cut by the cleaning was given (once, like endingHinted).
-	tailHinted bool
+	// hinted: the hint of the kind was given (once; the same decision again is accepted).
+	hinted [hintKinds]bool
 }
 
 func NewSession(req *Request) *Session {
@@ -77,6 +92,7 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 	}
 
 	s.attempts++
+	s.submits++
 
 	var in Input
 
@@ -103,6 +119,12 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 	}
 
 	if s.attempts >= maxAttempts {
+		if accepted, ok := s.withoutHidden(&in, check); ok {
+			s.outcome = accepted
+
+			return fmt.Sprintf(hiddenAcceptedText, hiddenNames(accepted.hidden)), nil
+		}
+
 		// The hook title that passed its checks is kept: the first version gets it with the automatic cut.
 		s.outcome = &Outcome{Kind: InvalidOutcome, Reason: check.Message, Edit: roughcut.Edit{Hook: checkedHook(s.req, &in)}}
 
@@ -112,23 +134,30 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 	return "", agents.NewToolError("План не прошёл проверку: " + check.Message + "." + retryHint)
 }
 
-// hint is the text of the hints of the outcome not given yet (each once), marked as given; "" without one, or on the
-// last attempt. Each hint ends with its own way to keep the decision; two hints at once share one at the end.
+// hint is the text of the hints of the outcome not given yet (each once), marked as given; "" without one, or past
+// maxSubmits. A hint is given on the last attempt too: it does not take one. Each hint ends with its own way to keep
+// the decision; two hints at once share one at the end.
 func (s *Session) hint(outcome *Outcome) string {
-	if s.attempts >= maxAttempts {
+	if s.submits >= maxSubmits {
 		return ""
+	}
+
+	pending := [hintKinds]struct{ text, retry string }{
+		endingHintKind:   {outcome.endingHint, endingRetryHint},
+		tailHintKind:     {outcome.tailHint, tailRetryHint},
+		countHintKind:    {outcome.countHint, tailRetryHint},
+		fragmentHintKind: {outcome.fragmentHint, tailRetryHint},
 	}
 
 	var parts, retries []string
 
-	if outcome.endingHint != "" && !s.endingHinted {
-		s.endingHinted = true
-		parts, retries = append(parts, "Проверь "+outcome.endingHint+"."), append(retries, endingRetryHint)
-	}
+	for kind, h := range pending {
+		if h.text == "" || s.hinted[kind] {
+			continue
+		}
 
-	if outcome.tailHint != "" && !s.tailHinted {
-		s.tailHinted = true
-		parts, retries = append(parts, "Проверь "+outcome.tailHint+"."), append(retries, tailRetryHint)
+		s.hinted[kind] = true
+		parts, retries = append(parts, "Проверь "+h.text+"."), append(retries, h.retry)
 	}
 
 	switch len(parts) {
@@ -139,6 +168,23 @@ func (s *Session) hint(outcome *Outcome) string {
 	default:
 		return strings.Join(parts, " ") + tailRetryHint
 	}
+}
+
+// withoutHidden is the decision of the last attempt accepted without the screen notes the reel would not show, when
+// they are all it failed by (T3.29): the trainer gets the reel selected, not the automatic cut; false otherwise.
+func (s *Session) withoutHidden(in *Input, check *CheckError) (*Outcome, bool) {
+	if !check.hiddenNotes {
+		return nil, false
+	}
+
+	in.dropHidden = true
+
+	outcome, err := Apply(s.req, in)
+	if err != nil || outcome.Kind != EditOutcome || len(outcome.hidden) == 0 {
+		return nil, false
+	}
+
+	return outcome, true
 }
 
 func (s *Session) apply(decoder *json.Decoder, in *Input) (*Outcome, error) {

@@ -168,4 +168,10 @@ type Outcome struct {
 	endingHint string
 	// tailHint: the cleaning cut the end of a kept sentence (checkPhraseEnds); given back once, like endingHint.
 	tailHint string
+	// countHint: a selection kept the announced number of points and cut some of the numbered points (checkCounts);
+	// fragmentHint: a revision left a word or two of a sentence it cut (checkFragments). Given back once each.
+	countHint    string
+	fragmentHint string
+	// hidden are the screen notes left out on the last attempt (Session.withoutHidden).
+	hidden []hiddenNote
 }

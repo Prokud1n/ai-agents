@@ -43,6 +43,8 @@ type selection struct {
 	cleaned  cleaning
 	// notes are the screen notes of the edit: a range cut from a section heading is its reading, replaced by the plate.
 	notes []roughcut.ScreenNote
+	// hidden are the notes of the decision left out on its last attempt: the reel would not show them.
+	hidden []hiddenNote
 }
 
 // newSelection is the selection of a decision with the plan it builds: on only when the reel got shorter.

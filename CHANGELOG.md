@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Selection reliability (T3.29): a screen note whose start the editor cut is moved onto the first kept word after it
+  when the media worker would show it there anyway; otherwise the check tells the model which note («раздел «ошибка
+  2»»), on which word and time it stands, which words around it are cut (and by which field), the nearest kept word and
+  what to do. When the last attempt fails only by such notes, the selection is accepted without them («Плашку «…» не
+  показал: её начало вырезано.» in the description, a line in `decisions.log`) instead of the automatic cut of the
+  whole source. The hints (the cut end of a sentence, the ending) are given on the last attempt too (they never take
+  one; the calls of submit_edit are bounded). New hints, once each: a selection or a revision for the length that keeps
+  the announced number of points («три показателя») but cuts some of the numbered points («первое / второе / и
+  третье»), and a revision that leaves a word or two of a sentence it cut. The corrected subtitle words are one line
+  right after the hook and the screen notes («Исправил в субтитрах: «…» → «…», …»), never folded into «И ещё
+  изменений». The editor's prompt: keep all the numbered points of an announced number or cut the announcement too,
+  cut a sentence to its last word, put a section read twice on the last reading.
 - The editor runs on Opus (T3.32, `model: claude-opus-5-5` in `agents/editor/agent.md`; the other agents stay on
   `LLM_DEFAULT_MODEL`): its price is already in `LLM_PRICES` of `.env.dist`, so its cost is recorded.
 - Light by the frame (T3.28): the brightness of the source is measured with its upper and lower thirds (the same key
