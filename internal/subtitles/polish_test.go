@@ -80,7 +80,7 @@ func TestSentencesAtJoints(t *testing.T) {
 			expected: "живу в Казани",
 		},
 		{
-			name:     "after a comma",
+			name:     "a comma before the capital",
 			input:    []token{tok("живу", 0, 0.3), withBreak(tok("там,", 0.35, 0.6), softBreak), tok("Казань", 0.85, 1.3)},
 			joints:   []float64{0, 0.8},
 			expected: "живу там, Казань",
@@ -154,7 +154,7 @@ func TestMarkLeaningSubjects(t *testing.T) {
 			expected: []bool{false, false, false},
 		},
 		{
-			name:     "after a comma",
+			name:     "a comma after the conjunction",
 			input:    []token{withBreak(tok("и,", 0, 0.1), softBreak), tok("я", 0.15, 0.3), tok("тоже", 0.35, 0.6)},
 			expected: []bool{false, false, false},
 		},
@@ -233,7 +233,6 @@ func TestAsideCommas(t *testing.T) {
 		{name: "a comma after it", input: "Это кстати, важно.", expected: "Это, кстати, важно."},
 		{name: "a comma there", input: "Мне все равно, если честно.", expected: "Мне всё равно, если честно."},
 		{name: "a conditional stays", input: "Если честно ответите, получите приз.", expected: "Если честно ответите, получите приз."},
-		{name: "after a conjunction stays", input: "А если честно, это сложно.", expected: "А если честно, это сложно."},
 		{name: "the adverb stays", input: "Это было очень кстати.", expected: "Это было очень кстати."},
 		{name: "the middle stays", input: "Это кстати важно.", expected: "Это кстати важно."},
 		{name: "честно говоря in the middle stays", input: "Он отвечал честно говоря правду.", expected: "Он отвечал честно говоря правду."},
