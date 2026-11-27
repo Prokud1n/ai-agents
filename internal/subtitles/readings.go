@@ -180,15 +180,20 @@ func findReading(tokens []token, start float64, heading []string) (from, to int,
 
 // readingRun reads the heading's words from the token at: the last word of the reading and whether it reads the
 // heading out (at least half of the heading and of the run match). It stops at a word that is neither a heading's
-// word left nor a filler, and after the end of a sentence once all the heading's words are read (Whisper may end a
-// sentence inside the reading: «Страх. Номер три.»).
+// word left nor a filler, and after the end of a sentence once all the heading's words are read; Whisper may end a
+// sentence inside the reading («Страх. Номер три.»), so after it the reading goes on only with «номер»/«пункт» or a
+// number.
 func readingRun(tokens []token, at int, heading []string) (end int, ok bool) {
 	left := slices.Clone(heading)
 	matched, fillers, last := 0, 0, -1
+	ended := false // a sentence ended inside the reading: only «номер»/«пункт» or a number go on with it
 
 run:
 	for i := at; i < len(tokens); i++ {
 		w := readingWord(tokens[i].Norm)
+		if ended && !readingFillers[w] && !isDigits(w) {
+			break
+		}
 
 		switch idx := slices.Index(left, w); {
 		case idx >= 0:
@@ -200,8 +205,12 @@ run:
 			break run
 		}
 
-		if tokens[i].Break == strongBreak && len(left) == 0 {
-			break
+		if tokens[i].Break == strongBreak {
+			if len(left) == 0 {
+				break
+			}
+
+			ended = true
 		}
 	}
 

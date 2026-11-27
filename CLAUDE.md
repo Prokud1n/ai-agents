@@ -377,23 +377,27 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `config.Editor`: отбор под 60 с, хук и 3 раздела, правка «убери разделы»).
 - Фразы субтитров тренера (T3.23, только при `layout.phrases.enabled` — в стиле тренера; `PhraseStyle`/`WordsStyle`
   не меняются, `TestSyntheticTalkOldPieces`). `subtitles.speechCues`: токены → `fixOrthography` (`orthography.go`,
-  `layout.orthography`: дефисы `hyphenHosts`+то/нибудь/либо — не «то,», `hyphenPairs`, `hyphenBeforeBreak` «по-моему,»,
-  `compoundPrefixes` онлайн-/фитнес- по основам; «ё» — `yoWords`, «всё» по соседям; слово-связка с заглавной посреди
-  предложения → `strongBreak` перед ним, строчную даёт `lowerSentenceStarts`) → `hideReadings` → `phraseGroups`
-  (`phrases.go`: граница — `strongBreak` или пауза ≥ `gap`, но не после проклитики; длинная — `bestCut`: куски
-  ≥ `split_words`, оба влезают, предложение > запятая > союз, баланс; короткий кусок — `glueSide` к соседу в своём
-  предложении, иначе следующему, через паузу ≤ `hold_gap`, не через начало раздела; не влез — `rebalance` двигает
-  разрез) → `cueLines`/`phraseLines` (штраф строке, кончающейся проклитикой, или следующей с энклитики; бонус —
-  пунктуация) → `hideHookRepeat` (`hook.hide_repeat`: начало ≤ конец хука + 1 с, ≥ ½ слов хука и ≥ ½ своих, окончания
-  — `sameWord`) → `timeCuesWith(phraseTiming)` (≥ `min_duration`, держится до следующего через `hold_gap`) →
-  `hideUnderHook` → `quietUnderSections` (`section.quiet` 2 с от начала раздела, найдено чтение или нет — после T3.22 раздел
-  стоит на первом слове вопроса: начатый в окне — с его конца, остаток < 0,5 с — нет; заходящий в раздел — до его
-  начала; `sectionShown` держит раздел до конца первой фразы, кончающейся позже окна + 0,5 с). `renderASS`: `\fad(layout.fade_in,0)` только после
-  зазора (`fadeIns`). Хук: `hook.fit_scale` 75 — `selectLines` берёт меньше строк с уменьшением, а не третью строку.
-  `hideReadings`: `noteBlock.at` (раздел ждал хук — чтение ищется и там), `strongBreak` внутри чтения не обрывает его,
-  ведущее «и/а/итак/ну/так» прячется вместе. Проверка — `TestSyntheticTalkPhrases` (≈50 с: < 3 слов ≤ 2, ≥ 1,5 с,
-  ≤ 2 строк по 30), `TestBurnTrainerStyleWithFFmpeg` (хук длиннее её — две строки в её 440..620 ± 20 px, тишина под
-  разделом).
+  `layout.orthography`: дефисы `hyphenHosts`+то/нибудь/либо — не «то,», не после «потому/так/оттого что», не «, чем/как
+  то» (`conjunctionThen`), `hyphenPairs`, `hyphenBeforeBreak` «по-моему,», `compoundPrefixes` онлайн-/фитнес- по
+  основам существительных («тренировк», не «тренир…»); «ё» — `yoWords`, «всё» по соседям; слово-связка с заглавной
+  посреди предложения → `strongBreak` перед ним, строчную даёт `lowerSentenceStarts`) → `hideReadings` →
+  `phraseGroups` (`phrases.go`: граница — `strongBreak` или пауза ≥ `gap`, но не после проклитики при паузе ≤
+  `hold_gap`; длинная — `bestCut`: куски ≥ `split_words`, оба влезают, `cutSense` предложение > запятая > союз >
+  прочее > `brokenCut` (после проклитики/перед энклитикой), баланс; короткий кусок — `glueSide` к соседу в своём
+  предложении, иначе следующему, через паузу ≤ `hold_gap`, не через `glueBarriers` (конец хука, начало раздела и
+  `noteBlock.at`); не влез — `rebalance`/`evenCut` двигает разрез) → `cueLines`/`phraseLines` (штраф строке,
+  кончающейся проклитикой, или следующей с энклитики; бонус — пунктуация) → `hideHookRepeat` (`hook.hide_repeat`:
+  начало ≤ конец хука + 1 с, совпало ≥ ⅔ содержательных слов хука и ≥ ½ своих — `contentWords` без служебных и
+  стоп-слов, окончания — `sameWord`) → `timeCuesWith(phraseTiming)` (≥ `min_duration`, держится до следующего через
+  `hold_gap`) → `hideUnderHook` → `leadUnderSections` (`section.lead` 0,35 с: субтитр, чья речь начинается с
+  раздела, — вовремя, но не раньше раздела + lead, никогда не выкидывается; заходящий в раздел — до его начала; речь
+  не задерживается: тишина под разделом — только пауза в звуке). `sectionShown` — до конца первой фразы раздела,
+  ≥ `min_duration`. `renderASS`: `\fad(layout.fade_in,0)` только после зазора (`fadeIns`). Хук: `hook.fit_scale` 75 —
+  `selectLines` берёт меньше строк с уменьшением, а не третью строку. `hideReadings` (запасной путь для планов, где
+  чтение не вырезано): `noteBlock.at` (раздел ждал хук — чтение ищется и там), после `strongBreak` чтение продолжают
+  только «номер/пункт» или число, ведущее «и/а/итак/ну/так» прячется вместе. Проверка — `TestSyntheticTalkPhrases`
+  (≈50 с: < 3 слов ≤ 2, ≥ 1,5 с, ≤ 2 строк по 30), `TestTrainerSectionLead`, `TestBurnTrainerStyleWithFFmpeg` (её хук
+  ± 12 px; хук длиннее — две строки, низ ≤ 640; «чтение сказано» — раздел один, «чтение вырезано» — раздел и вопрос).
 - Чистка первой версии и невыполнимые просьбы (T3.19a). `EDITOR_CLEANUP` (по умолчанию `true`) →
   `job.Decide = подпись || cleanup` (каждая первая версия ждёт модель) и `editplan.Request.Cleanup`.
   `Request.Cleaning()` — первая версия talk без отбора (с подписью и без): поле `cleanup_words` (вырезается как

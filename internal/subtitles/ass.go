@@ -104,7 +104,7 @@ func buildDocument(data *CreateSubtitlesData, style *Style) (ass string, cues in
 // speechCues are the subtitles of the phrase layout with their times: the tokens of the transcript (with the
 // orthography of the style, sentences in small letters, without the words that read a drawn heading out), grouped into
 // phrases (or the pieces of before), the hook's repeat dropped, timed, cut at the end card (limit), off the screen under
-// the hook (hook.hide_subtitles) and in the quiet after a heading (section.quiet).
+// the hook (hook.hide_subtitles), the question under a heading shown section.lead after it.
 func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, hookEnd, limit float64) []cue {
 	tokens := tokensFromTranscript(data.Transcript)
 	if style.Layout.Orthography {
@@ -125,11 +125,7 @@ func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, h
 	timing := defaultTiming
 
 	if p := &style.Layout.Phrases; p.Enabled {
-		barriers := make([]float64, 0, len(headings))
-		for _, h := range headings {
-			barriers = append(barriers, h.start)
-		}
-
+		barriers := glueBarriers(headings, hookEnd)
 		cues, timing = buildCues(phraseGroups(units, limits, p, barriers), style, explicit), phraseTiming(p)
 	} else {
 		cues = buildCues(groupCues(units, limits), style, explicit)
@@ -145,7 +141,25 @@ func speechCues(data *CreateSubtitlesData, style *Style, headings []noteBlock, h
 		timed = hideUnderHook(timed, hookEnd)
 	}
 
-	return quietUnderSections(timed, headings, style.Section.Quiet)
+	return leadUnderSections(timed, headings, style.Section.Lead)
+}
+
+// glueBarriers are the moments no phrase is glued across: the end of the hook (a piece under it and one after it are
+// apart, so the hook's repeat is recognized), the starts of the drawn headings and the times their notes were said.
+func glueBarriers(headings []noteBlock, hookEnd float64) []float64 {
+	barriers := make([]float64, 0, 2*len(headings)+1)
+	if hookEnd > 0 {
+		barriers = append(barriers, hookEnd)
+	}
+
+	for _, h := range headings {
+		barriers = append(barriers, h.start)
+		if h.at != h.start {
+			barriers = append(barriers, h.at)
+		}
+	}
+
+	return barriers
 }
 
 // titleEvents are the dialogue lines of the exercise titles: the Title style, above the subtitles, the text escaped

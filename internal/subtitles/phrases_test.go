@@ -11,6 +11,9 @@ import (
 	"github.com/Prokud1n/ai-agents/internal/transcription"
 )
 
+// fiveMythsHook is a hook one word longer than the trainer's: three lines at full size before T3.23.
+const fiveMythsHook = "развеиваю пять мифов об онлайн-тренировках"
+
 // talkSegment is a Whisper segment of the synthetic talking head: its text with punctuation and the pause after it. A
 // word followed by «|» is followed by a pause inside the sentence (the speaker takes a breath).
 type talkSegment struct {
@@ -74,15 +77,15 @@ var syntheticTalk = []talkSegment{
 	{text: "Но это не так, и я покажу почему.", pause: 0.6},
 	{text: "Первое.", pause: 0.25},
 	{text: "Онлайн тренер видит технику по видео и| поправляет её сразу после подхода.", pause: 0.4},
-	{text: "Кто то скажет Да ну, это не то же самое что в зале.", pause: 0.2},
+	{text: "Кто то спросит А зачем, если спортзал есть рядом с домом.", pause: 0.2},
 	{text: "А мне все равно, где вы тренируетесь, если вы делаете это регулярно.", pause: 0.5},
 	{text: "Второе.", pause: 0.35},
-	{text: "У меня есть подопечные в разных городах, и| никто из них ещё ни разу не получил травму.", pause: 0.15},
+	{text: "Я работаю с людьми из разных стран, и| каждый из них занимается в своём темпе.", pause: 0.15},
 	{text: "Думаете, онлайн тренировки менее эффективны?", pause: 0.3},
 	{text: "Нет, если есть план, обратная связь и| ваше желание.", pause: 0.45},
 	{text: "Третье.", pause: 0.2},
 	{text: "Еще никто не пожалел, что начал заниматься со мной онлайн.", pause: 0.6},
-	{text: "Напишите в комментариях, какие страхи есть у вас, и| я разберу их в следующем видео.", pause: 0.3},
+	{text: "Расскажите, что вам мешает начать, и| мы вместе подберём простую программу.", pause: 0.3},
 }
 
 // TestSyntheticTalkPhrases: on a talking head of about 50 s the trainer's subtitles are whole phrases: at most two of
@@ -135,7 +138,7 @@ func TestSyntheticTalkPhrases(t *testing.T) {
 		assert.Contains(t, joined, want)
 	}
 
-	assert.NotContains(t, joined, " Да ", "a capital in the middle of a sentence")
+	assert.NotContains(t, joined, " А ", "a capital in the middle of a sentence")
 }
 
 // TestSyntheticTalkOldPieces: the phrase style of before keeps its short pieces (the phrases are the trainer's only).
@@ -204,8 +207,8 @@ func TestPhraseGroups(t *testing.T) {
 		},
 		{
 			name:     "a head after a breath is glued forward",
-			input:    "И| никто из них ещё ни разу не получил травму.",
-			expected: []string{"И никто из них ещё ни разу не получил травму."},
+			input:    "И| каждый из нас может начать прямо сегодня утром.",
+			expected: []string{"И каждый из нас может начать прямо сегодня утром."},
 		},
 		{
 			name:     "a tail after a breath is glued back",
@@ -231,6 +234,54 @@ func TestPhraseGroups(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+// TestBestCutNotAfterPreposition: a long phrase is not cut between a preposition and its word, even where that is the
+// most even cut («три раза в | неделю»).
+func TestBestCutNotAfterPreposition(t *testing.T) {
+	t.Parallel()
+
+	p := trainerPhrases()
+	limits := layoutLimits{maxLines: 1, maxLineChars: 30}
+	groups := phraseGroups(buildUnits(timed("Тренируйтесь три раза в| неделю по сорок минут подряд."), 30), limits, &p, nil)
+
+	got := make([]string, 0, len(groups))
+	for _, g := range groups {
+		got = append(got, unitsText(g))
+	}
+
+	assert.Equal(t, []string{"Тренируйтесь три раза в неделю", "по сорок минут подряд."}, got)
+	assert.Equal(t, brokenCut, cutSense(tok("в", 0, 0.1), tok("неделю", 0.5, 0.9)))
+	assert.Equal(t, brokenCut, cutSense(tok("могу", 0, 0.1), tok("ли", 0.5, 0.9)))
+	assert.Equal(t, 0, cutSense(tok("неделю", 0, 0.1), tok("по", 0.5, 0.9)))
+}
+
+// TestSplitPhrasesAfterConjunction: a pause right after «и» does not end the phrase, unless it is longer than hold_gap.
+func TestSplitPhrasesAfterConjunction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		pause    float64
+		expected int
+	}{
+		{name: "a breath", pause: 0.4, expected: 1},
+		{name: "a long pause", pause: 1.2, expected: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			at := 0.3 + tt.pause
+			tokens := []token{
+				tok("мы", 0, 0.1), tok("начнём", 0.15, 0.25), tok("и", 0.27, 0.3),
+				tok("продолжим", at, at+0.4), withBreak(tok("завтра.", at+0.45, at+0.8), strongBreak),
+			}
+
+			assert.Len(t, splitPhrases(buildUnits(tokens, 30), trainerPhraseGap, trainerPhraseHoldGap), tt.expected)
 		})
 	}
 }
@@ -278,11 +329,11 @@ func TestPhraseLines(t *testing.T) {
 		{
 			name: "not after a conjunction cut off by a pause",
 			input: []token{
-				tok("никто", 0, 0.3), tok("из", 0.35, 0.4), tok("них", 0.45, 0.6), tok("ещё", 0.65, 0.8),
-				tok("ни", 0.85, 0.9), tok("разу", 0.95, 1.2), tok("и", 1.25, 1.3), tok("получил", 1.7, 2),
-				tok("никакую", 2.05, 2.4), tok("травму", 2.45, 2.8),
+				tok("каждый", 0, 0.3), tok("из", 0.35, 0.4), tok("нас", 0.45, 0.6), tok("сможет", 0.65, 0.9),
+				tok("начать", 0.95, 1.2), tok("и", 1.25, 1.3), tok("продолжить", 1.7, 2.1),
+				tok("без", 2.15, 2.3), tok("перерыва", 2.35, 2.8),
 			},
-			expected: []string{"никто из них ещё ни разу", "и получил никакую травму"},
+			expected: []string{"каждый из нас сможет начать", "и продолжить без перерыва"},
 		},
 		{
 			name: "after a comma",
@@ -344,7 +395,7 @@ func TestValidatePhrases(t *testing.T) {
 		{name: "off, not checked", input: "layout:\n  phrases:\n    enabled: false\n    gap: 3\n"},
 		{name: "a fade too long", input: "layout:\n  fade_in: 900\n", expectedErr: "layout.fade_in"},
 		{name: "a hook fit too small", input: "hook:\n  fit_scale: 40\n", expectedErr: "hook.fit_scale"},
-		{name: "a quiet too long", input: "section:\n  quiet: 9\n", expectedErr: "section.quiet"},
+		{name: "a lead too long", input: "section:\n  lead: 3\n", expectedErr: "section.lead"},
 	}
 
 	for _, tt := range tests {
@@ -391,6 +442,13 @@ func TestFixOrthography(t *testing.T) {
 		{name: "по моему опыту", input: "По моему опыту так.", expected: "По моему опыту так."},
 		{name: "во-первых", input: "Во первых, вода.", expected: "Во-первых, вода."},
 		{name: "a question stays", input: "Кто то спросит?", expected: "Кто-то спросит?"},
+		{name: "потому что то", input: "Потому что то упражнение сложное.", expected: "Потому что то упражнение сложное."},
+		{name: "так что то", input: "Так что то видео пригодится.", expected: "Так что то видео пригодится."},
+		{name: ", чем то", input: "Сложнее, чем то упражнение.", expected: "Сложнее, чем то упражнение."},
+		{name: ", как то", input: "Делайте, как то видео показывает.", expected: "Делайте, как то видео показывает."},
+		{name: "как-то without a comma", input: "Я как то пробовала.", expected: "Я как-то пробовала."},
+		{name: "онлайн-тренинг", input: "Мой онлайн тренинг готов.", expected: "Мой онлайн-тренинг готов."},
+		{name: "a verb after онлайн", input: "Я онлайн тренируюсь.", expected: "Я онлайн тренируюсь."},
 	}
 
 	for _, tt := range tests {
@@ -408,13 +466,13 @@ func TestFixOrthography(t *testing.T) {
 func TestFixOrthographyCapitals(t *testing.T) {
 	t.Parallel()
 
-	tokens := fixOrthography(tokensFromTranscript(speech("Что то скажет Да не скажет в Москве")))
+	tokens := fixOrthography(tokensFromTranscript(speech("Что то спросит Ну тогда поедем в Казань")))
 
 	require.Len(t, tokens, 7)
 	assert.Equal(t, "что-то", lowerFirstLetter(tokens[0].Text))
-	assert.Equal(t, strongBreak, tokens[1].Break, "«Да» starts a sentence")
-	assert.Equal(t, noBreak, tokens[5].Break, "«Москве» is a name")
-	assert.Equal(t, "да", lowerSentenceStarts(tokens)[2].Text)
+	assert.Equal(t, strongBreak, tokens[1].Break, "«Ну» starts a sentence")
+	assert.Equal(t, noBreak, tokens[5].Break, "«Казань» is a name")
+	assert.Equal(t, "ну", lowerSentenceStarts(tokens)[2].Text)
 
 	merged := fixOrthography(tokensFromTranscript(speech("Кто то.")))
 	require.Len(t, merged, 1)
@@ -428,7 +486,7 @@ func TestFixOrthographyCapitals(t *testing.T) {
 func TestHideHookRepeat(t *testing.T) {
 	t.Parallel()
 
-	hook := "развеиваю три страха об онлайн-тренировках"
+	hook := fiveMythsHook
 	phrase := func(start float64, text string) cue {
 		words := strings.Fields(text)
 		line := make([]token, 0, len(words))
@@ -445,12 +503,14 @@ func TestHideHookRepeat(t *testing.T) {
 		input    cue
 		expected int
 	}{
-		{name: "the hook said again", input: phrase(2.6, "развеиваю страхи об онлайн тренировках"), expected: 0},
-		{name: "under the hook", input: phrase(0.5, "развеиваю страхи об онлайн-тренировках"), expected: 0},
+		{name: "the hook said again", input: phrase(2.6, "развеиваю пять мифов об онлайн тренировках"), expected: 0},
+		{name: "under the hook", input: phrase(0.5, "развеиваю пять мифов об онлайн-тренировках"), expected: 0},
 		{name: "a word in common", input: phrase(2.6, "онлайн это удобно и быстро"), expected: 1},
-		{name: "the hook in a longer phrase", input: phrase(2.6, "сегодня я развеиваю страхи об онлайн тренировках, "+
+		{name: "function words only in common", input: phrase(2.6, "об этом и о том"), expected: 1},
+		{name: "the hook in a longer phrase", input: phrase(2.6, "сегодня я развеиваю мифы об онлайн тренировках, "+
 			"которые мешают вам начать заниматься дома"), expected: 1},
-		{name: "later", input: phrase(5, "развеиваю страхи об онлайн тренировках"), expected: 1},
+		{name: "later", input: phrase(5, "развеиваю пять мифов об онлайн тренировках"), expected: 1},
+		{name: "the topic in common", input: phrase(2.6, "а если онлайн-тренировка менее эффективна"), expected: 1},
 	}
 
 	for _, tt := range tests {
@@ -463,9 +523,9 @@ func TestHideHookRepeat(t *testing.T) {
 	}
 }
 
-// TestQuietUnderSections: under a heading that has just appeared no subtitle is shown for section.quiet: one that
-// starts in it is shown from its end (if enough of it is left), one running into the heading ends at it.
-func TestQuietUnderSections(t *testing.T) {
+// TestLeadUnderSections: the question under a heading is shown on time, but not before section.lead after the heading,
+// and never dropped; a subtitle running into the heading ends at it.
+func TestLeadUnderSections(t *testing.T) {
 	t.Parallel()
 
 	heading := []noteBlock{{start: 10, end: 14}}
@@ -476,24 +536,24 @@ func TestQuietUnderSections(t *testing.T) {
 		expected []cue
 	}{
 		{
-			name:     "the question after the reading waits",
+			name:     "the question after the reading on time",
 			input:    []cue{{Start: 8, End: 10.5}, {Start: 10.6, End: 13.5}},
-			expected: []cue{{Start: 8, End: 10}, {Start: 12, End: 13.5}},
+			expected: []cue{{Start: 8, End: 10}, {Start: 10.6, End: 13.5}},
 		},
 		{
-			name:     "the question on the heading (its reading cut out) waits too",
+			name:     "the question on the heading (its reading cut out) a moment after it",
 			input:    []cue{{Start: 9.95, End: 13}, {Start: 13, End: 15}},
-			expected: []cue{{Start: 12, End: 13}, {Start: 13, End: 15}},
+			expected: []cue{{Start: 10.35, End: 13}, {Start: 13, End: 15}},
 		},
 		{
-			name:     "after the quiet as it is",
-			input:    []cue{{Start: 12.5, End: 14}},
-			expected: []cue{{Start: 12.5, End: 14}},
+			name:     "a short question is not lost",
+			input:    []cue{{Start: 10, End: 10.5}, {Start: 12, End: 13}},
+			expected: []cue{{Start: 10.35, End: 10.85}, {Start: 12, End: 13}},
 		},
 		{
-			name:     "too short after the quiet",
-			input:    []cue{{Start: 10.2, End: 12.4}, {Start: 12.5, End: 13}},
-			expected: []cue{{Start: 12.5, End: 13}},
+			name:     "a phrase left too short before the heading goes",
+			input:    []cue{{Start: 9.6, End: 11}, {Start: 11, End: 13}},
+			expected: []cue{{Start: 11, End: 13}},
 		},
 		{name: "apart", input: []cue{{Start: 1, End: 3}}, expected: []cue{{Start: 1, End: 3}}},
 	}
@@ -502,16 +562,16 @@ func TestQuietUnderSections(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, quietUnderSections(tt.input, heading, trainerSectionQuiet))
-			assert.Equal(t, tt.input, quietUnderSections(tt.input, heading, 0), "no quiet")
+			assert.Equal(t, tt.expected, leadUnderSections(tt.input, heading, trainerSectionLead))
 		})
 	}
 }
 
-// TestTrainerSectionQuiet: in the document the heading stands alone for two seconds from its start and stays to the
-// end of the question shown after that — when the reading «страх номер один» is said (hidden) and when the editor cut
-// it out of the sound and the heading starts on the first word of the question.
-func TestTrainerSectionQuiet(t *testing.T) {
+// TestTrainerSectionLead: in the document the question under a heading is shown with its speech and the heading stays
+// to its end — when the reading «страх номер один» is said (hidden: the heading stands alone while it is said) and when
+// the editor cut it out of the sound and the heading starts on the first word of the question (the subtitle a moment
+// after the heading).
+func TestTrainerSectionLead(t *testing.T) {
 	t.Parallel()
 
 	const question = "А что если онлайн-тренировка менее эффективна для меня?"
@@ -524,13 +584,13 @@ func TestTrainerSectionQuiet(t *testing.T) {
 	}{
 		{
 			name: "the reading said", input: speech(hookPhrase, fear1Phrase, question), at: "Страх",
-			// the reading 1.9..2.95, the question 3.45..6.25
-			expected: []string{"Dialogue: 0,0:00:03.90,0:00:06.30,Main,", "Dialogue: 2,0:00:01.90,0:00:06.35,Section,"},
+			// the reading 1.9..2.95 (hidden), the question 3.45..6.25 on time
+			expected: []string{"Dialogue: 0,0:00:03.40,0:00:06.30,Main,", "Dialogue: 2,0:00:01.90,0:00:06.35,Section,"},
 		},
 		{
 			name: "the reading cut out", input: speech(hookPhrase, question), at: "А",
-			// the question 1.9..4.7: shown from 3.9 s, the heading stays to its end
-			expected: []string{"Dialogue: 0,0:00:03.90,0:00:04.75,Main,", "Dialogue: 2,0:00:01.90,0:00:04.80,Section,"},
+			// the question 1.9..4.7: from 2.25 s
+			expected: []string{"Dialogue: 0,0:00:02.25,0:00:04.75,Main,", "Dialogue: 2,0:00:01.90,0:00:04.80,Section,"},
 		},
 	}
 
@@ -569,7 +629,7 @@ func TestFadeIns(t *testing.T) {
 func TestTrainerHookTwoLines(t *testing.T) {
 	t.Parallel()
 
-	const hook = "развеиваю три страха об онлайн-тренировках"
+	const hook = fiveMythsHook
 
 	style := DefaultStyle()
 	assert.Equal(t, 2, style.hookLineCount(hook))
@@ -591,11 +651,11 @@ func TestTrainerDocumentHookRepeat(t *testing.T) {
 	t.Parallel()
 
 	style := DefaultStyle()
-	result := speech("Думаешь, это не для тебя?", "Развеиваю страхи об онлайн тренировках.",
+	result := speech("Хотите заниматься дома без зала?", "Развеиваю пять мифов об онлайн тренировках.",
 		"Мои подопечные тренируются дома и получают результат.")
 
-	ass, _ := buildDocument(&CreateSubtitlesData{Transcript: result, Hook: trainerHook}, &style)
+	ass, _ := buildDocument(&CreateSubtitlesData{Transcript: result, Hook: fiveMythsHook}, &style)
 
-	assert.NotContains(t, ass, "развеиваю страхи", "the hook is not repeated")
+	assert.NotContains(t, ass, "развеиваю пять", "the hook is not repeated")
 	assert.Contains(t, ass, `,Main,,0,0,0,,{\fad(200,0)}мои подопечные`)
 }

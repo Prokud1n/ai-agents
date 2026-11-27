@@ -153,10 +153,10 @@ section:
   min_duration: 2.5
   max_duration: 6
   fade: 150
-  # For this many seconds after a heading appears no subtitle is shown under it (she lets it stand alone; a phrase
-  # started then is shown from the end of the quiet), and the heading stays until the end of the first phrase shown
-  # after it; 0: none.
-  quiet: 2
+  # The question under a heading is shown with its speech, but not before this many seconds after the heading, so the
+  # heading is read first (after the editor cut the reading «страх номер один» out of the sound the heading starts on
+  # the question); the speech is never delayed more. A pause without text under the heading is a pause in the sound.
+  lead: 0.35
 
 # The top line over the whole reel, as the interface of a camera: REELS_TOPBAR_LEFT at the left edge («tg:
 # @ana_prokudina») and REELS_TOPBAR_RIGHT at the right one («2x»), small translucent gray Manrope (the right text

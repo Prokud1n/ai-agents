@@ -151,6 +151,11 @@ func TestTrainerSubtitles(t *testing.T) {
 	assert.Equal(t, 4, cues)
 	assert.Contains(t, ass, ",,МФЦ рядом", "an abbreviation keeps its capitals")
 	assert.Contains(t, ass, ",,PDF с планом")
+
+	glued, _ := buildDocument(&CreateSubtitlesData{
+		Transcript: speech("Да.", "Начнём с разминки для спины и плеч."),
+	}, &style)
+	assert.Contains(t, glued, "да. начнём с разминки", "a short phrase is glued to the next one")
 	assert.Contains(t, ass, "первое: мои подопечные")
 	assert.NotContains(t, ass, "Первое")
 	assert.Contains(t, ass, "в Москве и Тбилиси")
@@ -380,6 +385,10 @@ func TestHideReadings(t *testing.T) {
 			name: "a word that leads it in", text: "И страх номер два: а если не получится?", heading: fear2Caps,
 			expected: "а если не получится?",
 		},
+		{
+			name: "only «номер» or a number go on after a sentence end", text: "Страх. Ошибки бывают у всех.",
+			heading: "СТРАХ ОШИБКИ", expected: "Ошибки бывают у всех.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -465,8 +474,8 @@ func TestTrainerDocumentNoDoubles(t *testing.T) {
 	assert.Equal(t, 1, cues)
 	assert.NotContains(t, ass, "развеиваю страхи об", "the hook's phrase is not doubled")
 	assert.NotContains(t, ass, "страх номер один", "the heading is not read out in the subtitles")
-	assert.Contains(t, ass, "Dialogue: 0,0:00:03.90,0:00:05.60,Main,,0,0,0,,{\\fad(200,0)}а что если онлайн-тренировка",
-		"the question fades in after the quiet under the heading")
+	assert.Contains(t, ass, "Dialogue: 0,0:00:03.40,0:00:05.60,Main,,0,0,0,,{\\fad(200,0)}а что если онлайн-тренировка",
+		"the question on time, fading in")
 	assert.Contains(t, ass, "Dialogue: 2,0:00:01.90,0:00:05.65,Section,", "the heading stays to the end of the question")
 }
 

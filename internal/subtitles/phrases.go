@@ -52,6 +52,9 @@ const (
 	sentenceCut    = 3
 	commaCut       = 2
 	conjunctionCut = 1
+	// brokenCut: after a preposition, a conjunction or «не» or before a particle («в | неделю», «могу | ли»): the
+	// worst place, taken only when there is no other.
+	brokenCut = -1
 	// lineBreakPenalty is added to the width of a line split that leaves a preposition, a conjunction or «не» at the
 	// end of a line, or a particle («же», «ли») at the start of the next one; lineCommaBonus is taken off when a line
 	// ends with punctuation.
@@ -116,24 +119,23 @@ func validatePhrases(l *Layout) []error {
 func phraseGroups(units []unit, limits layoutLimits, p *PhraseLayout, barriers []float64) [][]unit {
 	var pieces [][]unit
 
-	for _, phrase := range splitPhrases(units, p.Gap) {
+	for _, phrase := range splitPhrases(units, p.Gap, p.HoldGap) {
 		pieces = append(pieces, splitLong(phrase, limits, p)...)
 	}
 
 	return mergeShort(pieces, limits, p, barriers)
 }
 
-// splitPhrases splits the units at the ends of sentences and at pauses of at least gap, but not at a pause right
-// after a preposition or a conjunction («и… никто из них»): the phrase goes on.
-func splitPhrases(units []unit, gap float64) [][]unit {
+// splitPhrases splits the units at the ends of sentences and at pauses of at least gap, but not at a pause up to
+// holdGap right after a preposition or a conjunction («и… каждый из нас»): the phrase goes on.
+func splitPhrases(units []unit, gap, holdGap float64) [][]unit {
 	var (
 		phrases [][]unit
 		current []unit
 	)
 
 	for _, u := range units {
-		if prev := len(current) - 1; prev >= 0 && phraseEnds(current[prev].last(), u.first(), gap) &&
-			(current[prev].last().Break == strongBreak || !isProclitic(current[prev].last().Norm)) {
+		if len(current) > 0 && splitsAt(current[len(current)-1].last(), u.first(), gap, holdGap) {
 			phrases = append(phrases, current)
 			current = nil
 		}
@@ -146,6 +148,16 @@ func splitPhrases(units []unit, gap float64) [][]unit {
 	}
 
 	return phrases
+}
+
+// splitsAt: a phrase ends between the words (phraseEnds), unless the pause follows a preposition or a conjunction and
+// is not longer than holdGap.
+func splitsAt(prev, next token, gap, holdGap float64) bool {
+	if !phraseEnds(prev, next, gap) {
+		return false
+	}
+
+	return prev.Break == strongBreak || !isProclitic(prev.Norm) || next.Start-prev.End > holdGap
 }
 
 // phraseEnds: a sentence or a segment ends between the words, or a pause of at least gap.
@@ -232,9 +244,12 @@ func bestCut(phrase []unit, limits layoutLimits, p *PhraseLayout) int {
 	return best
 }
 
-// cutSense is how good a place for a cut is between the words: after a comma, before a conjunction, elsewhere.
+// cutSense is how good a place for a cut is between the words: after the end of a sentence, after a comma, before a
+// conjunction, elsewhere; worst between a function word and its word.
 func cutSense(prev, next token) int {
 	switch {
+	case prev.Break == noBreak && isProclitic(prev.Norm), isEnclitic(next.Norm):
+		return brokenCut
 	case prev.Break == strongBreak:
 		return sentenceCut
 	case prev.Break == softBreak:
@@ -315,7 +330,7 @@ func rebalance(pieces [][]unit, i int, limits layoutLimits, p *PhraseLayout, bar
 // evenCut is the best cut of the joined pieces into two that fit and are not short: by the sense of the place, then
 // the balance of their lengths; false when there is none.
 func evenCut(joined []unit, limits layoutLimits, p *PhraseLayout) (head, tail []unit, ok bool) {
-	bestSense, bestImbalance := -1, 0
+	bestSense, bestImbalance := brokenCut-1, 0
 
 	for at := 1; at < len(joined); at++ {
 		h, t := joined[:at], joined[at:]

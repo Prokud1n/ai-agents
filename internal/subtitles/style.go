@@ -230,8 +230,8 @@ const (
 //
 // Since T3.23 the speech is in whole phrases of one or two lines cut by sense (layout.phrases), with the orthography
 // Whisper misses (layout.orthography) and a fade-in after a pause; the hook takes two lines made smaller rather than
-// three (hook.fit_scale), a phrase that repeats it is not shown, and a heading stands alone for two seconds
-// (section.quiet).
+// three (hook.fit_scale), a phrase that repeats it is not shown, and the question under a heading appears a moment
+// after it (section.lead).
 func DefaultStyle() Style {
 	style := PhraseStyle()
 	style.Text = TextStyle{Font: regularFont, Size: 60, Color: white}
@@ -279,7 +279,7 @@ func DefaultStyle() Style {
 		MinDuration: 2.5,
 		MaxDuration: 6,
 		Fade:        150,
-		Quiet:       trainerSectionQuiet,
+		Lead:        trainerSectionLead,
 	}
 	style.Topbar = defaultTopbar()
 	style.Topbar.Enabled = true

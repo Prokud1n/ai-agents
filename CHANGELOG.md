@@ -16,11 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cut by sense, not after a preposition, a conjunction or «не». The speech recognition's misses are fixed in the
   subtitles: «кто-то», «что-нибудь», «онлайн-тренировки», «онлайн-тренер», «из-за», «во-первых», «всё равно», «ещё», a
   capital in the middle of a sentence. A subtitle after a pause fades in over 0.2 s. The hook takes two lines made
-  smaller rather than three, a phrase that repeats the hook right after it is not shown, a section heading stands
-  alone for 2 s from its start (also when the editor cut its reading out of the sound) and stays until the end of the
-  first phrase shown after that, and «и страх номер три» or «Страх. Номер три.» are
+  smaller rather than three, a phrase that repeats the hook right after it is not shown, the question under a
+  section heading is shown with its speech but not before 0.35 s after the heading (also when the editor cut the
+  reading out of the sound and the heading starts on the question), the heading stays to the end of the question, and «и страх номер три» or «Страх. Номер три.» are
   hidden whole under «СТРАХ 3». New style fields: `layout.phrases`, `layout.orthography`, `layout.fade_in`,
-  `hook.fit_scale`, `hook.hide_repeat`, `section.quiet` (off in `style-phrase.yaml` and `style-words.yaml`).
+  `hook.fit_scale`, `hook.hide_repeat`, `section.lead` (off in `style-phrase.yaml` and `style-words.yaml`).
 - The trainer's own style is the default subtitle style (T3.20), measured on the reel she edited herself: the speech in
   phrases of one or two lines, small white Manrope Regular, the first word of a sentence in small letters, no accents,
   plates or vignette; the hook in large peach Fira Sans Extra Condensed ExtraBold capitals that appears as an object

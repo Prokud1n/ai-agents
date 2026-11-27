@@ -36,15 +36,15 @@ var hyphenBeforeBreak = wordSet("помоему", "потвоему", "посв�
 // compoundPrefixes are the first parts of compound nouns («онлайн-тренировка», «фитнес-клуб»): written with a hyphen
 // before a word that starts with one of their stems.
 var compoundPrefixes = map[string][]string{
-	"онлайн": slices.Concat(offlineStems, []string{"курс", "марафон", "консульт", "программ", "урок", "школ",
+	"онлайн": slices.Concat(offlineStems, []string{"тренинг", "курс", "марафон", "консульт", "программ", "урок", "школ",
 		"сопровожд", "ведени", "клиент"}),
 	"офлайн":  offlineStems,
 	"оффлайн": offlineStems,
-	"фитнес":  {"тренер", "клуб", "зал", "браслет", "трекер", "модел", "блог", "индустри", "тренир"},
+	"фитнес":  {"тренер", "клуб", "зал", "браслет", "трекер", "модел", "блог", "индустри", "тренировк"},
 }
 
-// offlineStems are the stems after «офлайн» (and «онлайн»).
-var offlineStems = []string{"тренир", "тренер", "заняти", "формат", "встреч"}
+// offlineStems are the stems after «офлайн» (and «онлайн»): nouns only — «тренировк», not the verb «тренироваться».
+var offlineStems = []string{"тренировк", "тренер", "заняти", "формат", "встреч"}
 
 // yoWords are words always written with «ё» in the subtitles.
 var yoWords = map[string]string{
@@ -74,7 +74,12 @@ func fixOrthography(tokens []token) []token {
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 
-		if i+1 < len(tokens) {
+		var before token // the word before t; none at the start
+		if i > 0 {
+			before = tokens[i-1]
+		}
+
+		if i+1 < len(tokens) && !conjunctionThen(before, t, tokens[i+1]) {
 			if joined, ok := joinHyphen(t, tokens[i+1]); ok {
 				out = append(out, joined)
 				i++
@@ -93,6 +98,26 @@ func fixOrthography(tokens []token) []token {
 	}
 
 	return out
+}
+
+// thenAfterWhat: «что то» after these is a conjunction and a pronoun («потому что то упражнение»).
+var thenAfterWhat = wordSet("потому", "так", "оттого")
+
+// conjunctionThen: «что», «чем» or «как» before «то» is a conjunction, not «что-то»: after «потому»/«так»/«оттого»
+// («потому что то упражнение») or, for «чем» and «как», after a comma («сложнее, чем то упражнение»).
+func conjunctionThen(before, a, b token) bool {
+	if b.Norm != "то" {
+		return false
+	}
+
+	switch a.Norm {
+	case "что":
+		return thenAfterWhat[before.Norm] && before.Break == noBreak
+	case "чем", "как":
+		return before.Break == softBreak
+	default:
+		return false
+	}
 }
 
 // joinHyphen joins two words written with a hyphen into one token; false when they are written apart.

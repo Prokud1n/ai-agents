@@ -13,8 +13,8 @@ const (
 	// stemTail: two words of at least minStemRunes letters are one when they differ only in the last stemTail letters
 	// («страха» and «страхи», «тренировках» and «тренировки»).
 	stemTail = 2
-	// quietTolerance: a subtitle that starts this little before a heading is its section's (its lead-in).
-	quietTolerance = readingWindow
+	// leadTolerance: a subtitle that starts this little before a heading is its section's (its lead-in).
+	leadTolerance = readingWindow
 )
 
 // textWords are the words of a text as they are compared: lower case letters and digits, ё as е, the parts of a word
@@ -71,11 +71,25 @@ func matchedWords(a, b []string) int {
 	return n
 }
 
+// contentWords are the words of a text that carry its sense: textWords without function words and stop words.
+func contentWords(text string) []string {
+	words := textWords(text)
+	out := make([]string, 0, len(words))
+
+	for _, w := range words {
+		if !proclitics[w] && !enclitics[w] && !stopWords[w] {
+			out = append(out, w)
+		}
+	}
+
+	return out
+}
+
 // hideHookRepeat drops the subtitles that repeat the hook (hook.hide_repeat): the trainer often says it right after it
-// is shown. A subtitle repeats it when it starts within hookRepeatWindow after the hook's end and at least half of the
-// hook's words and half of its own are the same words (endings aside). cues is not changed.
+// is shown. A subtitle repeats it when it starts within hookRepeatWindow after the hook's end and at least two thirds of
+// the hook's content words and half of its own are the same words (endings aside). cues is not changed.
 func hideHookRepeat(cues []cue, hook string, hookEnd float64) []cue {
-	hookWords := textWords(hook)
+	hookWords := contentWords(hook)
 	if len(hookWords) == 0 || hookEnd <= 0 {
 		return cues
 	}
@@ -83,10 +97,11 @@ func hideHookRepeat(cues []cue, hook string, hookEnd float64) []cue {
 	out := make([]cue, 0, len(cues))
 
 	for _, c := range cues {
-		words := textWords(cueString(c))
+		words := contentWords(cueString(c))
 		matched := matchedWords(hookWords, words)
 
-		if c.Start <= hookEnd+hookRepeatWindow && len(words) > 0 && 2*matched >= len(hookWords) &&
+		// Two thirds of the hook: the words of its topic («онлайн-тренировки») come in other phrases too.
+		if c.Start <= hookEnd+hookRepeatWindow && len(words) > 0 && 3*matched >= 2*len(hookWords) &&
 			2*matched >= len(words) {
 			continue
 		}
@@ -109,40 +124,41 @@ func cueString(c cue) string {
 	return strings.Join(texts, " ")
 }
 
-// quietUnderSections keeps the subtitles off the screen for quiet seconds after a heading appears (section.quiet), as
-// the trainer's heading stands alone before the question under it — whether or not the words that read it out were
-// found (the editor may have cut them out of the sound, the heading then starts on the question): a subtitle that runs
-// into the heading ends at its start, one that starts in the quiet is shown from its end. A subtitle left shorter than
-// minNoteShown is not shown. cues is not changed.
-func quietUnderSections(cues []cue, headings []noteBlock, quiet float64) []cue {
-	if quiet <= 0 || len(headings) == 0 {
-		return cues
-	}
-
+// leadUnderSections shows the question under a heading that has just appeared a moment after it (section.lead), so the
+// heading is read first, without delaying the speech: a subtitle whose speech starts with the heading (from
+// leadTolerance before it — the editor may have cut its reading out of the sound, the heading then starts on the
+// question) is shown from lead after the heading at the earliest and never dropped; a subtitle that runs into the
+// heading from before ends at its start (one left shorter than minNoteShown is not shown). cues is not changed.
+func leadUnderSections(cues []cue, headings []noteBlock, lead float64) []cue {
 	out := cues
 
 	for _, h := range headings {
-		out = quietAfter(out, h.start, h.start+quiet)
+		out = leadAfter(out, h.start, lead)
 	}
 
 	return out
 }
 
-// quietAfter is quietUnderSections for the heading that starts at start, quiet until end.
-func quietAfter(cues []cue, start, end float64) []cue {
+// leadAfter is leadUnderSections for the heading that starts at start.
+func leadAfter(cues []cue, start, lead float64) []cue {
 	out := make([]cue, 0, len(cues))
 
 	for _, c := range cues {
-		switch {
-		case c.Start < start-quietTolerance:
+		if c.Start < start-leadTolerance {
 			c.End = min(c.End, max(start, c.Start))
-		case c.Start < end:
-			c.Start = end
+			if c.End-c.Start >= minNoteShown {
+				out = append(out, c)
+			}
+
+			continue
 		}
 
-		if c.End-c.Start >= minNoteShown {
-			out = append(out, c)
+		if c.Start < start+lead {
+			c.Start = start + lead
+			c.End = max(c.End, c.Start+minNoteShown)
 		}
+
+		out = append(out, c)
 	}
 
 	return out

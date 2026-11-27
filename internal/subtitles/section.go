@@ -22,10 +22,10 @@ const (
 	// out («страх номер один»): the heading stays for the phrase after it. The words that read it out start this
 	// close to it too (hideReadings).
 	readingWindow = 0.3
-	// trainerSectionQuiet: the trainer's heading stands about two seconds without subtitles under it (T3.23);
-	// maxSectionQuiet is the limit of section.quiet in a style file.
-	trainerSectionQuiet = 2.0
-	maxSectionQuiet     = 4.0
+	// trainerSectionLead: under the trainer's heading the subtitle of the question appears this much after it, so the
+	// heading is read first (T3.23); maxSectionLead is the limit of section.lead in a style file.
+	trainerSectionLead = 0.35
+	maxSectionLead     = 1.0
 )
 
 // SectionStyle is the look and the place of the section headings of a talking head («СТРАХ 1», «СТРАХ 2»): one line
@@ -43,9 +43,10 @@ type SectionStyle struct {
 	MaxDuration float64 `yaml:"max_duration"`
 	// Fade in and out, in milliseconds.
 	Fade int `yaml:"fade"`
-	// Quiet is how long no speech subtitle is shown under a heading that has just appeared, seconds
-	// (quietUnderSections); the heading then stays at least until the end of the first phrase shown after it. 0: none.
-	Quiet float64 `yaml:"quiet"`
+	// Lead: a subtitle whose speech starts with a heading (its reading cut out of the sound, the heading starts on the
+	// question) appears this many seconds after the heading, not before it (leadUnderSections); its speech is never
+	// delayed more. 0: at once.
+	Lead float64 `yaml:"lead"`
 }
 
 // defaultSection is the look of the trainer's headings: peach Fira Sans Extra Condensed ExtraBold capitals, the
@@ -79,8 +80,8 @@ func validateSection(s *Style) []error {
 			maxHookFade))
 	}
 
-	if c.Quiet < 0 || c.Quiet > maxSectionQuiet {
-		errs = append(errs, fmt.Errorf("section.quiet must be 0..%.0f s", maxSectionQuiet))
+	if c.Lead < 0 || c.Lead > maxSectionLead {
+		errs = append(errs, fmt.Errorf("section.lead must be 0..%.0f s", maxSectionLead))
 	}
 
 	if len(errs) > 0 || !c.Enabled {
@@ -209,18 +210,13 @@ func sectionBlocks(sections []Note, hookEnd, reelEnd float64, result *transcript
 }
 
 // sectionShown is how long a heading shown from start stays: its own length when it has an end, otherwise until the
-// end of the first phrase of its section (sectionPhraseEnd) — with section.quiet, the first phrase shown after the
-// quiet (one that ends minNoteShown after it); within min_duration..max_duration.
+// end of the first phrase of its section (sectionPhraseEnd); within min_duration..max_duration.
 func sectionShown(n Note, start float64, result *transcription.Result, c *SectionStyle) float64 {
 	shown := c.MinDuration
-	from := start
-	if c.Quiet > 0 {
-		from = start + c.Quiet + minNoteShown
-	}
 
 	if n.End > n.Start {
 		shown = n.End - n.Start
-	} else if end, ok := sectionPhraseEnd(result, n.Start, from, c); ok {
+	} else if end, ok := sectionPhraseEnd(result, n.Start, start, c); ok {
 		// The subtitle of the phrase stays hold after it: the heading goes with it.
 		shown = end + hold - start
 	}
