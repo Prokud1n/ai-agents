@@ -93,7 +93,7 @@ func TestSubmitFragmentHint(t *testing.T) {
 		toolErrors int
 		left       bool
 	}{
-		{name: "the same decision after the hint", inputs: []string{fragment, fragment}, toolErrors: 1, left: true},
+		{name: sameAfterHint, inputs: []string{fragment, fragment}, toolErrors: 1, left: true},
 		{name: "the fragment cut after the hint", inputs: []string{fragment, whole}, toolErrors: 1},
 	}
 

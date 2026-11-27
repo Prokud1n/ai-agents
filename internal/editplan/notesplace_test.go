@@ -106,7 +106,7 @@ func TestHiddenNoteText(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "a revision", req: revision,
+			name: "the revision", req: revision,
 			hidden: hiddenNote{note: note, word: 3, next: 7, cut: roughcut.WordRange{From: 3, To: 6}},
 			expected: "выноска «6 лет» стоит на слове 3 «ошибка» (0:02.4 исходника); вырезаны слова 3–6; ближайшее " +
 				"оставленное слово после него — 7 «не» (0:08.1), через 5.7 с: поставь выноску на слово 7 «не» или " +

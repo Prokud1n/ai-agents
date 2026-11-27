@@ -161,7 +161,7 @@ func TestSubmitTailHint(t *testing.T) {
 		toolErrors int
 		detail     bool
 	}{
-		{name: "the same decision after the hint", inputs: []string{tailCut, tailCut}, toolErrors: 1, detail: true},
+		{name: sameAfterHint, inputs: []string{tailCut, tailCut}, toolErrors: 1, detail: true},
 		{name: "the end brought back after the hint", inputs: []string{tailCut, linkCut}, toolErrors: 1},
 		{name: "the link only", inputs: []string{linkCut}},
 		{name: "the hint takes no attempt", inputs: []string{tailCut, broken, linkCut}, toolErrors: 2},

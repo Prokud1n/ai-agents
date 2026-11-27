@@ -17,7 +17,7 @@ const pointsSpeech = "сегодня три важных правила. | пе�
 	"и третье пейте воду. | пишите в комментариях."
 
 // countHint checks the announcement of the speech with the words removed by a selection (or not).
-func countHint(t *testing.T, text string, remove []roughcut.WordRange, selected bool) (string, []string) {
+func countHint(t *testing.T, text string, remove []roughcut.WordRange, selected bool) (hint string, details []string) {
 	t.Helper()
 
 	src := speech(text)
@@ -33,7 +33,7 @@ func countHint(t *testing.T, text string, remove []roughcut.WordRange, selected 
 	plan, err := roughcut.BuildPlanEdited(src, src.Duration, testSettings(), &edit)
 	require.NoError(t, err)
 
-	hint := checkCounts(req, &edit, &plan, &selection{on: selected})
+	hint = checkCounts(req, &edit, &plan, &selection{on: selected})
 
 	return hint, edit.Details
 }
