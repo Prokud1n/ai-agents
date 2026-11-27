@@ -513,7 +513,7 @@ func TestFixOrthography(t *testing.T) {
 		{name: "можно ли", input: "Можно ли заниматься дома.", expected: "Можно ли заниматься дома?"},
 		{name: "а если", input: "А если нет времени.", expected: "А если нет времени?"},
 		{name: "а если честно", input: "А если честно, это сложно.", expected: "А если честно, это сложно."},
-		{name: "а если with a comma", input: "А если болит колено, делайте мягче.", expected: "А если болит колено, делайте мягче."},
+		{name: "а если with a comma", input: kneeAdvice, expected: kneeAdvice},
 		{name: "a statement with если", input: "Если болит колено, делайте мягче.", expected: "Если болит колено, делайте мягче."},
 		{name: "почему with its answer", input: "Почему так, потому что спина устаёт.", expected: "Почему так, потому что спина устаёт."},
 		{name: "как stays", input: "Как я уже говорила.", expected: "Как я уже говорила."},
@@ -633,6 +633,9 @@ func TestTextOrthography(t *testing.T) {
 	assert.Equal(t, "еще", kept[0], "only the styles with the orthography")
 }
 
+// kneeAdvice is an advice that starts like a question: no «?».
+const kneeAdvice = "А если болит колено, делайте мягче."
+
 // TestSectionQuestion: the first sentence of a section that starts with «а если» gets «?» even with a comma (the
 // heading asks it), unless its last clause answers the condition («…, делайте мягче»); the same sentence elsewhere does
 // not.
@@ -647,7 +650,7 @@ func TestSectionQuestion(t *testing.T) {
 	}{
 		{name: "a question with a comma", question: "А если нет времени, хотя бы на зарядку.", heading: true, expected: "зарядку?"},
 		{name: "not under a heading", question: "А если нет времени, хотя бы на зарядку.", expected: "зарядку."},
-		{name: "an advice", question: "А если болит колено, делайте мягче.", heading: true, expected: "мягче."},
+		{name: "an advice", question: kneeAdvice, heading: true, expected: "мягче."},
 		{name: "a conclusion with «то»", question: "А если устали, то отдохните.", heading: true, expected: "отдохните."},
 		{name: "not afraid", question: "А если не вышло, не страшно.", heading: true, expected: "страшно."},
 	}

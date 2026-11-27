@@ -192,7 +192,7 @@ func joinHyphen(a, b token) (token, bool) {
 	}
 
 	first := a.Text
-	if a.Norm == "все" {
+	if a.Norm == wordAll {
 		first = replaceWord(first, "всё") // «всё-таки»
 	}
 
@@ -240,7 +240,7 @@ func withYo(tokens []token, i int) string {
 		}
 	}
 
-	if t.Norm != "все" {
+	if t.Norm != wordAll {
 		return t.Text
 	}
 
@@ -335,6 +335,7 @@ const (
 	wordIf   = "если"
 	wordLi   = "ли"
 	wordSo   = "так"
+	wordAll  = "все"
 	// wordTimes and wordIn: «сколько раз в неделю» asks.
 	wordTimes = "раз"
 	wordIn    = "в"
@@ -364,7 +365,7 @@ var (
 	// answerStarts and answerPairs start a main clause that answers a condition; imperativeEndings end a plural
 	// imperative.
 	answerStarts      = wordSet("то", "ничего")
-	answerPairs       = map[string]string{"не": "страшно", "все": "равно"}
+	answerPairs       = map[string]string{"не": "страшно", wordAll: "равно"}
 	imperativeEndings = []string{"йте", "ите", "ьте"}
 	// clauseQuestions start a clause that asks after a comma: «…, что делать».
 	clauseQuestions = wordSet("что", "как", "где", "куда", "когда", "кто", "какой", "какая", "какое", "какие", "чем",

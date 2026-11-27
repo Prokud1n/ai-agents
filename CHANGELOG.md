@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cut it starts at (the heading stands on the late start of the recognized word), not before the heading, at most
   0.3 s after the voice (`section.lead` was 0.35 s after the heading). The trainer's hook takes two lines made smaller
   (down to 50 %) rather than three: a hook of up to about 75 characters no longer reaches the face.
+- Selection and joints (T3.26): the cleaning keeps the end of a kept sentence — when cleanup_words cut the last words
+  of a sentence whose start stays (the end of the climax), the editor is asked once to bring them back (the same
+  decision again is accepted), a link or reaction said as a line of its own and a failed take at the end of a sentence
+  are still cut; the failed takes the cleaning cuts (the earlier of two takes said within 20 s while the later stays,
+  one copy of words said twice in a row) no longer count against its floor, so a short video is not left with a
+  broken take; a joint where the speech recognition stretched a word over the room noise or a breath is cut by the
+  sound, so no long silence is heard there (a quiet stretch of more than 0.15 s after the last speech of a word is
+  not its ending; at a pause 0.15 s of it stays, a word said quietly all through is kept).
 - The picture of a talking head as in the trainer's own reels (T3.25): darker and slightly warmer, the top of the frame
   (the light wall under the subtitles) in a soft shadow, so the white subtitles read; a source that is already dark is
   darkened less or not at all (its brightness is measured on a few key frames). `MEDIA_WORKER_GRADE`,
