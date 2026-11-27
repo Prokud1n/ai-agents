@@ -90,9 +90,10 @@ var sentenceStarters = wordSet("ну", "ведь", "кстати", "итак", "
 //
 // The speech of the subtitles is the only text from Whisper; the hook, the notes and the headings are written by the
 // editor's model and get the dictionary part only (textOrthography). A sentence that is clearly a question gets its
-// «?» (questionMarks).
+// «?» (questionMarks), a parenthetical «если честно», «честно говоря», «кстати» its commas where it surely is one
+// (asideCommas).
 func fixOrthography(tokens []token) []token {
-	return questionMarks(orthographyWords(tokens))
+	return asideCommas(questionMarks(orthographyWords(tokens)))
 }
 
 // textOrthography is the dictionary part of fixOrthography for a text written on the screen (the hook, a note, a

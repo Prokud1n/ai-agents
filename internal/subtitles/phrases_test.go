@@ -136,7 +136,7 @@ func TestSyntheticTalkPhrases(t *testing.T) {
 			assert.LessOrEqual(t, lineWidth(lineWidths(line)), 30, text)
 
 			if j+1 < len(c.Lines) {
-				assert.False(t, isProclitic(line[len(line)-1].Norm), "a line ends with a function word: %q", text)
+				assert.False(t, holdsNext(line[len(line)-1]), "a line ends with a function word: %q", text)
 			}
 		}
 	}
@@ -782,7 +782,7 @@ func TestLeadUnderSections(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, leadUnderSections(tt.input, heading, trainerSectionLead, nil))
+			assert.Equal(t, tt.expected, leadUnderSections(tt.input, heading, trainerSectionLead, sectionJoints{}))
 		})
 	}
 }
@@ -796,15 +796,16 @@ func TestLeadFromJoint(t *testing.T) {
 	heading := []noteBlock{{start: 10.2, end: 14}}
 	question := []cue{{Start: 10.15, End: 13}}
 
-	got := leadUnderSections(question, heading, trainerSectionLead, []float64{0, 10})
+	got := leadUnderSections(question, heading, trainerSectionLead, sectionJoints{joints: []float64{0, 10}})
 	require.Len(t, got, 1)
 	assert.InDelta(t, 10.2, got[0].Start, 1e-9, "with the heading")
 	assert.LessOrEqual(t, got[0].Start-10, 0.3, "at most 0.3 s after the voice")
 
-	early := leadUnderSections(question, []noteBlock{{start: 10.05, end: 14}}, trainerSectionLead, []float64{10})
+	early := leadUnderSections(question, []noteBlock{{start: 10.05, end: 14}}, trainerSectionLead,
+		sectionJoints{joints: []float64{10}})
 	assert.InDelta(t, 10.2, early[0].Start, 1e-9, "lead after the joint")
 
-	far := leadUnderSections(question, heading, trainerSectionLead, []float64{9.5})
+	far := leadUnderSections(question, heading, trainerSectionLead, sectionJoints{joints: []float64{9.5}})
 	assert.InDelta(t, 10.4, far[0].Start, 1e-9, "lead after the heading")
 
 	assert.Equal(t, []float64{0, 2, 2.5}, cutJoints(&ffmpeg.Cut{Segments: []ffmpeg.Segment{

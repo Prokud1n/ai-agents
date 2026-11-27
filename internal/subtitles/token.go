@@ -40,6 +40,9 @@ type token struct {
 	Accent accentKind
 	// open: the strong break is only the end of a Whisper segment, without a sentence mark: the sentence may go on.
 	open bool
+	// leans: the word holds on to the next one as a preposition does: a subject pronoun after a conjunction («и я |
+	// буду»; markLeaningSubjects, the trainer's phrases only).
+	leans bool
 }
 
 // segmentWord is a word of a segment text with its punctuation; a dash or ellipsis written apart is appended
@@ -280,6 +283,9 @@ func isCompoundNumber(prev, next string) bool {
 func isCommand(norm string) bool { return commandVerbs[norm] }
 
 func isProclitic(norm string) bool { return proclitics[norm] }
+
+// holdsNext: no line or subtitle ends after the word: a preposition, a conjunction, «не» or a leaning pronoun.
+func holdsNext(t token) bool { return isProclitic(t.Norm) || t.leans }
 
 func isEnclitic(norm string) bool { return enclitics[norm] }
 
