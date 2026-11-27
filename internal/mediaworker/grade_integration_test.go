@@ -67,14 +67,14 @@ func TestIntegrationGradeDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	log := string(store.results[files.Decisions].data)
-	require.Contains(t, log, "- Цвет кадра")
-	grade := log[strings.Index(log, "- Цвет кадра"):]
-	grade = grade[:strings.Index(grade, "\n")]
+	_, grade, found := strings.Cut(log, "- Цвет кадра")
+	require.True(t, found, log)
+	grade, _, _ = strings.Cut(grade, "\n")
 
 	t.Logf("grade defaults: source %.1f → reel %.1f; %s", measured, mean, grade)
 	assert.GreaterOrEqual(t, mean, gradedMinLuma)
 	assert.LessOrEqual(t, mean, gradedMaxLuma)
-	assert.Contains(t, grade, "Цвет кадра: как у тренера")
+	assert.Contains(t, grade, ": как у тренера")
 	assert.Contains(t, grade, "средняя яркость исходника "+strconv.Itoa(int(measured+0.5)))
 }
 

@@ -252,10 +252,12 @@ func TestIntegrationTrainerStyle(t *testing.T) {
 	assert.Contains(t, v2.Text, "Убрал пункты и цифры с экрана.")
 	assert.InDelta(t, duration, e.reelDuration(t, v2.MediaKey), 0.05, "the cut is the same")
 
-	// The zoom moves closer at the start of each section (T3.25): the log of v1 says so.
+	// The zoom moves closer at the start of each section (T3.25): the sections of the real rough cut reach Zoom.Must,
+	// the log of v1 says so. The selection here is one fragment (the first 20 phrases with their short pauses), so the
+	// reel has no joint to change the framing at; the rule of the joints is checked by ffmpeg.TestZoomedSegments.
 	log1 := string(e.read(t, files1.Decisions))
 	assert.Contains(t, log1, "разделов: 3", "the sections of the real rough cut reach the zoom")
-	assert.Regexp(t, `масштаб меняется на [1-9]\d* из \d+ стыков`, log1)
+	assert.Regexp(t, `масштаб меняется на \d+ из \d+ стыков`, log1)
 
 	files2, err := editjob.Files(e.files, e.source, 2)
 	require.NoError(t, err)
