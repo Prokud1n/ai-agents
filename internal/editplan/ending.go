@@ -160,7 +160,7 @@ func cutTail(remove []roughcut.WordRange, kept []bool, first, call int) (roughcu
 	}
 
 	from := end + 1
-	for from-1 >= first && !kept[from-1] && inRanges(remove, from-1) {
+	for from > first && !kept[from-1] && inRanges(remove, from-1) {
 		from--
 	}
 

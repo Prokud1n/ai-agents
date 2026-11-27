@@ -168,7 +168,7 @@ func TestServiceCutSectionOnCutReading(t *testing.T) {
 		[3]float64{3.05, 4.3, testSpeech}, [3]float64{questionSound, 6.2, testSpeech})}
 	edit := &Edit{
 		Remove:      []WordRange{{From: 1, To: 3}},
-		ScreenNotes: []ScreenNote{{Kind: SectionNote, Text: "страх 2", Start: 3.0}},
+		ScreenNotes: []ScreenNote{{Kind: SectionNote, Text: sectionTwo, Start: 3.0}},
 	}
 
 	result, err := newTestService(t, media).Cut(t.Context(), &CutData{
