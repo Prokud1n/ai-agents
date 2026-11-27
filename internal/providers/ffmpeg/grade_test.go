@@ -25,12 +25,13 @@ const renderBenchEnv = "RENDER_BENCH"
 // testGrade is the default of the worker for a bright source (MEDIA_WORKER_GRADE_EXPOSURE -0.3, _GRADE_TOP 30).
 var testGrade = &Grade{Exposure: -0.3, Warmth: 3, Top: 0.3}
 
-// TestGradeGraph: one lookup table for the exposure and the warmth, then the shadow of the top as one generated frame
+// TestGradeGraph: one lookup table for the exposure curve (x^(1 − EV): −0.3 EV of the midtones is the power 1.3) and
+// the warmth, then the shadow of the top as one generated frame
 // (full over the upper quarter, faded by the middle) laid over the frame; no shadow, no overlay.
 func TestGradeGraph(t *testing.T) {
 	t.Parallel()
 
-	lut := ",format=yuv420p,lutyuv=y='16+(val-16)*0.812252':u='val-3':v='val+3'"
+	lut := ",format=yuv420p,lutyuv=y='16+219*pow((clip(val,16,235)-16)/219,1.300000)':u='val-3':v='val+3'"
 
 	tests := []struct {
 		name        string
@@ -52,7 +53,7 @@ func TestGradeGraph(t *testing.T) {
 		{
 			name:     "only the warmth",
 			input:    Grade{Warmth: 3},
-			expected: ",format=yuv420p,lutyuv=y='16+(val-16)*1.000000':u='val-3':v='val+3'",
+			expected: ",format=yuv420p,lutyuv=y='16+219*pow((clip(val,16,235)-16)/219,1.000000)':u='val-3':v='val+3'",
 		},
 		{name: "a brighter frame", input: Grade{Exposure: 0.3}, expectedErr: ErrInvalidGrade},
 		{name: "a black frame", input: Grade{Exposure: -3}, expectedErr: ErrInvalidGrade},
@@ -127,10 +128,14 @@ const (
 	minTopShadow = 15.0
 	// minWarmth of the red over the blue of a grey.
 	minWarmth = 1.05
+	// minWhite: the curve keeps the white (235) bright, the frame is darker, not flatter.
+	minWhite = 225.0
 )
 
-// TestRunnerGrade: a grey SDR frame of the luma of our frame comes out as dark as the trainer's on average, its top
-// third clearly darker than its bottom third, and warmer (more red than blue); the reel keeps its frames.
+// TestRunnerGrade: the grade of the default exposure (the worker's for a bright source, MEDIA_WORKER_GRADE_*) on a grey
+// SDR frame of the luma of our frame: as dark as the trainer's on average, its top third clearly darker than its
+// bottom third, warmer (more red than blue); a white field stays white under the curve (below the shadow of the top).
+// The reels have one key frame: every moment of MeanLuma measures their first frame — the picture is still.
 func TestRunnerGrade(t *testing.T) {
 	t.Parallel()
 	requireFFmpeg(t)
@@ -138,23 +143,18 @@ func TestRunnerGrade(t *testing.T) {
 	ctx := t.Context()
 	r := newTestRunner(2 * time.Minute)
 	dir := t.TempDir()
-	src := filepath.Join(dir, "grey.mp4")
 
-	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
-		lavfiInput("color=c="+gradeSourceColor+":size=540x960:rate=30:duration=4"),
-		lavfiInput("sine=frequency=440:sample_rate=48000:duration=4"),
-		[]string{videoCodecFlag, videoCodec, pixFmtFlag, videoPixFmt, audioCodecFlag, renderACodec, shortestFlag, src}), nil)
-	require.NoError(t, err)
-
-	source, err := r.MeanLuma(ctx, src, []float64{1, 3}, false)
+	grey := makeStillSource(ctx, t, r, filepath.Join(dir, "grey.mp4"), gradeSourceColor)
+	source, err := r.MeanLuma(ctx, grey, []float64{1, 3}, false)
 	require.NoError(t, err)
 	assert.InDelta(t, gradeSourceLuma, source, 4, "the grey of our own frame")
 
-	reel := burnTestReel(ctx, t, r, dir, src, &Cut{
+	cut := &Cut{
 		Segments: []Segment{{Start: 0, End: 1.5}, {Start: 2, End: 3.5}},
 		Options:  RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}},
 		Grade:    testGrade,
-	})
+	}
+	reel := burnTestReel(ctx, t, r, filepath.Join(dir, mkdir(t, dir, "grey")), grey, cut)
 
 	mean, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false)
 	require.NoError(t, err)
@@ -162,12 +162,39 @@ func TestRunnerGrade(t *testing.T) {
 	top, bottom := thirdsLuma(ctx, t, r, reel)
 	red, blue := redBlue(ctx, t, r, reel)
 
-	t.Logf("grade: mean luma %.1f → %.1f, top third %.1f, bottom third %.1f, red/blue %.3f", source, mean, top, bottom,
-		red/blue)
+	white := makeStillSource(ctx, t, r, filepath.Join(dir, "white.mp4"), "white")
+	whiteReel := burnTestReel(ctx, t, r, filepath.Join(dir, mkdir(t, dir, "white")), white, cut)
+	whiteTop, whiteBottom := thirdsLuma(ctx, t, r, whiteReel)
+
+	t.Logf("grade: mean luma %.1f → %.1f, top third %.1f, bottom third %.1f, red/blue %.3f; white: top %.1f, "+
+		"bottom %.1f", source, mean, top, bottom, red/blue, whiteTop, whiteBottom)
 	assert.GreaterOrEqual(t, mean, gradeMinLuma)
 	assert.LessOrEqual(t, mean, gradeMaxLuma)
 	assert.Greater(t, bottom-top, minTopShadow, "the top of the frame is in shadow")
 	assert.Greater(t, red/blue, minWarmth, "warmer: more red than blue")
+	assert.GreaterOrEqual(t, whiteBottom, minWhite, "the white stays white")
+}
+
+// makeStillSource encodes 4 s of a still colour with a tone, as the render tests read it.
+func makeStillSource(ctx context.Context, t *testing.T, r *Runner, path, color string) string {
+	t.Helper()
+
+	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
+		lavfiInput("color=c="+color+":size=540x960:rate=30:duration=4"),
+		lavfiInput("sine=frequency=440:sample_rate=48000:duration=4"),
+		[]string{videoCodecFlag, videoCodec, pixFmtFlag, videoPixFmt, audioCodecFlag, renderACodec, shortestFlag, path}), nil)
+	require.NoError(t, err)
+
+	return path
+}
+
+// mkdir makes the directory name in dir and returns the name.
+func mkdir(t *testing.T, dir, name string) string {
+	t.Helper()
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, name), 0o700))
+
+	return name
 }
 
 // TestRunnerGradeHDR: an HLG source is tone mapped, then graded: the measurement sees the picture as the render brings
@@ -234,7 +261,8 @@ func burnToneMapped(ctx context.Context, t *testing.T, r *Runner, dir, src strin
 const emptyTestASS = "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[Events]\n" +
 	"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 
-// thirdsLuma is the mean luma of the upper and the lower third of the frame of the reel at 1 s.
+// thirdsLuma is the mean luma of the upper and the lower third of the key frame of the reel at or before 1 s (a reel
+// of the render has one key frame: its first one).
 func thirdsLuma(ctx context.Context, t *testing.T, r *Runner, path string) (top, bottom float64) {
 	t.Helper()
 
@@ -250,7 +278,8 @@ func thirdsLuma(ctx context.Context, t *testing.T, r *Runner, path string) (top,
 	return meanByte(plane[:third]), meanByte(plane[len(plane)-third:])
 }
 
-// redBlue are the mean red and blue of the lower third of the frame of the reel at 1 s (below the shadow of the top).
+// redBlue are the mean red and blue of the lower third of the frame of the reel at 1 s (below the shadow of the top;
+// accurate seek: that very frame).
 func redBlue(ctx context.Context, t *testing.T, r *Runner, path string) (red, blue float64) {
 	t.Helper()
 

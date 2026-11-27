@@ -227,6 +227,13 @@ func realPipelineConfigured(
 func makeSpeechClip(t *testing.T, path, size string, rate int, hdr bool) {
 	t.Helper()
 
+	makeClip(t, path, "testsrc=duration="+strconv.Itoa(clipDuration)+":size="+size+":rate="+strconv.Itoa(rate), hdr)
+}
+
+// makeClip is makeSpeechClip with the picture of the lavfi graph video.
+func makeClip(t *testing.T, path, video string, hdr bool) {
+	t.Helper()
+
 	spans := make([]string, 0, len(clipWords))
 	for _, w := range clipWords {
 		spans = append(spans, "between(t\\,"+strconv.FormatFloat(w.Start, 'f', 3, 64)+"\\,"+
@@ -235,7 +242,6 @@ func makeSpeechClip(t *testing.T, path, size string, rate int, hdr bool) {
 
 	d := strconv.Itoa(clipDuration)
 	audio := "aevalsrc=if(" + strings.Join(spans, "+") + "\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=" + d
-	video := "testsrc=duration=" + d + ":size=" + size + ":rate=" + strconv.Itoa(rate)
 
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y",
 		"-f", "lavfi", "-i", audio, "-f", "lavfi", "-i", video, "-c:a", "aac", "-shortest"}

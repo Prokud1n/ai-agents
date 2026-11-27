@@ -628,10 +628,10 @@ jobs:
           CGO_ENABLED=0 go test -c -o mediaworker.test ./internal/mediaworker
           docker run --rm -e INTEGRATION=1 -v "$PWD/mediaworker.test:/app/mediaworker.test:ro" \
             --entrypoint /app/mediaworker.test ai-agents-media:ci -test.v -test.count=1 \
-            -test.run 'TestIntegrationPipeline|TestIntegrationWorkout|TestIntegrationNoSpeech|TestIntegrationTalkRendersAtOnce|TestIntegrationHookRender' \
+            -test.run 'TestIntegrationPipeline|TestIntegrationWorkout|TestIntegrationNoSpeech|TestIntegrationTalkRendersAtOnce|TestIntegrationHookRender|TestIntegrationGradeDefaults' \
             | tee pipeline.txt
           for test in TestIntegrationPipeline TestIntegrationWorkoutKeepsPauses TestIntegrationNoSpeechIsPlanned \
-            TestIntegrationTalkRendersAtOnce TestIntegrationHookRender; do
+            TestIntegrationTalkRendersAtOnce TestIntegrationHookRender TestIntegrationGradeDefaults; do
             grep -q -- "--- PASS: $test " pipeline.txt || { echo "::error::$test did not pass"; exit 1; }
           done
           if grep -q -- '--- SKIP' pipeline.txt; then echo "::error::the pipeline test was skipped"; exit 1; fi

@@ -504,7 +504,11 @@ func (p *Pipeline) render(ctx context.Context, w *jobWork) error {
 		speech = &transcription.Result{Language: w.cut.Transcript.Language, Duration: w.cut.Transcript.Duration}
 	}
 
-	luma := p.sourceLuma(ctx, w)
+	luma, err := p.sourceLuma(ctx, w)
+	if err != nil {
+		return err
+	}
+
 	cut := p.sound.cut(w.cut, w.transcript.Loudness, luma)
 
 	burn, err := p.burner.BurnSubtitles(ctx, &subtitles.BurnSubtitlesData{

@@ -97,6 +97,48 @@ func TestZoomedSegments(t *testing.T) {
 			zooms:    1, changes: 1,
 		},
 		{
+			// The frame is closer since the third piece; the section at 6 s goes back to the plain frame on that piece,
+			// so its joint moves closer (1.0 → 1.3), and the count starts again.
+			name: "a section on a zoomed piece",
+			input: Cut{
+				Segments: twoSecondPieces(6), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{6}},
+			},
+			expected: []bool{false, false, false, true, true, false},
+			zooms:    1, changes: 2,
+		},
+		{
+			// A joint between the start of the closer shot and the section: the frame goes plain there.
+			name: "a section on a zoomed piece with a joint before it",
+			input: Cut{
+				Segments: twoSecondPieces(7), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{8}},
+			},
+			expected: []bool{false, false, true, false, true, true, false},
+			zooms:    2, changes: 4,
+		},
+		{
+			// Two sections a piece apart: both move closer, the piece between them is plain.
+			name: "two sections close",
+			input: Cut{
+				Segments: twoSecondPieces(6), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{2, 6}},
+			},
+			expected: []bool{false, true, false, true, true, false},
+			zooms:    2, changes: 4,
+		},
+		{
+			// Two sections on neighbouring pieces: no joint between them to go back, the closer shot of the first one
+			// goes on through the second.
+			name: "two sections on neighbouring pieces",
+			input: Cut{
+				Segments: twoSecondPieces(5), Options: RenderOptions{FrameRate: rate},
+				Zoom: &Zoom{Factor: 1.3, MinSegment: 1.2, Every: 2, Must: []float64{2, 4}},
+			},
+			expected: []bool{false, true, true, true, false},
+			zooms:    1, changes: 2,
+		},
+		{
 			name: "a section with no joint near it",
 			input: Cut{
 				Segments: []Segment{{Start: 0, End: 2}, {Start: 3, End: 5}, {Start: 6, End: 8}},
@@ -127,6 +169,16 @@ func TestZoomedSegments(t *testing.T) {
 			}
 		})
 	}
+}
+
+// twoSecondPieces are n pieces of 2 s of the source, 1 s apart: the reel has a joint every 2 s.
+func twoSecondPieces(n int) []Segment {
+	segments := make([]Segment, 0, n)
+	for i := range n {
+		segments = append(segments, Segment{Start: float64(3 * i), End: float64(3*i + 2)})
+	}
+
+	return segments
 }
 
 func TestZoomWindow(t *testing.T) {

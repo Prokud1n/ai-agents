@@ -416,17 +416,25 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   `TestRunnerSoundSync` (вспышка и щелчок через склейки), `TestRunnerZoom` (кадры на стыках); скорость —
   `TestRenderSpeed` (talk с T3.15 и без на одном раннере).
 - Картинка как у тренера (T3.25). `ffmpeg.Cut.Grade` (`grade.go`; только talk, `MEDIA_WORKER_GRADE`/`_EXPOSURE`/`_TOP`) —
-  после fit/тонмаппинга и зума, до `Shade` и ass: `format=yuv420p,lutyuv` (Y′ − 16 × 2^EV — по кодовым значениям, не
-  в линейном свете; Cb − `Warmth`, Cr + `Warmth`) и тень верха — кадр `shadeSource` (полная до ¼ высоты, косинус до ½)
-  через `overlay`, без `geq` на видео. `mediaworker.gradeSettings.forSource`: яркость исходника (`Runner.MeanLuma`: по
-  ключевому кадру `-noaccurate_seek -skip_frame nokey` в середине 6 кусков склейки, 64×112, HDR — с тонмаппингом)
-  приводится к `gradeLevel` 110, не сильнее EV; тень верха сходит на нет от 110 к `darkSource` 100; ошибка замера — лог
-  и пресет как задан. Зум: `Zoom.Every` (2 — масштаб меняется на каждом втором считаемом стыке; 0/1 — на каждом, как в
-  T3.15) и `Zoom.Must` (время разделов в рилсе — `sectionStarts(roughcut.Result.ScreenNotes)`: первый стык длинного
-  куска в [−0,3; +4] с, счёт `Every` сначала); `Cut.ZoomChanges` → строка «масштаб меняется на N из M стыков».
-  Строки «Цвет кадра» и «Зумы на склейках» — в «Звук и кадр». Проверка — `TestRunnerGrade` (серый Y′ 130 → 95–105,
-  верхняя треть темнее нижней > 15, R/B > 1,05), `TestRunnerGradeHDR`, `TestRunnerZoom` (P Z Z P), бенч
-  `TestRenderSpeedGrade` (`RENDER_BENCH=1`, 4K30 SDR, до/после T3.25, job media-image), `mediaworker.TestPipelineGrade`.
+  после fit/тонмаппинга и зума, до `Shade` и ass: `format=yuv420p,lutyuv` — кривая экспозиции средних тонов
+  `16+219·pow((clip(Y′)−16)/219, 1−EV)` (серый ½ темнеет на EV, чёрный и белый на месте; по кодовым значениям, не в
+  линейном свете) и тепло (Cb − `Warmth`, Cr + `Warmth`; красит и чёрные поля `pad` — ≈RGB 5,0,0, не видно), тень
+  верха — кадр `shadeSource` (полная до ¼ высоты, косинус до ½) через `overlay`, без `geq` на видео.
+  `mediaworker.gradeSettings.forSource`: яркость исходника (`Runner.MeanLuma`: ключевой кадр `-copyts -noaccurate_seek
+  -skip_frame nokey` в 6 равномерных точках исходника — `sampleMoments(SourceDuration)`, одинаково у правок; 64×112, HDR
+  — с тонмаппингом; кадр, который не декодировался, пропускается; моменты внутри одного GOP дают один кадр) → степень
+  кривой, которая приводит среднюю к `gradeLevel` 110, не сильнее EV; тень верха сходит на нет от 110 к `darkSource`
+  100; ошибка замера — лог и пресет как задан, отмена — ошибка задания. Зум: `Zoom.Every` (2 — масштаб меняется на
+  каждом втором считаемом стыке; 0/1 — на каждом, как в T3.15) и `Zoom.Must` (время разделов в рилсе —
+  `sectionStarts(roughcut.Result.ScreenNotes)`: первый стык длинного куска в [−0,3; +4] с — всегда **приближение**
+  1,0 → 1,3, `zoomPlan.closeIn`: уже приближенный кадр возвращается к обычному на последнем стыке до раздела или с
+  начала приближения; приближение раздела на соседнем куске без стыка между ними не снимается; счёт `Every` заново);
+  `Cut.ZoomChanges` → строка «масштаб меняется на N из M стыков». Строки «Цвет кадра» и «Зумы на склейках» — в «Звук и
+  кадр». Проверка — `TestRunnerGrade` (серый Y′ ≈130 → 95–105, верхняя треть темнее нижней > 15, R/B > 1,05, белый
+  ≥ 225), `TestRunnerGradeHDR`, `TestRunnerZoom`, `TestZoomedSegments`, `mediaworker.TestIntegrationGradeDefaults`
+  (умолчания `config.MediaWorker` через замер и `forSource`), `TestIntegrationTrainerStyle` (разделы → `Zoom.Must`,
+  кадры сравниваются при одинаковом зуме), бенч `TestRenderSpeedGrade` (`RENDER_BENCH=1`, 4K30 SDR, до/после T3.25,
+  job media-image).
 - Склейка, громкость, скорость правок (T3.19b). Точки разреза — по уровню звука (`ffmpeg.Runner.AudioLevels`: моно
   16 кГц PCM во временный файл, RMS по 10 мс; `roughcut/levels.go`: `newSpeechLevels` — порог речи 40 % от шумового
   пола (p10) к громкой речи (p95), не ниже пола + 10 dB, без контраста 15 dB — `nil` и поля вокруг слов 0,12/0,18;

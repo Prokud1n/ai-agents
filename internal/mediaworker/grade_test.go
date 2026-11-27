@@ -1,6 +1,7 @@
 package mediaworker
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -26,8 +27,10 @@ func TestGradeForSource(t *testing.T) {
 		expected ffmpeg.Grade
 	}{
 		{name: "not measured", luma: 0, expected: ffmpeg.Grade{Exposure: -0.3, Warmth: 3, Top: 0.3}},
-		// (110 − 16) / (131 − 16) = 0.817: −0.29 EV, within the configured −0.3.
-		{name: "a bright frame as ours", luma: 131, expected: ffmpeg.Grade{Exposure: -0.29, Warmth: 3, Top: 0.3}},
+		// The power that takes (131 − 16) / 219 to (110 − 16) / 219 is 1.31: −0.31 EV, capped at the configured −0.3.
+		{name: "a bright frame as ours", luma: 131, expected: ffmpeg.Grade{Exposure: -0.3, Warmth: 3, Top: 0.3}},
+		// The power for (125 − 16) / 219 is 1.21: −0.21 EV.
+		{name: "a frame a little brighter than the level", luma: 125, expected: ffmpeg.Grade{Exposure: -0.21, Warmth: 3, Top: 0.3}},
 		{name: "a very bright frame: the exposure is capped", luma: 180, expected: ffmpeg.Grade{Exposure: -0.3, Warmth: 3, Top: 0.3}},
 		{name: "at the level: only the shadow of the top", luma: 110, expected: ffmpeg.Grade{Warmth: 3, Top: 0.3}},
 		{name: "between: half the shadow", luma: 105, expected: ffmpeg.Grade{Warmth: 3, Top: 0.15}},
@@ -46,18 +49,12 @@ func TestGradeForSource(t *testing.T) {
 func TestSampleMoments(t *testing.T) {
 	t.Parallel()
 
-	segments := make([]ffmpeg.Segment, 0, 12)
-	for i := range 12 {
-		segments = append(segments, ffmpeg.Segment{Start: float64(10 * i), End: float64(10*i + 2)})
-	}
-
-	assert.Equal(t, []float64{1, 21, 41, 61, 81, 101}, sampleMoments(segments), "6 of 12, spread over the cut")
-	assert.Equal(t, []float64{1, 11}, sampleMoments(segments[:2]))
-	assert.Empty(t, sampleMoments(nil))
+	assert.Equal(t, []float64{10, 30, 50, 70, 90, 110}, sampleMoments(120), "the middles of six equal parts")
+	assert.Equal(t, []float64{0}, sampleMoments(0), "the duration unknown: the first key frame")
 }
 
-// TestPipelineGrade: a talking head is graded by the measured brightness of its cut (key frames in the middle of its
-// fragments, tone mapped for an HDR source), the zoom changes the framing at the start of each section; a workout is
+// TestPipelineGrade: a talking head is graded by the measured brightness of its source (key frames spread over it,
+// tone mapped for an HDR source), the zoom changes the framing at the start of each section; a workout is
 // not graded and not measured; a failed measurement grades as configured. The decisions log says what was done.
 func TestPipelineGrade(t *testing.T) {
 	t.Parallel()
@@ -77,8 +74,8 @@ func TestPipelineGrade(t *testing.T) {
 		{
 			name:     "a bright talking head",
 			change:   func(f *pipelineFakes) { f.meter.luma = 131 },
-			expected: &ffmpeg.Grade{Exposure: -0.29, Warmth: 3, Top: 0.3}, measured: true,
-			decisions: "- Цвет кадра: как у тренера — экспозиция -0.29 EV, тепло +3, верх кадра темнее на 30% " +
+			expected: &ffmpeg.Grade{Exposure: -0.3, Warmth: 3, Top: 0.3}, measured: true,
+			decisions: "- Цвет кадра: как у тренера — экспозиция -0.30 EV, тепло +3, верх кадра темнее на 30% " +
 				"(средняя яркость исходника 131; задано -0.30 EV и 30%)\n",
 		},
 		{
@@ -123,7 +120,7 @@ func TestPipelineGrade(t *testing.T) {
 			assert.Equal(t, tt.expected, cut.Grade)
 
 			if tt.measured {
-				assert.Equal(t, []float64{0.75, 3.25}, fakes.meter.moments, "the middles of the kept fragments")
+				assert.Equal(t, sampleMoments(182), fakes.meter.moments, "spread over the source, whatever the cut")
 				assert.True(t, fakes.meter.toneMap, "an HDR source is measured as it is rendered")
 				require.NotNil(t, cut.Zoom)
 				assert.Equal(t, []float64{0.6}, cut.Zoom.Must, "the sections, not the other notes")
@@ -137,4 +134,20 @@ func TestPipelineGrade(t *testing.T) {
 			assert.Contains(t, log, tt.decisions)
 		})
 	}
+}
+
+// TestPipelineGradeCancelled: a job stopped while the brightness is measured fails with the context, nothing is
+// rendered.
+func TestPipelineGradeCancelled(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	fakes := newPipelineFakes(t)
+	fakes.grade, fakes.meter = true, &fakeMeter{err: context.Canceled, cancel: cancel}
+
+	_, err := fakes.pipeline(t, t.TempDir()).Run(ctx, testJob())
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, fakes.burner.got, "not rendered")
 }
