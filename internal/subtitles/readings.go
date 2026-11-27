@@ -120,7 +120,7 @@ func hideReadings(tokens []token, headings []noteBlock) []token {
 		}
 
 		if i+1 < len(tokens) && hidden[i+1] {
-			t.Break = strongBreak
+			t.Break, t.open = strongBreak, false
 		}
 
 		out = append(out, t)

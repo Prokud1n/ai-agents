@@ -34,7 +34,7 @@ func TestTokensFromTranscript(t *testing.T) {
 			expected: []token{
 				withBreak(tok("Привет,", 0, 0.5), softBreak),
 				withBreak(tok("друзья!", 0.6, 1), strongBreak),
-				withBreak(tok("Присед", 1.2, 2), strongBreak),
+				openEnd(withBreak(tok("Присед", 1.2, 2), strongBreak)),
 				withBreak(tok(wordKnees, 3, 4), strongBreak),
 			},
 		},

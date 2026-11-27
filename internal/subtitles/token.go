@@ -38,6 +38,8 @@ type token struct {
 	End    float64
 	Break  breakKind
 	Accent accentKind
+	// open: the strong break is only the end of a Whisper segment, without a sentence mark: the sentence may go on.
+	open bool
 }
 
 // segmentWord is a word of a segment text with its punctuation; a dash or ellipsis written apart is appended
@@ -87,7 +89,19 @@ func tokensFromTranscript(result *transcription.Result) []token {
 		tokens[i].Text = censor(tokens[i].Text)
 	}
 
+	markOpenEnds(tokens)
+
 	return tokens
+}
+
+// markOpenEnds marks the ends of segments that do not end a sentence (token.open): without a sentence mark, the next
+// segment going on with a small letter («онлайн» | «тренировка хуже»). A next segment with a capital starts a sentence
+// («спросите» | «Отвечу…»), so the end stays a sentence end. tokens is owned by the caller.
+func markOpenEnds(tokens []token) {
+	for i := range tokens[:max(len(tokens)-1, 0)] {
+		t := &tokens[i]
+		t.open = t.Break == strongBreak && breakAfter(t.Text) != strongBreak && capitals(tokens[i+1].Text) == 0
+	}
 }
 
 // cleanWord collapses whitespace and drops backslashes: spoken text has none, and in ASS they start escapes.
