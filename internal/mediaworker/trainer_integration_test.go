@@ -179,7 +179,10 @@ func startTrainerEnv(t *testing.T, model modelRunner) (*editEnv, *longTalkTransc
 		executor: editor.NewExecutor(board, files, editplan.NewDecider(model, log), noTech{}, &cfg, log),
 	}
 
-	worker := NewWorker(board, realPipelineStyled(t, files, speech, ""), &config.MediaWorker{WorkDir: t.TempDir()}, log)
+	// The zoom changes the framing at the start of each section (T3.25): without the headings the revision is zoomed at
+	// other joints. The reels are compared in the band of the headings, so the framing stays the same in both.
+	pipeline := realPipelineConfigured(t, files, speech, "", func(cfg *config.MediaWorker) { cfg.Zoom = 0 })
+	worker := NewWorker(board, pipeline, &config.MediaWorker{WorkDir: t.TempDir()}, log)
 	require.NoError(t, worker.Start(t.Context()))
 	t.Cleanup(func() { require.NoError(t, worker.Stop(context.Background())) })
 

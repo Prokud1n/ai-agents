@@ -33,7 +33,8 @@ func newPipeline(
 	log *slog.Logger,
 ) (*Pipeline, error) {
 	return NewPipeline(&PipelineParams{
-		Store: files, Prober: runner, Keys: keys, Transcriber: speech, Cutter: cut, Burner: subs, Config: cfg, Log: log,
+		Store: files, Prober: runner, Keys: keys, Transcriber: speech, Cutter: cut, Burner: subs, Meter: runner, Config: cfg,
+		Log: log,
 	})
 }
 

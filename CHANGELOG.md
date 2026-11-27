@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The picture of a talking head as in the trainer's own reels (T3.25): darker and slightly warmer, the top of the frame
+  (the light wall under the subtitles) in a soft shadow, so the white subtitles read; a source that is already dark is
+  darkened less or not at all (its brightness is measured on a few key frames). `MEDIA_WORKER_GRADE`,
+  `MEDIA_WORKER_GRADE_EXPOSURE` (−0.3 EV), `MEDIA_WORKER_GRADE_TOP` (30 %); not in a workout.
+
 - The trainer's own style is the default subtitle style (T3.20), measured on the reel she edited herself: the speech in
   phrases of one or two lines, small white Manrope Regular, the first word of a sentence in small letters, no accents,
   plates or vignette; the hook in large peach Fira Sans Extra Condensed ExtraBold capitals that appears as an object
@@ -519,6 +524,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kb-ingest`, `kb-search`, `kb-delete`, `kb-reembed`.
 
 ### Changed
+
+- The jump-cut zoom is stronger and hides the joints as the trainer does it (T3.25): `MEDIA_WORKER_ZOOM` defaults to
+  30 % (1.3×, at most 40), the framing changes at every second joint and always at the joint where a section starts
+  (its question); the decisions log tells how many joints change the framing and the colour of the draft.
 
 - The editor's cut sounds whole and dense (T3.19b). The cut points are placed by the level of the source sound (RMS
   in 10 ms windows, `ffmpeg.Runner.AudioLevels`, about a second for a 4-minute source, not read for a given plan or a

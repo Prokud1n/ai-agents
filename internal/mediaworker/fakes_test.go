@@ -195,3 +195,17 @@ func (f *fakeBurner) BurnSubtitles(_ context.Context, data *subtitles.BurnSubtit
 
 	return f.result, nil
 }
+
+// fakeMeter is the brightness of the source; it records what it was asked.
+type fakeMeter struct {
+	luma    float64
+	err     error
+	moments []float64
+	toneMap bool
+}
+
+func (f *fakeMeter) MeanLuma(_ context.Context, _ string, moments []float64, toneMap bool) (float64, error) {
+	f.moments, f.toneMap = moments, toneMap
+
+	return f.luma, f.err
+}

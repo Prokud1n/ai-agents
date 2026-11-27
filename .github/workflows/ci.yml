@@ -608,6 +608,16 @@ jobs:
           done
           grep -E 'render speed|workout estimate' bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
 
+      # The colour and the zoom of T3.25 against the render of T3.15: a vertical 4K30 H.264 SDR source (an iPhone) on
+      # 2 CPUs, rendered both ways; the brightness measurement of the source is timed too.
+      - name: Measure the grade's render speed inside the media image (2 CPUs)
+        run: |
+          docker run --rm --cpus=2 -e FFMPEG_TESTS_REQUIRED=1 -e RENDER_BENCH=1 \
+            -v "$PWD/ffmpeg.test:/app/ffmpeg.test:ro" --entrypoint /app/ffmpeg.test ai-agents-media:ci \
+            -test.v -test.count=1 -test.timeout=30m -test.run 'TestRenderSpeedGrade' | tee grade-bench.txt
+          grep -q -- "--- PASS: TestRenderSpeedGrade " grade-bench.txt || { echo "::error::TestRenderSpeedGrade did not pass"; exit 1; }
+          grep -E 'render speed' grade-bench.txt | sed 's/^ *//' >> "$GITHUB_STEP_SUMMARY"
+
       # The editor's pipeline end to end (download → probe → rough cut → subtitles and export in one pass → upload) with
       # the ffmpeg, libass and fonts of the image; the speech recognition and S3 are faked. Checks the Instagram export,
       # the workout plan with the exercise title (the Title style on its box), the muted reel, a dense talk and the hook

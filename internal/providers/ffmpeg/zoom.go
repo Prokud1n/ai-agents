@@ -23,17 +23,31 @@ const (
 	zoomedLabel    = "zz"
 )
 
-var ErrInvalidZoom = errors.New("zoom factor must be within (1, 1.5] and the shortest zoomed segment not negative")
+var ErrInvalidZoom = errors.New("zoom factor must be within (1, 1.5], the shortest zoomed segment and the joints between changes not negative")
 
-// Zoom is the jump-cut zoom of a talking head: at every joint of the cut the framing changes, the segments are shown
-// alternately as they are and a little closer, still within a segment (no animation). A segment shorter than
-// MinSegment keeps the framing of the one before it, so short pieces do not flicker.
+// Zoom is the jump-cut zoom of a talking head: at the joints of the cut the framing changes, the segments are shown
+// alternately as they are and closer, still within a segment (a jump, no animation). With Every 2 it changes at every
+// second joint, so every other joint is hidden by the change of the framing and the zoomed shot lasts; a joint at a
+// moment of Must always changes it. A segment shorter than MinSegment keeps the framing of the one before it, so short
+// pieces do not flicker, and its joint is not counted.
 type Zoom struct {
-	// Factor > 1: 1.09 shows the middle 1/1.09 of the frame, 9 % closer.
+	// Factor > 1: 1.3 shows the middle 1/1.3 of the frame, 30 % closer.
 	Factor float64
 	// MinSegment, seconds of the reel.
 	MinSegment float64
+	// Every: the framing changes at every Every-th counted joint; 0 or 1 — at every joint (T3.15).
+	Every int
+	// Must are moments of the reel, seconds (the start of a section: its question), where the framing changes: at the
+	// first counted joint from mustLead before the moment to mustWindow after it; the count of Every starts again.
+	Must []float64
 }
+
+// The joint the framing must change at is looked for around a moment of Zoom.Must, seconds: the section heading is put
+// at the start of its phrase, the question follows it within a few seconds (the heading is shown about 2 s).
+const (
+	mustLead   = 0.3
+	mustWindow = 4.0
+)
 
 // ZoomedSegments says which segments of the cut are shown closer; all false without a zoom.
 func (c *Cut) ZoomedSegments() []bool {
@@ -42,17 +56,59 @@ func (c *Cut) ZoomedSegments() []bool {
 		return zoomed
 	}
 
-	closer := false
+	every := max(c.Zoom.Every, 1)
+	lengths := segmentLengths(c.Segments, c.Options.FrameRate)
+	must := mustJoints(lengths, c.Zoom)
+	closer, counted := false, 0
 
-	for i, d := range segmentLengths(c.Segments, c.Options.FrameRate) {
+	for i, d := range lengths {
 		if i > 0 && d >= c.Zoom.MinSegment {
-			closer = !closer
+			counted++
+
+			if must[i] || counted >= every {
+				closer, counted = !closer, 0
+			}
 		}
 
 		zoomed[i] = closer
 	}
 
 	return zoomed
+}
+
+// mustJoints marks the segments whose joint must change the framing: for each moment of z.Must the first segment of at
+// least MinSegment that starts within [moment - mustLead, moment + mustWindow].
+func mustJoints(lengths []float64, z *Zoom) []bool {
+	must := make([]bool, len(lengths))
+
+	for _, moment := range z.Must {
+		at := 0.0
+
+		for i, d := range lengths {
+			if i > 0 && d >= z.MinSegment && at >= moment-mustLead && at <= moment+mustWindow {
+				must[i] = true
+
+				break
+			}
+
+			at += d
+		}
+	}
+
+	return must
+}
+
+// ZoomChanges counts the joints of the cut where the framing changes and all its joints.
+func (c *Cut) ZoomChanges() (changed, joints int) {
+	zoomed := c.ZoomedSegments()
+
+	for i := 1; i < len(zoomed); i++ {
+		if zoomed[i] != zoomed[i-1] {
+			changed++
+		}
+	}
+
+	return changed, max(len(zoomed)-1, 0)
 }
 
 // Zooms counts the times the reel moves closer: runs of zoomed segments.
@@ -118,8 +174,9 @@ func zoomSpans(c *Cut) [][2]float64 {
 // Frame times are k/rate: an edge is put half a frame before its frame, so rounding never moves it.
 func zoomGraph(c *Cut, width, height int) (string, error) {
 	z := c.Zoom
-	if z.Factor <= 1 || z.Factor > maxZoomFactor || z.MinSegment < 0 {
-		return "", fmt.Errorf("factor %.3f, shortest segment %.2f s: %w", z.Factor, z.MinSegment, ErrInvalidZoom)
+	if z.Factor <= 1 || z.Factor > maxZoomFactor || z.MinSegment < 0 || z.Every < 0 {
+		return "", fmt.Errorf("factor %.3f, shortest segment %.2f s, every %d: %w", z.Factor, z.MinSegment, z.Every,
+			ErrInvalidZoom)
 	}
 
 	spans := zoomSpans(c)
