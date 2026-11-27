@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Light by the frame (T3.28): the brightness of the source is measured with its upper and lower thirds (the same key
+  frames, the same pass), and the shadow of the top is fitted to them — a light wall over dark clothes gets a stronger
+  shadow (up to 70 %) and a weaker exposure curve, so the upper third of the reel is darker than the lower third (the
+  estimate aims at 13 code values; the trainer's 78.5 / 93.5) and the mean stays at about 99; the bottom is never darker
+  than before. `MEDIA_WORKER_GRADE_TOP` is now the least shadow (0 — none). The warmth is ±2 instead of ±3 (warmer than
+  the trainer's). The «Цвет кадра» line of `decisions.log` shows the thirds of the source and the estimated reel.
+
 - The picture of a talking head as in the trainer's own reels (T3.25): darker and slightly warmer, the top of the frame
   (the light wall under the subtitles) in a soft shadow, so the white subtitles read; a source that is already dark is
   darkened less or not at all (its brightness is measured on a few key frames). `MEDIA_WORKER_GRADE`,

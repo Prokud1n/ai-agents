@@ -22,8 +22,9 @@ const (
 // renderBenchEnv turns the render speed measurement on (as in internal/subtitles).
 const renderBenchEnv = "RENDER_BENCH"
 
-// testGrade is the default of the worker for a bright source (MEDIA_WORKER_GRADE_EXPOSURE -0.3, _GRADE_TOP 30).
-var testGrade = &Grade{Exposure: -0.3, Warmth: 3, Top: 0.3}
+// testGrade is the default of the worker for a flat bright source (MEDIA_WORKER_GRADE_EXPOSURE -0.3, _GRADE_TOP 30,
+// the warmth of T3.28).
+var testGrade = &Grade{Exposure: -0.3, Warmth: 2, Top: 0.3}
 
 // TestGradeGraph: one lookup table for the exposure curve (x^(1 − EV): −0.3 EV of the midtones is the power 1.3) and
 // the warmth, then the shadow of the top as one generated frame
@@ -31,7 +32,7 @@ var testGrade = &Grade{Exposure: -0.3, Warmth: 3, Top: 0.3}
 func TestGradeGraph(t *testing.T) {
 	t.Parallel()
 
-	lut := ",format=yuv420p,lutyuv=y='16+219*pow((clip(val,16,235)-16)/219,1.300000)':u='val-3':v='val+3'"
+	lut := ",format=yuv420p,lutyuv=y='16+219*pow((clip(val,16,235)-16)/219,1.300000)':u='val-2':v='val+2'"
 
 	tests := []struct {
 		name        string
@@ -47,7 +48,7 @@ func TestGradeGraph(t *testing.T) {
 		},
 		{
 			name:     "no shadow of the top",
-			input:    Grade{Exposure: -0.3, Warmth: 3},
+			input:    Grade{Exposure: -0.3, Warmth: 2},
 			expected: lut,
 		},
 		{
@@ -147,7 +148,8 @@ func TestRunnerGrade(t *testing.T) {
 	grey := makeStillSource(ctx, t, r, filepath.Join(dir, "grey.mp4"), gradeSourceColor)
 	source, err := r.MeanLuma(ctx, grey, []float64{1, 3}, false)
 	require.NoError(t, err)
-	assert.InDelta(t, gradeSourceLuma, source, 4, "the grey of our own frame")
+	assert.InDelta(t, gradeSourceLuma, source.Mean, 4, "the grey of our own frame")
+	assert.InDelta(t, source.Top, source.Bottom, 1, "a flat frame: its thirds are as light as each other")
 
 	cut := &Cut{
 		Segments: []Segment{{Start: 0, End: 1.5}, {Start: 2, End: 3.5}},
@@ -156,9 +158,10 @@ func TestRunnerGrade(t *testing.T) {
 	}
 	reel := burnTestReel(ctx, t, r, filepath.Join(dir, mkdir(t, dir, "grey")), grey, cut)
 
-	mean, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false)
+	graded, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false)
 	require.NoError(t, err)
 
+	mean := graded.Mean
 	top, bottom := thirdsLuma(ctx, t, r, reel)
 	red, blue := redBlue(ctx, t, r, reel)
 
@@ -167,20 +170,142 @@ func TestRunnerGrade(t *testing.T) {
 	whiteTop, whiteBottom := thirdsLuma(ctx, t, r, whiteReel)
 
 	t.Logf("grade: mean luma %.1f → %.1f, top third %.1f, bottom third %.1f, red/blue %.3f; white: top %.1f, "+
-		"bottom %.1f", source, mean, top, bottom, red/blue, whiteTop, whiteBottom)
+		"bottom %.1f", source.Mean, mean, top, bottom, red/blue, whiteTop, whiteBottom)
 	assert.GreaterOrEqual(t, mean, gradeMinLuma)
 	assert.LessOrEqual(t, mean, gradeMaxLuma)
 	assert.Greater(t, bottom-top, minTopShadow, "the top of the frame is in shadow")
 	assert.Greater(t, red/blue, minWarmth, "warmer: more red than blue")
+	assert.Less(t, red/blue, maxWarmth, "not warmer than the trainer's frame")
 	assert.GreaterOrEqual(t, whiteBottom, minWhite, "the white stays white")
+	assertGradedAsEstimated(t, testGrade, source, graded)
+}
+
+// The light top over the dark bottom of T3.28 (our source: a light wall over dark clothes, the thirds about 161 /
+// 100), synthetic: Y' 150 over a middle of 160 and a bottom of 80, the mean 130 as ours (RGB 160 / 172 / 79: the
+// encoded colour lands a few code values under its BT.709 luma, as the grey does).
+const (
+	lightTopSource = "color=c=0xa0a0a0:size=540x320:rate=30:duration=4[a];" +
+		"color=c=0xacacac:size=540x320:rate=30:duration=4[b];color=c=0x4f4f4f:size=540x320:rate=30:duration=4[c];" +
+		"[a][b][c]vstack=inputs=3"
+	lightTopLuma   = 150.0
+	darkBottomLuma = 80.0
+	// minTopGap: the upper third of the graded frame is at least this much darker than its lower third (T3.28).
+	minTopGap = 10.0
+	// maxEstimateError of Grade.Graded against the render, code values of the luma: the render brings these untagged
+	// synthetic sources up to 3 code values lighter than their measurement (about 0.99·Y′ + 4, with no grade at all).
+	maxEstimateError = 4.0
+	// maxWarmth of the red over the blue of a grey: ±3 of T3.25 was warmer than the trainer's frame.
+	maxWarmth = 1.12
+)
+
+// lightTopGrade is the grade the worker fits to the light top over the dark bottom (mediaworker.TestGradeForSource): no
+// exposure curve — the bottom stays as it is — and a shadow of the top of 63 %.
+var lightTopGrade = &Grade{Warmth: 2, Top: 0.63}
+
+// TestRunnerGradeThirds (T3.28): a light top over a dark bottom, graded as the worker fits it, comes out with its upper
+// third at least 10 darker than the lower third and the mean of the trainer's frame (95–105), as Grade.Graded
+// estimates; the white below the shadow stays white.
+func TestRunnerGradeThirds(t *testing.T) {
+	t.Parallel()
+	requireFFmpeg(t)
+
+	ctx := t.Context()
+	r := newTestRunner(2 * time.Minute)
+	dir := t.TempDir()
+
+	src := makeSource(ctx, t, r, filepath.Join(dir, "light-top.mp4"), lightTopSource)
+	source, err := r.MeanLuma(ctx, src, []float64{1, 3}, false)
+	require.NoError(t, err)
+	assert.InDelta(t, gradeSourceLuma, source.Mean, 4)
+	assert.InDelta(t, lightTopLuma, source.Top, 4)
+	assert.InDelta(t, darkBottomLuma, source.Bottom, 4)
+
+	cut := &Cut{
+		Segments: []Segment{{Start: 0, End: 1.5}, {Start: 2, End: 3.5}},
+		Options:  RenderOptions{Fade: 0.01, FrameRate: Rational{Num: 30, Den: 1}},
+		Grade:    lightTopGrade,
+	}
+	reel := burnTestReel(ctx, t, r, filepath.Join(dir, mkdir(t, dir, "light-top")), src, cut)
+
+	graded, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false)
+	require.NoError(t, err)
+
+	white := makeStillSource(ctx, t, r, filepath.Join(dir, "white.mp4"), "white")
+	_, whiteBottom := thirdsLuma(ctx, t, r, burnTestReel(ctx, t, r, filepath.Join(dir, mkdir(t, dir, "white")), white, cut))
+
+	t.Logf("grade thirds: source %.1f (top %.1f, bottom %.1f) → reel %.1f (top %.1f, bottom %.1f); white bottom %.1f",
+		source.Mean, source.Top, source.Bottom, graded.Mean, graded.Top, graded.Bottom, whiteBottom)
+	assert.LessOrEqual(t, graded.Top, graded.Bottom-minTopGap, "the top of the frame is darker than its bottom")
+	assert.GreaterOrEqual(t, graded.Mean, gradeMinLuma)
+	assert.LessOrEqual(t, graded.Mean, gradeMaxLuma)
+	assert.GreaterOrEqual(t, whiteBottom, minWhite, "the white stays white")
+	assertGradedAsEstimated(t, lightTopGrade, source, graded)
+}
+
+// assertGradedAsEstimated: the render of the grade measures as Grade.Graded estimates it from the source.
+func assertGradedAsEstimated(t *testing.T, g *Grade, source, graded Luma) {
+	t.Helper()
+
+	estimate := g.Graded(source)
+	t.Logf("grade estimate: %.1f (top %.1f, bottom %.1f), rendered %.1f (top %.1f, bottom %.1f)", estimate.Mean,
+		estimate.Top, estimate.Bottom, graded.Mean, graded.Top, graded.Bottom)
+	assert.InDelta(t, estimate.Mean, graded.Mean, maxEstimateError)
+	assert.InDelta(t, estimate.Top, graded.Top, maxEstimateError)
+	assert.InDelta(t, estimate.Bottom, graded.Bottom, maxEstimateError)
+}
+
+// TestGradeGraded: the estimate of the grade on the means of the thirds — the curve keeps the black and the white, the
+// shadow of the top is nearly all in the upper third, a little in the middle one, none in the lower one; the grade of
+// T3.25 on the source of live check 3 gives what the check measured (106.7 / 78.5).
+func TestGradeGraded(t *testing.T) {
+	t.Parallel()
+
+	assert.InDelta(t, 0.978, topShadowTop, 0.001)
+	assert.InDelta(t, 0.147, topShadowMiddle, 0.001)
+	assert.Zero(t, topShadowBottom)
+
+	tests := []struct {
+		name     string
+		grade    Grade
+		luma     Luma
+		expected Luma
+	}{
+		{name: "no grade", luma: Luma{Mean: 130, Top: 150, Bottom: 80}, expected: Luma{Mean: 130, Top: 150, Bottom: 80}},
+		{name: "the black and the white stay", grade: Grade{Exposure: -0.5}, luma: Luma{Mean: 162, Top: 235, Bottom: 16},
+			expected: Luma{Mean: 162, Top: 235, Bottom: 16}},
+		{name: "a flat grey of our frame", grade: *testGrade, luma: Luma{Mean: 130, Top: 130, Bottom: 130},
+			expected: Luma{Mean: 99.2, Top: 82.2, Bottom: 109.7}},
+		{name: "live check 3: the grade of T3.25", grade: *testGrade, luma: Luma{Mean: 130, Top: 161, Bottom: 100},
+			expected: Luma{Mean: 96.7, Top: 106.5, Bottom: 79}},
+		{name: "a light top over a dark bottom", grade: *lightTopGrade, luma: Luma{Mean: 130, Top: 150, Bottom: 80},
+			expected: Luma{Mean: 98, Top: 67.4, Bottom: 80}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := tt.grade.Graded(tt.luma)
+			assert.InDelta(t, tt.expected.Mean, got.Mean, 0.1)
+			assert.InDelta(t, tt.expected.Top, got.Top, 0.1)
+			assert.InDelta(t, tt.expected.Bottom, got.Bottom, 0.1)
+		})
+	}
 }
 
 // makeStillSource encodes 4 s of a still colour with a tone, as the render tests read it.
 func makeStillSource(ctx context.Context, t *testing.T, r *Runner, path, color string) string {
 	t.Helper()
 
+	return makeSource(ctx, t, r, path, "color=c="+color+":size=540x960:rate=30:duration=4")
+}
+
+// makeSource encodes 4 s of the lavfi picture (540×960) with a tone.
+func makeSource(ctx context.Context, t *testing.T, r *Runner, path, picture string) string {
+	t.Helper()
+
 	_, err := r.run(ctx, r.ffmpegPath, concat(commonArgs(),
-		lavfiInput("color=c="+color+":size=540x960:rate=30:duration=4"),
+		lavfiInput(picture),
 		lavfiInput("sine=frequency=440:sample_rate=48000:duration=4"),
 		[]string{videoCodecFlag, videoCodec, pixFmtFlag, videoPixFmt, audioCodecFlag, renderACodec, shortestFlag, path}), nil)
 	require.NoError(t, err)
@@ -220,7 +345,7 @@ func TestRunnerGradeHDR(t *testing.T) {
 
 	source, err := r.MeanLuma(ctx, src, []float64{1, 3}, true)
 	require.NoError(t, err)
-	assert.Greater(t, source, 16.0, "the tone mapped picture is not black")
+	assert.Greater(t, source.Mean, 16.0, "the tone mapped picture is not black")
 
 	cut := &Cut{
 		Segments: []Segment{{Start: 0, End: 1.5}, {Start: 2, End: 3.5}},
@@ -235,7 +360,7 @@ func TestRunnerGradeHDR(t *testing.T) {
 	plainTop, plainBottom := thirdsLuma(ctx, t, r, plain)
 	top, bottom := thirdsLuma(ctx, t, r, reel)
 
-	t.Logf("grade HDR: source %.1f; plain top %.1f bottom %.1f; graded top %.1f bottom %.1f", source, plainTop,
+	t.Logf("grade HDR: source %.1f; plain top %.1f bottom %.1f; graded top %.1f bottom %.1f", source.Mean, plainTop,
 		plainBottom, top, bottom)
 	assert.Less(t, bottom, plainBottom-5, "the exposure darkens the whole frame")
 	assert.Greater(t, plainTop-top, plainBottom-bottom+3, "the top is darkened more than the bottom")
@@ -359,7 +484,7 @@ func TestRenderSpeedGrade(t *testing.T) {
 	luma, err := r.MeanLuma(ctx, src, []float64{1, 6, 11, 16, 21, 26}, false)
 	require.NoError(t, err)
 	t.Logf("render speed: the brightness of the 4K source (6 key frames) measured in %.2f s: mean luma %.1f",
-		time.Since(started).Seconds(), luma)
+		time.Since(started).Seconds(), luma.Mean)
 
 	best := map[string]float64{}
 

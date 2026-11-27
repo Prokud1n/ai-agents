@@ -92,10 +92,10 @@ func parseSoundSettings(cfg *config.MediaWorker) (soundSettings, error) {
 // only in a talking head: in a workout the noise reduction would eat into the music, and the cuts are rare and
 // deliberate. A muted sound stays silent.
 //
-// The colour (T3.25) is graded in a talking head only, by luma — the mean brightness of the source measured before the
-// render (0: not measured): a workout is filmed in a gym or outdoors, where a darker frame hides the movement, and has
+// The colour (T3.25, T3.28) is graded in a talking head only, by luma — the brightness of the source (its mean and
+// thirds) measured before the render (zero: not measured): a workout is filmed in a gym or outdoors, where a darker frame hides the movement, and has
 // no speech subtitles on a light wall to make readable.
-func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness, luma float64) *ffmpeg.Cut {
+func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness, luma ffmpeg.Luma) *ffmpeg.Cut {
 	opts := plan.Render
 	talk := plan.Plan.Mode.Effective() == roughcut.TalkMode
 
@@ -139,12 +139,12 @@ func sectionStarts(notes []roughcut.ScreenNote) []float64 {
 }
 
 // notes are the lines of the decisions log about the sound, the framing and the colour of the rendered draft; luma is
-// the measured brightness of the source (0: not measured), report what the render did to the loudness (nil if it did
+// the measured brightness of the source (zero: not measured), report what the render did to the loudness (nil if it did
 // not say).
 func (s *soundSettings) notes(
 	cut *ffmpeg.Cut,
 	measured *ffmpeg.Loudness,
-	luma float64,
+	luma ffmpeg.Luma,
 	mode roughcut.Mode,
 	report *ffmpeg.SoundReport,
 ) []string {
