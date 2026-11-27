@@ -287,9 +287,9 @@ func TestApplyCleanupWorkout(t *testing.T) {
 func TestCleanupLine(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с).",
+	assert.Equal(t, "Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки: 3 фрагмента (52,4 с).",
 		cleanupLine(cleaning{fragments: 3, seconds: 52.38}))
-	assert.Equal(t, "Убрал неудачные дубли и подготовку к съёмке: 5 фрагментов (1 с).",
+	assert.Equal(t, "Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки: 5 фрагментов (1 с).",
 		cleanupLine(cleaning{fragments: 5, seconds: 1}))
 	assert.Empty(t, cleanupLine(cleaning{}))
 }

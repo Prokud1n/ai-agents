@@ -285,7 +285,7 @@ func TestPromptScreenNotes(t *testing.T) {
 
 	withNotes := &roughcut.Edit{ScreenNotes: []roughcut.ScreenNote{
 		{Kind: roughcut.ListItemNote, Text: noteSpine, Start: 0.5},
-		{Kind: roughcut.CalloutNote, Text: "эээ", Start: 5.7},
+		{Kind: roughcut.CalloutNote, Text: "пауза", Start: 4.5}, // in the long pause, 1.6 s before the speech
 	}}
 
 	tests := []struct {
@@ -307,7 +307,7 @@ func TestPromptScreenNotes(t *testing.T) {
 			expected: []string{
 				"screen_notes заменяет весь список",
 				"- пункт «1/ спина ровно», с 0:00.5 исходника (в ролике 0:00.",
-				"- выноска «эээ», с 0:05.7 исходника (вырезано, в ролике не видно)",
+				"- выноска «пауза», с 0:04.5 исходника (вырезано, в ролике не видно)",
 			},
 		},
 		{
