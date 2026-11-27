@@ -216,7 +216,6 @@ func zoomSpans(c *Cut) [][2]float64 {
 // zoomGraph continues the chain of the fitted frame (width×height, after the tone mapping): split in two, the second
 // copy cropped to the middle 1/Factor and scaled back to the frame, laid over the first during the zoomed spans. Only
 // the 1080×1920 frame is cropped and scaled, never the 4K source: about 1 ms of a frame. Empty without zoomed segments.
-// Frame times are k/rate: an edge is put half a frame before its frame, so rounding never moves it.
 func zoomGraph(c *Cut, width, height int) (string, error) {
 	z := c.Zoom
 	if z.Factor <= 1 || z.Factor > maxZoomFactor || z.MinSegment < 0 || z.Every < 0 {
@@ -224,9 +223,27 @@ func zoomGraph(c *Cut, width, height int) (string, error) {
 			ErrInvalidZoom)
 	}
 
+	enable := zoomEnable(c)
+	if enable == "" {
+		return "", nil
+	}
+
+	w, h, x, y := zoomWindow(width, height, z.Factor)
+	size := strconv.Itoa(width) + ":" + strconv.Itoa(height)
+
+	return ",format=" + videoPixFmt + ",split=2[" + zoomPlainLabel + "][" + zoomCloseLabel + "];" +
+		"[" + zoomCloseLabel + "]crop=" + strconv.Itoa(w) + ":" + strconv.Itoa(h) + ":" + strconv.Itoa(x) + ":" +
+		strconv.Itoa(y) + ",scale=" + size + "[" + zoomedLabel + "];" +
+		"[" + zoomPlainLabel + "][" + zoomedLabel + "]overlay=x=0:y=0:enable='" + enable + "'", nil
+}
+
+// zoomEnable is the expression of the time of the reel shown closer (1 within the zoomed spans, 0 elsewhere); empty
+// without zoomed segments. Frame times are k/rate: an edge is put half a frame before its frame, so rounding never
+// moves it.
+func zoomEnable(c *Cut) string {
 	spans := zoomSpans(c)
 	if len(spans) == 0 {
-		return "", nil
+		return ""
 	}
 
 	margin := zoomEpsilon
@@ -239,13 +256,30 @@ func zoomGraph(c *Cut, width, height int) (string, error) {
 		terms = append(terms, "gte(t,"+formatPrecise(s[0]-margin)+")*lt(t,"+formatPrecise(s[1]-margin)+")")
 	}
 
-	w, h, x, y := zoomWindow(width, height, z.Factor)
-	size := strconv.Itoa(width) + ":" + strconv.Itoa(height)
+	return strings.Join(terms, "+")
+}
 
-	return ",format=" + videoPixFmt + ",split=2[" + zoomPlainLabel + "][" + zoomCloseLabel + "];" +
-		"[" + zoomCloseLabel + "]crop=" + strconv.Itoa(w) + ":" + strconv.Itoa(h) + ":" + strconv.Itoa(x) + ":" +
-		strconv.Itoa(y) + ",scale=" + size + "[" + zoomedLabel + "];" +
-		"[" + zoomPlainLabel + "][" + zoomedLabel + "]overlay=x=0:y=0:enable='" + strings.Join(terms, "+") + "'", nil
+// ZoomShare is the share of the time of the reel shown closer (0 without a zoom).
+func (c *Cut) ZoomShare() float64 {
+	if c.Zoom == nil {
+		return 0
+	}
+
+	zoomed := c.ZoomedSegments()
+	total, closer := 0.0, 0.0
+
+	for i, d := range segmentLengths(c.Segments, c.Options.FrameRate) {
+		total += d
+		if zoomed[i] {
+			closer += d
+		}
+	}
+
+	if total <= 0 {
+		return 0
+	}
+
+	return closer / total
 }
 
 // zoomWindow is the part of the width×height frame shown zoomed in: of its aspect (1080×1920 → 990×1760 at 1.09),

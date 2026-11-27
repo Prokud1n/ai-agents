@@ -34,9 +34,17 @@ func TestGradeGraph(t *testing.T) {
 
 	lut := ",format=yuv420p,lutyuv=y='16+219*pow((clip(val,16,235)-16)/219,1.300000)':u='val-2':v='val+2'"
 
+	shade := func(alpha string) string {
+		return "color=c=black:s=1080x960:r=1:d=1,format=rgba," +
+			"geq=r=0:g=0:b=0:a='" + alpha + "*if(lt(Y,480),1,(1+cos(PI*(Y-480)/480))/2)'"
+	}
+	zoomed := "gte(t,1.483333)*lt(t,3.483333)"
+
 	tests := []struct {
-		name        string
-		input       Grade
+		name  string
+		input Grade
+		// zoomed: the zoomed spans of the reel (zoomEnable).
+		zoomed      string
 		expected    string
 		expectedErr error
 	}{
@@ -60,13 +68,33 @@ func TestGradeGraph(t *testing.T) {
 		{name: "a black frame", input: Grade{Exposure: -3}, expectedErr: ErrInvalidGrade},
 		{name: "a colour cast", input: Grade{Warmth: 40}, expectedErr: ErrInvalidGrade},
 		{name: "a black top", input: Grade{Top: 1}, expectedErr: ErrInvalidGrade},
+		{name: "a black top of the zoomed pieces", input: Grade{ZoomTop: new(1.0)}, zoomed: zoomed, expectedErr: ErrInvalidGrade},
+		{
+			name: "a zoom, one shadow: one overlay", input: *testGrade, zoomed: zoomed,
+			expected: lut + "[graded];" + shade("77") + "[gtop];[graded][gtop]overlay=x=0:y=0",
+		},
+		{
+			name: "no zoomed spans: the shadow of the frame", input: Grade{Exposure: -0.3, Warmth: 2, Top: 0.3, ZoomTop: new(0.6)},
+			expected: lut + "[graded];" + shade("77") + "[gtop];[graded][gtop]overlay=x=0:y=0",
+		},
+		{
+			// T3.30: each overlay over its own frames — every frame still gets one.
+			name: "the zoomed pieces with a shadow of their own", zoomed: zoomed,
+			input: Grade{Exposure: -0.3, Warmth: 2, Top: 0.3, ZoomTop: new(0.6)},
+			expected: lut + "[graded];" + shade("77") + "[gtop];[graded][gtop]overlay=x=0:y=0:enable='not(" + zoomed +
+				")'[gradedz];" + shade("153") + "[gtopz];[gradedz][gtopz]overlay=x=0:y=0:enable='" + zoomed + "'",
+		},
+		{
+			name: "a shadow on the zoomed pieces only", zoomed: zoomed, input: Grade{Exposure: -0.3, Warmth: 2, ZoomTop: new(0.6)},
+			expected: lut + "[gradedz];" + shade("153") + "[gtopz];[gradedz][gtopz]overlay=x=0:y=0:enable='" + zoomed + "'",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			graph, err := gradeGraph(&tt.input, 1080, 1920)
+			graph, err := gradeGraph(&tt.input, 1080, 1920, tt.zoomed)
 			if tt.expectedErr != nil {
 				require.ErrorIs(t, err, tt.expectedErr)
 
@@ -146,7 +174,7 @@ func TestRunnerGrade(t *testing.T) {
 	dir := t.TempDir()
 
 	grey := makeStillSource(ctx, t, r, filepath.Join(dir, "grey.mp4"), gradeSourceColor)
-	source, err := r.MeanLuma(ctx, grey, []float64{1, 3}, false)
+	source, err := r.MeanLuma(ctx, grey, []float64{1, 3}, false, 0)
 	require.NoError(t, err)
 	assert.InDelta(t, gradeSourceLuma, source.Mean, 4, "the grey of our own frame")
 	assert.InDelta(t, source.Top, source.Bottom, 1, "a flat frame: its thirds are as light as each other")
@@ -158,7 +186,7 @@ func TestRunnerGrade(t *testing.T) {
 	}
 	reel := burnTestReel(ctx, t, r, filepath.Join(dir, mkdir(t, dir, "grey")), grey, cut)
 
-	graded, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false)
+	graded, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false, 0)
 	require.NoError(t, err)
 
 	mean := graded.Mean
@@ -229,7 +257,7 @@ func TestRunnerGradeThirds(t *testing.T) {
 			dir := t.TempDir()
 
 			src := makeSource(ctx, t, r, filepath.Join(dir, tt.name+".mp4"), tt.source)
-			source, err := r.MeanLuma(ctx, src, []float64{1, 3}, false)
+			source, err := r.MeanLuma(ctx, src, []float64{1, 3}, false, 0)
 			require.NoError(t, err)
 			assert.InDelta(t, tt.luma.Mean, source.Mean, 4)
 			assert.InDelta(t, tt.luma.Top, source.Top, 4)
@@ -242,7 +270,7 @@ func TestRunnerGradeThirds(t *testing.T) {
 			}
 			reel := burnTestReel(ctx, t, r, filepath.Join(dir, mkdir(t, dir, "reel")), src, cut)
 
-			graded, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false)
+			graded, err := r.MeanLuma(ctx, reel, []float64{0.5, 2}, false, 0)
 			require.NoError(t, err)
 
 			white := makeStillSource(ctx, t, r, filepath.Join(dir, "white.mp4"), "white")
@@ -364,7 +392,7 @@ func TestRunnerGradeHDR(t *testing.T) {
 		}), nil)
 	require.NoError(t, err)
 
-	source, err := r.MeanLuma(ctx, src, []float64{1, 3}, true)
+	source, err := r.MeanLuma(ctx, src, []float64{1, 3}, true, 0)
 	require.NoError(t, err)
 	assert.Greater(t, source.Mean, 16.0, "the tone mapped picture is not black")
 
@@ -419,9 +447,9 @@ func thirdsLuma(ctx context.Context, t *testing.T, r *Runner, path string) (top,
 	require.NoError(t, err)
 	require.Len(t, plane, lumaWidth*lumaHeight)
 
-	third := lumaHeight / 3 * lumaWidth
+	luma := planeLuma(plane, lumaRect{bottom: lumaHeight, right: lumaWidth})
 
-	return meanByte(plane[:third]), meanByte(plane[len(plane)-third:])
+	return luma.Top, luma.Bottom
 }
 
 // redBlue are the mean red and blue of the lower third of the frame of the reel at 1 s (below the shadow of the top;
@@ -502,7 +530,7 @@ func TestRenderSpeedGrade(t *testing.T) {
 	}
 
 	started = time.Now()
-	luma, err := r.MeanLuma(ctx, src, []float64{1, 6, 11, 16, 21, 26}, false)
+	luma, err := r.MeanLuma(ctx, src, []float64{1, 6, 11, 16, 21, 26}, false, 0)
 	require.NoError(t, err)
 	t.Logf("render speed: the brightness of the 4K source (6 key frames) measured in %.2f s: mean luma %.1f",
 		time.Since(started).Seconds(), luma.Mean)

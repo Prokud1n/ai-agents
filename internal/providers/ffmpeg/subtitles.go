@@ -361,9 +361,10 @@ func frameGraph(data *BurnSubtitlesData, input string) (string, error) {
 		"[base][shade]overlay=x=0:y=" + y + "," + subtitles, nil
 }
 
-// cutPictureGraph is what a cut does to the output frame: the zoom at the joints, then the grade (both empty if unset).
+// cutPictureGraph is what a cut does to the output frame: the zoom at the joints, then the grade (both empty if unset);
+// the shadow of the top of the zoomed pieces is laid over their spans (Grade.ZoomTop).
 func cutPictureGraph(cut *Cut, width, height int) (string, error) {
-	var graph string
+	var graph, zoomed string
 
 	if cut.Zoom != nil {
 		zoom, err := zoomGraph(cut, width, height)
@@ -371,11 +372,11 @@ func cutPictureGraph(cut *Cut, width, height int) (string, error) {
 			return "", err
 		}
 
-		graph += zoom
+		graph, zoomed = zoom, zoomEnable(cut)
 	}
 
 	if cut.Grade != nil {
-		grade, err := gradeGraph(cut.Grade, width, height)
+		grade, err := gradeGraph(cut.Grade, width, height, zoomed)
 		if err != nil {
 			return "", err
 		}

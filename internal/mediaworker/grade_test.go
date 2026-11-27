@@ -102,7 +102,7 @@ func TestGradeForSource(t *testing.T) {
 				g = tt.settings
 			}
 
-			assert.Equal(t, &tt.expected, g.forSource(tt.light))
+			assert.Equal(t, &tt.expected, g.forSource(tt.light, 0))
 		})
 	}
 }
@@ -136,7 +136,7 @@ func TestGradeForSourceCriterion(t *testing.T) {
 
 	for _, tt := range tests {
 		luma := tt.luma
-		graded := settings.forSource(framed(luma)).Graded(luma)
+		graded := settings.forSource(framed(luma), 0).Graded(luma)
 		t.Logf("source %.0f (top %.0f, bottom %.0f) → reel %.1f (top %.1f, bottom %.1f)", luma.Mean, luma.Top,
 			luma.Bottom, graded.Mean, graded.Top, graded.Bottom)
 		assert.GreaterOrEqual(t, graded.Mean, gradedMinLuma)
@@ -147,6 +147,74 @@ func TestGradeForSourceCriterion(t *testing.T) {
 			assert.LessOrEqual(t, graded.Top, graded.Bottom-10, "the top is darker than the bottom")
 		}
 	}
+}
+
+// TestGradeForSourceZoom (T3.30): the zoom window of the source shows less of the dark strip at the top and more of
+// the light wall in the upper third, less of the lighter bottom in the lower one (live checks 4 and 5: under the
+// shadow of the frame the zoomed pieces came out 88 / 88, the reel −6 against −10). The zoomed pieces get a stronger
+// shadow of their own, so the reel — the plain pieces, the zoomed ones and both together — has its top topGap under its
+// bottom, the mean at the trainer's. A source whose thirds are not the frame's, or a reel without a zoomed piece,
+// keeps one shadow.
+func TestGradeForSourceZoom(t *testing.T) {
+	t.Parallel()
+
+	settings := &gradeSettings{on: true, exposure: -0.3, top: 0.3}
+	window := ffmpeg.Luma{Mean: 134, Top: 172, Bottom: 90}
+	luma := ffmpeg.Luma{Mean: 130, Top: 153, Bottom: 105, Zoomed: &window}
+	// The source of live checks 4 and 5 (153 / 99); its zoom window by the thirds measured on the zoomed pieces.
+	liveWindow := ffmpeg.Luma{Mean: 132, Top: 166, Bottom: 88}
+	live := ffmpeg.Luma{Mean: 130, Top: 153, Bottom: 99, Zoomed: &liveWindow}
+
+	tests := []struct {
+		name  string
+		luma  ffmpeg.Luma
+		share float64
+	}{
+		{name: "a quarter zoomed", luma: luma, share: 0.25},
+		{name: "half zoomed", luma: luma, share: 0.5},
+		{name: "three quarters zoomed", luma: luma, share: 0.75},
+		{name: "the source of live checks 4 and 5", luma: live, share: 0.48},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			light := framed(tt.luma)
+			grade := settings.forSource(light, tt.share)
+			require.NotNil(t, grade.ZoomTop, "the zoomed pieces get a shadow of their own")
+			assert.Greater(t, *grade.ZoomTop, grade.Top)
+
+			reel := light.reel(grade, tt.share)
+			plain, zoomed := grade.Graded(tt.luma), grade.Zoomed().Graded(*tt.luma.Zoomed)
+			t.Logf("grade %.2f EV, top %.0f%%, zoomed %.0f%%: reel %.1f (%.1f / %.1f), plain %.1f / %.1f, zoomed %.1f / %.1f",
+				grade.Exposure, grade.Top*percent, *grade.ZoomTop*percent, reel.Mean, reel.Top, reel.Bottom, plain.Top,
+				plain.Bottom, zoomed.Top, zoomed.Bottom)
+			assert.LessOrEqual(t, reel.Top, reel.Bottom-topGap+1, "the whole reel")
+			assert.LessOrEqual(t, plain.Top, plain.Bottom-topGap+1, "the plain pieces")
+			assert.LessOrEqual(t, zoomed.Top, zoomed.Bottom-topGap+1, "the zoomed pieces")
+			assert.GreaterOrEqual(t, reel.Mean, gradedMinLuma)
+			assert.LessOrEqual(t, reel.Mean, gradedMaxLuma)
+			assert.GreaterOrEqual(t, zoomed.Mean, minZoomedLevel-half)
+
+			// One shadow for both (T3.28) leaves the reel far from the criterion.
+			before := settings.forSource(light, 0)
+			require.Nil(t, before.ZoomTop)
+			old := before.Reel(tt.luma, tt.share)
+			assert.Greater(t, old.Top, old.Bottom-minTopGap, "one shadow: the top is not 10 under the bottom")
+		})
+	}
+
+	assert.Nil(t, settings.forSource(&sourceLight{luma: luma}, 0.5).ZoomTop, "the thirds are not the frame's")
+	assert.Equal(t, settings.forSource(framed(ffmpeg.Luma{Mean: 130, Top: 153, Bottom: 105}), 0.5),
+		settings.forSource(framed(luma), 0), "nothing zoomed: as without the window")
+	assert.Nil(t, settings.forSource(framed(ffmpeg.Luma{Mean: 130, Top: 153, Bottom: 105}), 0.5).ZoomTop,
+		"the window not measured")
+
+	note := settings.note(settings.forSource(framed(luma), 0.5), false, framed(luma), 0.5)
+	assert.Contains(t, note, "; зум на 50% рилса: без зума верх/низ ")
+	assert.Contains(t, note, "(окно зума в исходнике 172/90), тень на кусках с зумом ")
+	assert.NotContains(t, settings.note(settings.forSource(framed(luma), 0), false, framed(luma), 0), "зум")
 }
 
 // TestFramedThirds: only a source wider than 9:16 padded to the frame has bars above and below the picture.
@@ -203,7 +271,7 @@ func TestGradeNote(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, settings.note(settings.forSource(tt.light), false, tt.light))
+			assert.Equal(t, tt.expected, settings.note(settings.forSource(tt.light, 0), false, tt.light, 0))
 		})
 	}
 }
@@ -312,6 +380,7 @@ func TestPipelineGrade(t *testing.T) {
 			if tt.measured {
 				assert.Equal(t, sampleMoments(182), fakes.meter.moments, "spread over the source, whatever the cut")
 				assert.True(t, fakes.meter.toneMap, "an HDR source is measured as it is rendered")
+				assert.InDelta(t, 1+testZoom/percent, fakes.meter.zoom, 1e-9, "the zoom window is measured too")
 				require.NotNil(t, cut.Zoom)
 				assert.Equal(t, []float64{0.6}, cut.Zoom.Must, "the sections, not the other notes")
 			} else {

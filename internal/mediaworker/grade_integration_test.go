@@ -72,7 +72,7 @@ func TestIntegrationGradeDefaults(t *testing.T) {
 			makeClip(t, source, tt.video, false)
 
 			runner := ffmpeg.NewRunner(&config.FFmpeg{Timeout: 2 * time.Minute})
-			measured, err := runner.MeanLuma(t.Context(), source, sampleMoments(clipDuration), false)
+			measured, err := runner.MeanLuma(t.Context(), source, sampleMoments(clipDuration), false, 0)
 			require.NoError(t, err)
 			assert.InDelta(t, greySourceLuma, measured.Mean, 4, "the brightness of our source")
 			assert.InDelta(t, tt.top, measured.Top, 4)
@@ -115,7 +115,7 @@ func renderDefaultGrade(t *testing.T, defaults *config.MediaWorker, source strin
 	reel := filepath.Join(t.TempDir(), "reel.mp4")
 	require.NoError(t, os.WriteFile(reel, store.results[files.Reel].data, 0o600))
 
-	luma, err = ffmpeg.NewRunner(&config.FFmpeg{Timeout: 2 * time.Minute}).MeanLuma(t.Context(), reel, []float64{0}, false)
+	luma, err = ffmpeg.NewRunner(&config.FFmpeg{Timeout: 2 * time.Minute}).MeanLuma(t.Context(), reel, []float64{0}, false, 0)
 	require.NoError(t, err)
 
 	log := string(store.results[files.Decisions].data)
