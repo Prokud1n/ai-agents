@@ -126,7 +126,7 @@ func TestScreenNotesInEditAndLog(t *testing.T) {
 
 	raw, err := json.Marshal(cloned)
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"screen_notes":[{"kind":"list_item","text":itemWater,"start":1}`)
+	assert.Contains(t, string(raw), `"screen_notes":[{"kind":"list_item","text":"`+itemWater+`","start":1}`)
 
 	plain, err := json.Marshal(&Edit{})
 	require.NoError(t, err)
