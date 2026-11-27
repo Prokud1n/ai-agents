@@ -149,7 +149,7 @@ func conjunctionThen(before, a, b token) bool {
 	}
 
 	switch a.Norm {
-	case "что":
+	case wordWhat:
 		return thenAfterWhat[before.Norm] && before.Break == noBreak
 	case "чем", "как":
 		return before.Break == softBreak
@@ -305,8 +305,15 @@ func startsSentence(t token) bool {
 // «разве…», «неужели…», «можно ли…»; «а если…» only without a comma (not «а если честно, …», not «а если болит, делайте
 // мягче»), «почему…» not with its answer in it («почему так, потому что…») and not «сколько бы ни…». A sentence ending
 // with «!», «?» or «…» stays as it is.
+// The words of the question openers: «а что если», «а если».
+const (
+	wordAnd  = "а"
+	wordWhat = "что"
+	wordIf   = "если"
+)
+
 var (
-	questionOpeners  = [][]string{{"а", "что", "если"}, {"что", "если"}, {"а", "вдруг"}}
+	questionOpeners  = [][]string{{wordAnd, wordWhat, wordIf}, {wordWhat, wordIf}, {wordAnd, "вдруг"}}
 	questionWords    = wordSet("почему", "зачем", "сколько", "откуда", "разве", "неужели")
 	questionAnswers  = wordSet("потому", "ни")
 	conditionalAside = wordSet("честно", "серьезно", "коротко", "кратко", "проще", "откровенно")
@@ -356,7 +363,7 @@ func asksQuestion(sentence []token) bool {
 	}
 
 	switch {
-	case len(norms) > 2 && norms[0] == "а" && norms[1] == "если":
+	case len(norms) > 2 && norms[0] == wordAnd && norms[1] == wordIf:
 		return !conditionalAside[norms[2]] && !slices.ContainsFunc(sentence[:len(sentence)-1], func(t token) bool {
 			return t.Break == softBreak
 		})
