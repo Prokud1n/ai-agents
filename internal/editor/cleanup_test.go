@@ -133,7 +133,8 @@ func TestDescribeHonestTakes(t *testing.T) {
 	}
 }
 
-// TestFirstSummaryCleaned: the cleaning or a disputed repeat cut marks the summary, so the header names the takes.
+// TestFirstSummaryCleaned: a failed take cleaned or a disputed repeat cut marks the summary, so the header names the
+// takes; a cleaning of the preparation and the links alone does not (T3.22).
 func TestFirstSummaryCleaned(t *testing.T) {
 	t.Parallel()
 
@@ -142,7 +143,8 @@ func TestFirstSummaryCleaned(t *testing.T) {
 		outcome  editplan.Outcome
 		expected bool
 	}{
-		{name: "cleaned", outcome: editplan.Outcome{Kind: editplan.EditOutcome, Cleaned: 2}, expected: true},
+		{name: "a failed take cleaned", outcome: editplan.Outcome{Kind: editplan.EditOutcome, Cleaned: 2, CleanedTakes: true}, expected: true},
+		{name: "only the preparation and links cleaned", outcome: editplan.Outcome{Kind: editplan.EditOutcome, Cleaned: 2}},
 		{name: "a repeat cut", outcome: editplan.Outcome{Kind: editplan.EditOutcome, Cut: 1}, expected: true},
 		{name: "nothing", outcome: editplan.Outcome{Kind: editplan.EditOutcome}},
 		{name: "no decision", outcome: editplan.Outcome{Kind: editplan.InvalidOutcome}},

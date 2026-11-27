@@ -342,6 +342,85 @@ func TestCutGridAroundBreath(t *testing.T) {
 	assert.GreaterOrEqual(t, (end-1.0)+(1.51-next), breathPause-1e-6, "at least a breath of silence")
 }
 
+// TestCutGridAroundStretchedWords (T3.22): before and after a removed piece Whisper stretched the kept words far into
+// its silence («раз» sounds 0.2–1.0, Whisper says to 2.0; «два» sounds from 4.4, Whisper starts it at 3.8): both
+// middles are in the silence. The joint still leaves a breath, not the 1 s of silence their middles would keep.
+func TestCutGridAroundStretchedWords(t *testing.T) {
+	t.Parallel()
+
+	const (
+		soundEnd   = 1.0
+		soundStart = 4.4
+	)
+
+	levels := soundOf(6, [3]float64{0.2, soundEnd, testSpeech}, [3]float64{2.6, 3.0, testSpeech},
+		[3]float64{soundStart, 5.2, testSpeech})
+	grid := &cutGrid{levels: newSpeechLevels(levels), fps: testFPS}
+	require.NotNil(t, grid.levels)
+
+	settings := testSettings()
+	settings.MaxPause, settings.PadBefore, settings.PadAfter = 0.3, defaultPadBefore, defaultPadAfter
+
+	end, next := grid.around(word("раз", 0.2, 2.0), word("два", 3.8, 4.6), 2.6, 3.0, settings)
+
+	silence := (end - soundEnd) + (soundStart - next)
+	assert.LessOrEqual(t, silence, settings.MaxPause+1e-6, "no long pause at the joint")
+	assert.GreaterOrEqual(t, silence, breathPause-0.5/testFPS-1e-6, "a breath is left")
+	assert.GreaterOrEqual(t, end-soundEnd, tailMin-1e-6, "the tail of «раз»")
+	assert.GreaterOrEqual(t, soundStart-next, leadMin-1e-6, "the lead of «два»")
+	assert.GreaterOrEqual(t, next, 3.0, "never into the removed word")
+
+	// The plan keeps both words in the subtitles: their silent stretched edges are trimmed to the kept pieces.
+	src := words(word("раз", 0.2, 2.0), word("лишнее", 2.6, 3.0), word("два", 3.8, 4.6))
+
+	plan, err := buildPlan(src, 6, settings, &Edit{Remove: []WordRange{{From: 1, To: 1}}}, grid)
+	require.NoError(t, err)
+	require.Len(t, plan.Keep, 2)
+	assert.InDelta(t, end, plan.Keep[0].End, 1e-3)
+	assert.InDelta(t, next, plan.Keep[1].Start, 1e-3)
+
+	assert.Empty(t, RemapTranscript(src, plan.Keep).Words, "both middles are cut")
+
+	reel := RemapTranscript(trimSilentEdges(src, plan.Keep, grid.levels), plan.Keep).Words
+	require.Len(t, reel, 2)
+	assert.Equal(t, "раз", reel[0].Word)
+	assert.Equal(t, "два", reel[1].Word)
+}
+
+// TestTrimSilentEdges: only a silent edge cut off a kept word is trimmed; a word cut through its sound (a trim by
+// time), a word with its middle kept and a word with less than minWordSound kept stay as they are.
+func TestTrimSilentEdges(t *testing.T) {
+	t.Parallel()
+
+	levels := newSpeechLevels(soundOf(6, [3]float64{0.2, 1.0, testSpeech}, [3]float64{2.0, 3.0, testSpeech}))
+	require.NotNil(t, levels)
+
+	keep := []Interval{{Start: 0.1, End: 1.1}, {Start: 2.5, End: 2.55}}
+
+	tests := []struct {
+		name     string
+		input    transcription.Word
+		expected transcription.Word
+	}{
+		{name: "the middle kept", input: word("раз", 0.2, 1.0), expected: word("раз", 0.2, 1.0)},
+		{name: "a silent end trimmed", input: word("раз", 0.2, 2.0), expected: word("раз", 0.2, 1.1)},
+		{name: "cut through its sound", input: word("два", 0.9, 2.5), expected: word("два", 0.9, 2.5)},
+		{name: "too little kept", input: word("три", 2.52, 2.9), expected: word("три", 2.52, 2.9)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := trimSilentEdges(words(tt.input), keep, levels)
+			assert.Equal(t, tt.expected, got.Words[0])
+		})
+	}
+
+	src := words(word("раз", 0.2, 2.0))
+	assert.Same(t, src, trimSilentEdges(src, keep, nil), "nothing without levels")
+}
+
 // TestTailKeepsTheDecay: a phrase that dies away into digital silence (a quiet room, a gate on the phone) keeps its
 // decay: the threshold is measured from the silence, so the fading sound is still speech, and the tail is cut after it.
 func TestTailKeepsTheDecay(t *testing.T) {

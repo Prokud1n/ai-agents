@@ -230,8 +230,9 @@ type Summary struct {
 	// Selected: the editor picked the best phrases of a talking head for the length of a reel, so the description
 	// says the reel was shortened, not only cleaned.
 	Selected bool `json:"selected,omitempty"`
-	// Cleaned: failed takes were cut from the first version — by the editor's cleaning or a disputed repeat cut (the
-	// worker's Result.Retakes does not count them) — so the description names them.
+	// Cleaned: failed takes were cut from the first version — a phrase said again by the editor's cleaning
+	// (editplan.Outcome.CleanedTakes) or a disputed repeat cut (the worker's Result.Retakes does not count them) — so
+	// the description names them; a cleaning of the preparation and the links alone does not.
 	Cleaned bool `json:"cleaned,omitempty"`
 }
 

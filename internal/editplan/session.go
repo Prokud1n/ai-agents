@@ -36,6 +36,8 @@ type Session struct {
 	mu       sync.Mutex
 	attempts int
 	outcome  *Outcome
+	// endingHinted: the hint about the ending of a selection was given (once; the same decision again is accepted).
+	endingHinted bool
 }
 
 func NewSession(req *Request) *Session {
@@ -80,6 +82,14 @@ func (s *Session) submit(raw json.RawMessage) (string, error) {
 
 	outcome, err := s.apply(decoder, &in)
 	if err == nil {
+		if outcome.endingHint != "" && !s.endingHinted && s.attempts < maxAttempts {
+			// A hint, not a failed check: it does not take an attempt.
+			s.endingHinted = true
+			s.attempts--
+
+			return "", agents.NewToolError("Проверь " + outcome.endingHint + "." + endingRetryHint)
+		}
+
 		s.outcome = outcome
 
 		return acceptedAnswer, nil

@@ -18,7 +18,7 @@ const cleanupSpeech = "раз два три начинаем || это посл�
 	"держите спину ровно. | дышите спокойно и не спешите."
 
 // oneFragment starts the cleaning line of one fragment.
-const oneFragment = CleanupLinePrefix + ": 1 фрагмент ("
+const oneFragment = cleanupPrepPrefix + ": 1 фрагмент ("
 
 var (
 	countdownWords = roughcut.WordRange{From: 0, To: 3}
@@ -176,7 +176,7 @@ func TestApplyCleanupLine(t *testing.T) {
 		{
 			name:     "two fragments apart",
 			input:    Input{Remove: []roughcut.WordRange{countdownWords, helloWord}},
-			expected: CleanupLinePrefix + ": 2 фрагмента (",
+			expected: cleanupPrepPrefix + ": 2 фрагмента (",
 		},
 		{
 			name:     "cleanup words count the same",
@@ -287,11 +287,31 @@ func TestApplyCleanupWorkout(t *testing.T) {
 func TestCleanupLine(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "Убрал неудачные дубли и подготовку к съёмке: 3 фрагмента (52,4 с).",
-		cleanupLine(cleaning{fragments: 3, seconds: 52.38}))
-	assert.Equal(t, "Убрал неудачные дубли и подготовку к съёмке: 5 фрагментов (1 с).",
-		cleanupLine(cleaning{fragments: 5, seconds: 1}))
-	assert.Empty(t, cleanupLine(cleaning{}))
+	tests := []struct {
+		name     string
+		input    cleaning
+		expected string
+	}{
+		{
+			name:     "with a failed take",
+			input:    cleaning{fragments: 3, seconds: 52.38, takes: true},
+			expected: "Почистил ролик — неудачные дубли, подготовка к съёмке и лишние вставки: 3 фрагмента (52,4 с).",
+		},
+		{
+			name:     "the preparation and the links only",
+			input:    cleaning{fragments: 5, seconds: 1},
+			expected: "Почистил ролик — подготовка к съёмке и лишние вставки: 5 фрагментов (1 с).",
+		},
+		{name: "nothing", input: cleaning{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.expected, cleanupLine(tt.input))
+		})
+	}
 }
 
 func TestPromptCleanup(t *testing.T) {
@@ -314,4 +334,40 @@ func TestPromptCleanup(t *testing.T) {
 	assert.Contains(t, Prompt(selected), "Сначала выкинь неудачные дубли, повторы подряд и подготовку к съёмке через "+
 		"cleanup_words")
 	assert.NotContains(t, Prompt(selected), "Ещё почисти ролик", "the selection is not the cleaning mode")
+}
+
+// TestCleanedTakes (T3.22): the header of the description names the failed takes only when the cleaning cut a phrase
+// the hints found said again; the preparation for the shooting alone is not a failed take.
+func TestCleanedTakes(t *testing.T) {
+	t.Parallel()
+
+	src := speech("сегодня расскажу про планку. | итак сегодня про планку и спину. | держите спину ровно. | " +
+		"дышите спокойно и не спешите.")
+
+	plan, err := roughcut.BuildPlanEdited(src, src.Duration, testSettings(), &roughcut.Edit{})
+	require.NoError(t, err)
+
+	takes := &Request{TaskID: 7, Version: 1, Transcript: src, Plan: &plan, Cleanup: true}
+	require.Contains(t, Prompt(takes), "Похожие фразы", "the intro said again is hinted")
+
+	tests := []struct {
+		name     string
+		req      *Request
+		cleanup  []roughcut.WordRange
+		expected bool
+	}{
+		{name: "the first intro", req: takes, cleanup: []roughcut.WordRange{{From: 0, To: 3}}, expected: true},
+		{name: "the countdown", req: cleanupSpeechRequest(t), cleanup: []roughcut.WordRange{countdownWords}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			outcome, err := Apply(tt.req, &Input{Decision: EditDecision, Reason: testReason, CleanupWords: tt.cleanup})
+			require.NoError(t, err)
+			assert.Equal(t, 1, outcome.Cleaned)
+			assert.Equal(t, tt.expected, outcome.CleanedTakes)
+		})
+	}
 }

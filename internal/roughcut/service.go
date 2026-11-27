@@ -163,7 +163,15 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 		return nil, err
 	}
 
-	transcript := SubtitleTranscript(data.Transcript, plan.Keep, plan.Edit)
+	// A plan given as it is (CutData.Plan: only the CLI's -plan, never the worker) is rendered without reading the
+	// sound levels: trimSilentEdges does nothing there, and a word whose middle such a plan cut in the silence is left
+	// out of its subtitles.
+	source := data.Transcript
+	if plan.SoundCuts {
+		source = trimSilentEdges(source, plan.Keep, levels)
+	}
+
+	transcript := SubtitleTranscript(source, plan.Keep, plan.Edit)
 	plan.LongPauses = countLongPauses(&plan, levels, transcript.Words)
 
 	s.logPlan(ctx, &plan, data.Plan != nil)
@@ -175,7 +183,7 @@ func (s *Service) Cut(ctx context.Context, data *CutData) (*Result, error) {
 			Source: info.Frame(),
 		},
 		Titles:      RemapTitles(editTitles(plan.Edit), plan.Keep),
-		ScreenNotes: RemapScreenNotes(editScreenNotes(plan.Edit), plan.Keep),
+		ScreenNotes: RemapScreenNotes(notesOnTrimmed(editScreenNotes(plan.Edit), data.Transcript, source), plan.Keep),
 	}
 
 	if err := prepareOutDir(data.OutDir); err != nil {
