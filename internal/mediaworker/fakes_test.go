@@ -202,12 +202,19 @@ type fakeMeter struct {
 	err     error
 	moments []float64
 	toneMap bool
+	zoom    float64
 	// cancel, if set, is called before the answer: the job is stopped while the brightness is measured.
 	cancel context.CancelFunc
 }
 
-func (f *fakeMeter) MeanLuma(_ context.Context, _ string, moments []float64, toneMap bool) (ffmpeg.Luma, error) {
-	f.moments, f.toneMap = moments, toneMap
+func (f *fakeMeter) MeanLuma(
+	_ context.Context,
+	_ string,
+	moments []float64,
+	toneMap bool,
+	zoom float64,
+) (ffmpeg.Luma, error) {
+	f.moments, f.toneMap, f.zoom = moments, toneMap, zoom
 	if f.cancel != nil {
 		f.cancel()
 	}

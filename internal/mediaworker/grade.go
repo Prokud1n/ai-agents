@@ -28,6 +28,10 @@ const (
 	// reelFloor: the shadow of the top never takes the estimated mean of the reel under this (the criterion is 95, one
 	// code value over it for the estimate).
 	reelFloor = 96.0
+	// maxZoomedDrop: the shadow of the zoomed pieces may take them under reelFloor when the plain ones make up for it
+	// in the mean of the reel (T3.30), but their mean is never more than this under the mean of the plain pieces — the
+	// light does not jump at a joint where the framing changes.
+	maxZoomedDrop = 6.0
 	// verticalAspect of the reel's frame, 9:16, and the tolerance of a source "as tall" as it.
 	verticalAspect  = 9.0 / 16
 	aspectTolerance = 0.02
@@ -86,7 +90,32 @@ type sourceLight struct {
 
 // measured: the brightness of the source is known (a mean above 0, no NaN).
 func (l *sourceLight) measured() bool {
-	return l.luma.Mean > 0 && !math.IsNaN(l.luma.Mean+l.luma.Top+l.luma.Bottom)
+	return validLuma(&l.luma)
+}
+
+func validLuma(l *ffmpeg.Luma) bool {
+	return l.Mean > 0 && !math.IsNaN(l.Mean+l.Top+l.Bottom)
+}
+
+// zoomed is the brightness of the zoom window of the source (T3.30) when the zoomed pieces get a shadow of their own:
+// the window was measured, the thirds of the source are the frame's and zoomShare of the reel is zoomed. nil otherwise.
+func (l *sourceLight) zoomed(zoomShare float64) *ffmpeg.Luma {
+	z := l.luma.Zoomed
+	if zoomShare <= 0 || !l.thirds || !l.measured() || z == nil || !validLuma(z) {
+		return nil
+	}
+
+	return z
+}
+
+// reel is the estimate of the whole reel under the grade: with the zoomed pieces (ffmpeg.Grade.Reel) when they count
+// (zoomed), the frame's otherwise.
+func (l *sourceLight) reel(grade *ffmpeg.Grade, zoomShare float64) ffmpeg.Luma {
+	if l.zoomed(zoomShare) == nil {
+		return grade.Graded(l.luma)
+	}
+
+	return grade.Reel(l.luma, zoomShare)
 }
 
 // framedThirds: the thirds of a source of the display aspect (width over height, 0 unknown) are the thirds of the
@@ -106,13 +135,15 @@ const (
 	strengthTopLimit
 )
 
-// forSource is the grade of a source of the light (not measured — the grade as configured). The shadow of the top
-// (topFor) is the configured one, stronger when the top of the source is light over a darker bottom, never so strong
-// that the reel is estimated darker than reelFloor; the exposure curve (ffmpeg.Grade.Exposure: x → x^(1 − EV)) of a
-// bright source is the weakest that, with that shadow, brings the reel to reelLevel, at most the configured EV — the
-// bottom is never darker than under the configured curve. A source at brightSource or darker keeps its exposure; the
-// shadow fades out from brightSource to darkSource, under which only the warmth is left.
-func (g *gradeSettings) forSource(light *sourceLight) *ffmpeg.Grade {
+// forSource is the grade of a source of the light (not measured — the grade as configured) in a reel whose zoomShare
+// of the time is zoomed (ffmpeg.Cut.ZoomShare). The shadow of the top (topFor) is the configured one, stronger when the
+// top of the source is light over a darker bottom, never so strong that the reel is estimated darker than reelFloor;
+// the pieces shown closer get theirs by the zoom window of the source (fitTops, T3.30). The exposure curve
+// (ffmpeg.Grade.Exposure: x → x^(1 − EV)) of a bright source is the weakest that, with those shadows, brings the reel
+// to reelLevel, at most the configured EV — the bottom is never darker than under the configured curve. A source at
+// brightSource or darker keeps its exposure; the shadow fades out from brightSource to darkSource, under which only the
+// warmth is left.
+func (g *gradeSettings) forSource(light *sourceLight, zoomShare float64) *ffmpeg.Grade {
 	if !light.measured() {
 		return &ffmpeg.Grade{Exposure: g.exposure, Warmth: gradeWarmth, Top: g.top}
 	}
@@ -123,8 +154,7 @@ func (g *gradeSettings) forSource(light *sourceLight) *ffmpeg.Grade {
 	// A mean at or over the white has no curve to fit: the exposure stays, as it does in a source not brighter than
 	// brightSource.
 	if luma.Mean <= brightSource || luma.Mean >= lumaBlack+lumaRange {
-		top, _ := g.topFor(grade, light)
-		grade.Top = roundHundredths(top)
+		g.fitTops(grade, light, zoomShare)
 
 		return grade
 	}
@@ -132,10 +162,9 @@ func (g *gradeSettings) forSource(light *sourceLight) *ffmpeg.Grade {
 	steps := int(math.Round(-g.exposure / exposureStep))
 	for i := range steps + 1 {
 		grade.Exposure = roundHundredths(float64(-i) * exposureStep)
-		top, _ := g.topFor(grade, light)
-		grade.Top = roundHundredths(top)
+		g.fitTops(grade, light, zoomShare)
 
-		if grade.Graded(luma).Mean <= reelLevel {
+		if light.reel(grade, zoomShare).Mean <= reelLevel {
 			break
 		}
 	}
@@ -143,20 +172,56 @@ func (g *gradeSettings) forSource(light *sourceLight) *ffmpeg.Grade {
 	return grade
 }
 
-// topFor is the shadow of the top under the exposure of the grade and why it stops short of topGap. It is the
+// zoomedFloor is the mean the shadow of the zoomed pieces may take them down to: what keeps the estimated mean of the
+// reel at reelFloor with the plain pieces under the shadow of the grade's Top, and not more than maxZoomedDrop under
+// the plain pieces; jump: the latter holds it.
+func zoomedFloor(grade *ffmpeg.Grade, light *sourceLight, zoomShare float64) (floor float64, jump bool) {
+	plain := grade.Graded(light.luma).Mean
+	reel, joint := (reelFloor-(1-zoomShare)*plain)/zoomShare, plain-maxZoomedDrop
+
+	return math.Max(reel, joint), joint > reel
+}
+
+// fitTops sets the shadows of the top under the exposure of the grade: of the frame (topFor of the source) and, when
+// the zoomed pieces count (sourceLight.zoomed) and need another one, of the zoomed pieces (topFor of the zoom window:
+// at 1.3× it shows less of the light wall and more of the middle in the upper third, live checks 4 and 5 — the
+// thirds of the zoomed pieces came out equal under the shadow of the frame).
+func (g *gradeSettings) fitTops(grade *ffmpeg.Grade, light *sourceLight, zoomShare float64) {
+	top, _ := g.topFor(grade, light, &light.luma, reelFloor)
+	grade.Top, grade.ZoomTop = roundHundredths(top), nil
+
+	zoomed := light.zoomed(zoomShare)
+	if zoomed == nil {
+		return
+	}
+
+	floor, _ := zoomedFloor(grade, light, zoomShare)
+	zoomTop, _ := g.topFor(grade, light, zoomed, floor)
+	if zoomTop = roundHundredths(zoomTop); zoomTop != grade.Top {
+		grade.ZoomTop = new(zoomTop)
+	}
+}
+
+// topFor is the shadow of the top of a picture of the luma (the frame or the zoom window of the source of the light)
+// under the exposure of the grade and why it stops short of topGap. It is the
 // configured one (none if it is 0), stronger when without it the upper third of the reel would not be topGap darker
 // than its lower third, at most maxFittedTop, faded by the brightness of the source (shadowShare); and never so strong
-// that the estimated mean of the reel falls under reelFloor (the configured shadow neither). Both the upper third and
+// that the estimated mean of the picture falls under floor (the configured shadow neither). Both the upper third and
 // the mean of the estimate darken in proportion to the shadow, from no shadow to the full one. A source whose thirds
 // are not the frame's gets the configured shadow.
-func (g *gradeSettings) topFor(grade *ffmpeg.Grade, light *sourceLight) (top float64, limit int) {
+func (g *gradeSettings) topFor(
+	grade *ffmpeg.Grade,
+	light *sourceLight,
+	luma *ffmpeg.Luma,
+	floor float64,
+) (top float64, limit int) {
 	share := shadowShare(light.luma.Mean)
 	if g.top == 0 || !light.thirds {
 		return share * g.top, noTopLimit
 	}
 
-	open := (&ffmpeg.Grade{Exposure: grade.Exposure}).Graded(light.luma)
-	dark := (&ffmpeg.Grade{Exposure: grade.Exposure, Top: 1}).Graded(light.luma)
+	open := (&ffmpeg.Grade{Exposure: grade.Exposure}).Graded(*luma)
+	dark := (&ffmpeg.Grade{Exposure: grade.Exposure, Top: 1}).Graded(*luma)
 
 	need, limit := g.top, noTopLimit
 	if open.Top > dark.Top {
@@ -170,8 +235,8 @@ func (g *gradeSettings) topFor(grade *ffmpeg.Grade, light *sourceLight) (top flo
 	need *= share
 
 	if open.Mean > dark.Mean {
-		if floor := math.Max(0, (open.Mean-reelFloor)/(open.Mean-dark.Mean)); need > floor {
-			return floor, meanTopLimit
+		if held := math.Max(0, (open.Mean-floor)/(open.Mean-dark.Mean)); need > held {
+			return held, meanTopLimit
 		}
 	}
 
@@ -191,9 +256,10 @@ func roundHundredths(v float64) float64 {
 }
 
 // note is the line of the decisions log about the colour of the draft: what was measured in the source (the mean, the
-// upper and the lower third), the grade, what it is estimated to give the reel and, when the top is not topGap darker
-// than the bottom, what held the shadow back.
-func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, light *sourceLight) string {
+// upper and the lower third), the grade, what it is estimated to give the reel (with zoomShare of it zoomed: by the
+// pieces with and without the zoom, T3.30) and, when the top is not topGap darker than the bottom, what held the shadow
+// back.
+func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, light *sourceLight, zoomShare float64) string {
 	switch {
 	case workout:
 		return "Цвет кадра: как в исходнике (тренировка)"
@@ -209,10 +275,10 @@ func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, light *sourceLig
 
 	source := "яркость исходника не измерена — пресет как задан"
 	if light.measured() {
-		graded := grade.Graded(luma)
+		graded := light.reel(grade, zoomShare)
 		source = fmt.Sprintf("средняя яркость исходника %.0f, верхняя/нижняя треть %.0f/%.0f; в рилсе ожидается "+
 			"средняя %.0f, верх/низ %.0f/%.0f", luma.Mean, luma.Top, luma.Bottom, graded.Mean, graded.Top, graded.Bottom) +
-			g.topNote(grade, light, graded)
+			zoomNote(grade, light, zoomShare) + g.topNote(grade, light, graded, zoomShare)
 	}
 
 	return fmt.Sprintf("Цвет кадра: как у тренера — экспозиция %.2f EV, тепло +%d, верх кадра темнее на %.0f%% "+
@@ -220,9 +286,26 @@ func (g *gradeSettings) note(grade *ffmpeg.Grade, workout bool, light *sourceLig
 		g.top*percent)
 }
 
+// zoomNote is the part of the line of the colour about the zoomed pieces: their share of the reel, the estimates of
+// the pieces without and with the zoom, the zoom window of the source and the shadow of the zoomed pieces ("" — the
+// zoomed pieces do not count, sourceLight.zoomed).
+func zoomNote(grade *ffmpeg.Grade, light *sourceLight, zoomShare float64) string {
+	window := light.zoomed(zoomShare)
+	if window == nil {
+		return ""
+	}
+
+	zoomed := grade.Zoomed()
+	plain, closer := grade.Graded(light.luma), zoomed.Graded(*window)
+
+	return fmt.Sprintf("; зум на %.0f%% рилса: без зума верх/низ %.0f/%.0f, с зумом %.0f/%.0f (окно зума в исходнике "+
+		"%.0f/%.0f), тень на кусках с зумом %.0f%%", zoomShare*percent, plain.Top, plain.Bottom, closer.Top, closer.Bottom,
+		window.Top, window.Bottom, zoomed.Top*percent)
+}
+
 // topNote says why the shadow of the top did not take the top topGap under the bottom ("" — it did, or it was not
-// fitted).
-func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded ffmpeg.Luma) string {
+// fitted): of the frame first, then of the zoomed pieces. graded is the estimate of the reel.
+func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded ffmpeg.Luma, zoomShare float64) string {
 	switch {
 	case !light.thirds && light.aspect <= 0:
 		return "; размер кадра неизвестен — тень как задана"
@@ -230,15 +313,27 @@ func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded 
 		return "; кадр с полями сверху и снизу — тень как задана"
 	}
 
-	_, limit := g.topFor(grade, light)
+	_, limit := g.topFor(grade, light, &light.luma, reelFloor)
+	top, where, jump := grade.Top, "", false
+
+	if window := light.zoomed(zoomShare); limit == noTopLimit && window != nil {
+		var floor float64
+
+		floor, jump = zoomedFloor(grade, light, zoomShare)
+		_, limit = g.topFor(grade, light, window, floor)
+		top, where = grade.Zoomed().Top, " на кусках с зумом"
+	}
 
 	var why string
 
-	switch limit {
-	case meanTopLimit:
-		why = "тень на пределе по средней"
-	case strengthTopLimit:
-		why = fmt.Sprintf("тень на пределе (%.0f%%)", grade.Top*percent)
+	switch {
+	case limit == meanTopLimit && jump:
+		why = fmt.Sprintf("тень на кусках с зумом на пределе: они не темнее кусков без зума больше чем на %.0f "+
+			"(свет на стыке не скачет)", maxZoomedDrop)
+	case limit == meanTopLimit:
+		why = "тень" + where + " на пределе по средней"
+	case limit == strengthTopLimit:
+		why = fmt.Sprintf("тень%s на пределе (%.0f%%)", where, top*percent)
 	default:
 		return ""
 	}
@@ -257,7 +352,7 @@ func (g *gradeSettings) topNote(grade *ffmpeg.Grade, light *sourceLight, graded 
 
 // lumaMeter measures the brightness of the source, its mean and its thirds (ffmpeg.Runner.MeanLuma).
 type lumaMeter interface {
-	MeanLuma(ctx context.Context, path string, moments []float64, toneMap bool) (ffmpeg.Luma, error)
+	MeanLuma(ctx context.Context, path string, moments []float64, toneMap bool, zoom float64) (ffmpeg.Luma, error)
 }
 
 // sourceLuma is the brightness of the picture of the source (the mean and the upper and the lower third) and whether
@@ -273,7 +368,7 @@ func (p *Pipeline) sourceLuma(ctx context.Context, w *jobWork) (*sourceLight, er
 
 	started := p.now()
 
-	luma, err := p.meter.MeanLuma(ctx, w.source, sampleMoments(w.result.SourceDuration), w.hdr)
+	luma, err := p.meter.MeanLuma(ctx, w.source, sampleMoments(w.result.SourceDuration), w.hdr, p.sound.zoomFactor())
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -286,7 +381,7 @@ func (p *Pipeline) sourceLuma(ctx context.Context, w *jobWork) (*sourceLight, er
 	}
 
 	p.log.InfoContext(ctx, "mediaworker: brightness of the source", "job_id", w.job.ID, "mean_luma", luma.Mean,
-		"top_luma", luma.Top, "bottom_luma", luma.Bottom, "thirds", light.thirds,
+		"top_luma", luma.Top, "bottom_luma", luma.Bottom, "zoomed", luma.Zoomed, "thirds", light.thirds,
 		"seconds", roundTime(p.now().Sub(started).Seconds()))
 
 	light.luma = luma
