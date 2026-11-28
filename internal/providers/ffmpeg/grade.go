@@ -28,14 +28,14 @@ const (
 
 	gradedLabel   = "graded"
 	gradeTopLabel = "gtop"
+	// zoomLabelSuffix of the labels of the shadow of the zoomed pieces (Grade.ZoomTop).
+	zoomLabelSuffix = "z"
 
 	// The luma of a source is measured on small frames: their mean is the mean of the picture.
 	lumaWidth  = 64
 	lumaHeight = 112
 	// lumaFrameBytes of a yuv420p frame of lumaWidth×lumaHeight (the luma plane, then the two chroma planes).
 	lumaFrameBytes = lumaWidth * lumaHeight * 3 / 2
-	// lumaThirdRows: the upper and the lower third of the small frame (its middle gets the row left over).
-	lumaThirdRows = lumaHeight / 3
 	// maxLuma of an 8-bit code value.
 	maxLuma = 255
 	// frameThird of the height of the frame.
@@ -51,7 +51,7 @@ var (
 )
 
 var (
-	ErrInvalidGrade = errors.New("grade must have the exposure within -1.5..0 EV, the warmth 0..12 and the top 0..0.8")
+	ErrInvalidGrade = errors.New("grade must have the exposure within -1.5..0 EV, the warmth 0..12 and the tops 0..0.8")
 	errNoLuma       = errors.New("no frame decoded at the sampled moments")
 )
 
@@ -70,23 +70,52 @@ type Grade struct {
 	// Top is the share of the light the top edge of the frame loses (0.3: 30 % darker), fading to nothing by the
 	// middle of the frame; 0 — none.
 	Top float64
+	// ZoomTop is Top of the pieces shown closer (Cut.Zoom, T3.30): the zoom window shows other rows of the picture in
+	// the thirds of the frame (at 1.3× the upper third shows the rows 0.09–0.35 of the frame, the lower 0.61–0.86), so
+	// they need a shadow of their own for the same top. nil — Top.
+	ZoomTop *float64
+}
+
+// zoomTop is the shadow of the top of the zoomed pieces.
+func (g *Grade) zoomTop() float64 {
+	if g.ZoomTop == nil {
+		return g.Top
+	}
+
+	return *g.ZoomTop
+}
+
+// Zoomed is the grade of the pieces shown closer: the shadow of their top is ZoomTop.
+func (g *Grade) Zoomed() *Grade {
+	z := *g
+	z.Top, z.ZoomTop = g.zoomTop(), nil
+
+	return &z
 }
 
 // validate checks the grade before it reaches the graph.
 func (g *Grade) validate() error {
+	zoomTop := g.zoomTop()
 	if math.IsNaN(g.Exposure) || g.Exposure > 0 || g.Exposure < minExposureEV || g.Warmth < 0 ||
-		g.Warmth > maxGradeWarmth || math.IsNaN(g.Top) || g.Top < 0 || g.Top > maxTopShadow {
-		return fmt.Errorf("exposure %.2f EV, warmth %d, top %.2f: %w", g.Exposure, g.Warmth, g.Top, ErrInvalidGrade)
+		g.Warmth > maxGradeWarmth || !validTop(g.Top) || !validTop(zoomTop) {
+		return fmt.Errorf("exposure %.2f EV, warmth %d, top %.2f, zoomed top %.2f: %w", g.Exposure, g.Warmth, g.Top,
+			zoomTop, ErrInvalidGrade)
 	}
 
 	return nil
 }
 
+func validTop(top float64) bool {
+	return !math.IsNaN(top) && top >= 0 && top <= maxTopShadow
+}
+
 // gradeGraph continues the chain of the output frame with the grade: one lookup table for the exposure curve and the
 // warmth (lutyuv: the expression is computed once per code value, a table per plane — the cheapest filter of the graph), then the shadow of the top as one generated frame laid
-// over it (the shade's gradient, overlay repeats its only frame): no per-pixel expression runs on the video. The chain
-// goes on after it.
-func gradeGraph(g *Grade, width, height int) (string, error) {
+// over it (the shade's gradient, overlay repeats its only frame): no per-pixel expression runs on the video. zoomed is
+// the expression of the zoomed spans of the reel (zoomEnable, "" — none): with a ZoomTop of its own there are two
+// shadows, each laid over its own frames only (overlay with enable: a frame of the other passes through as it is),
+// so every frame still gets one overlay. The chain goes on after it.
+func gradeGraph(g *Grade, width, height int, zoomed string) (string, error) {
 	if err := g.validate(); err != nil {
 		return "", err
 	}
@@ -97,9 +126,39 @@ func gradeGraph(g *Grade, width, height int) (string, error) {
 		strconv.Itoa(lumaBlack+lumaRange) + ")-" + black + ")/" + luma + "," + formatPrecise(1-g.Exposure) + ")'" +
 		":u='val-" + warmth + "':v='val+" + warmth + "'"
 
-	alpha := int(math.Round(g.Top * maxAlpha))
+	shadows := []topShadow{{top: g.Top}}
+	if zoomed != "" && g.zoomTop() != g.Top {
+		shadows = []topShadow{
+			{top: g.Top, enable: "not(" + zoomed + ")"},
+			{top: g.zoomTop(), enable: zoomed, suffix: zoomLabelSuffix},
+		}
+	}
+
+	for _, shadow := range shadows {
+		overlay, err := shadow.graph(width, height)
+		if err != nil {
+			return "", err
+		}
+
+		graph += overlay
+	}
+
+	return graph, nil
+}
+
+// topShadow is one overlay of the shadow of the top: its strength, the frames it is laid over (enable, "" — all) and
+// the suffix of its labels.
+type topShadow struct {
+	top    float64
+	enable string
+	suffix string
+}
+
+// graph is the overlay continuing the chain; empty without a shadow.
+func (t *topShadow) graph(width, height int) (string, error) {
+	alpha := int(math.Round(t.top * maxAlpha))
 	if alpha == 0 {
-		return graph, nil
+		return "", nil
 	}
 
 	shade := &Shade{
@@ -113,8 +172,13 @@ func gradeGraph(g *Grade, width, height int) (string, error) {
 		return "", err
 	}
 
-	return graph + "[" + gradedLabel + "];" + source + "[" + gradeTopLabel + "];" +
-		"[" + gradedLabel + "][" + gradeTopLabel + "]overlay=x=0:y=" + y, nil
+	graded, top := gradedLabel+t.suffix, gradeTopLabel+t.suffix
+	overlay := "[" + graded + "];" + source + "[" + top + "];" + "[" + graded + "][" + top + "]overlay=x=0:y=" + y
+	if t.enable != "" {
+		overlay += ":enable='" + t.enable + "'"
+	}
+
+	return overlay, nil
 }
 
 // Luma is the brightness of a picture, Y' of the limited range (8 bits: 16 black, 235 white): its mean and the means of
@@ -123,6 +187,8 @@ type Luma struct {
 	Mean   float64
 	Top    float64
 	Bottom float64
+	// Zoomed is the luma of the zoom window (the picture of a zoomed piece: MeanLuma with a zoom); nil — not measured.
+	Zoomed *Luma
 }
 
 // Middle is the mean of the middle third: the thirds are equal, the mean is the mean of the three.
@@ -134,14 +200,29 @@ func (l Luma) Middle() float64 {
 // each third, then the shadow of the top by its share in the third (overlay of black: Y' → 16 + (Y' − 16)·(1 − α)).
 // The curve is nearly straight over the light of a third, so the estimate is within a couple of code values of the
 // render: about ±1 on a grey, up to ±3 on untagged synthetic sources (TestRunnerGradeThirds). The warmth does not
-// change the luma. It is the frame without the zoom: the 1.3× zoom of some pieces (Zoom) moves the thirds of the
-// picture under the fixed shadow a little — the margin of the worker's gap over the criterion covers it.
+// change the luma. It is the frame without the zoom (Reel: the whole reel with its zoomed pieces).
 func (g *Grade) Graded(l Luma) Luma {
 	top := shaded(g.curve(l.Top), g.Top*topShadowTop)
 	middle := shaded(g.curve(l.Middle()), g.Top*topShadowMiddle)
 	bottom := shaded(g.curve(l.Bottom), g.Top*topShadowBottom)
 
 	return Luma{Mean: (top + middle + bottom) / 3, Top: top, Bottom: bottom}
+}
+
+// Reel estimates the luma of the whole reel (T3.30): Graded of the frame on the plain pieces and of the zoom window
+// (l.Zoomed, under ZoomTop — the shadow is laid after the zoom, at the top of the output frame) on the zoomed ones,
+// weighted by their share of the time of the reel (Cut.ZoomShare). The frame's estimate without a measured window.
+func (g *Grade) Reel(l Luma, zoomShare float64) Luma {
+	plain := g.Graded(l)
+	if l.Zoomed == nil || zoomShare <= 0 {
+		return plain
+	}
+
+	share := math.Min(1, zoomShare)
+	zoomed := g.Zoomed().Graded(*l.Zoomed)
+	mix := func(a, b float64) float64 { return a*(1-share) + b*share }
+
+	return Luma{Mean: mix(plain.Mean, zoomed.Mean), Top: mix(plain.Top, zoomed.Top), Bottom: mix(plain.Bottom, zoomed.Bottom)}
 }
 
 // curve is the exposure curve of the lookup table of gradeGraph on one code value.
@@ -185,22 +266,24 @@ func evenFloor(v float64) int {
 // MeanLuma is the luma of the picture of the source at the moments, seconds (Luma: the mean and the means of the
 // upper and the lower third, measured on the same frames in the same pass): one key frame at or before each moment is
 // decoded (no other frame is), brought to SDR bt709 as the render brings it (toneMap: an HLG/PQ source) and averaged
-// on a small copy. A 4K frame costs a fraction of a second. A moment that gives no frame (past the end) or fails to
-// decode is skipped; it fails only when no moment gave a frame, or with the context. Moments within one GOP measure
-// the same key frame (a file with a single key frame, such as a reel, measures its first frame at every moment).
-func (r *Runner) MeanLuma(ctx context.Context, path string, moments []float64, toneMap bool) (Luma, error) {
+// on a small copy. With a zoom factor over 1 (Zoom.Factor) the window the zoom shows (zoomWindow) is measured on the
+// same small copy too (Luma.Zoomed, T3.30). A 4K frame costs a fraction of a second. A moment that gives no frame (past
+// the end) or fails to decode is skipped; it fails only when no moment gave a frame, or with the context. Moments
+// within one GOP measure the same key frame (a file with a single key frame, such as a reel, measures its first frame
+// at every moment).
+func (r *Runner) MeanLuma(ctx context.Context, path string, moments []float64, toneMap bool, zoom float64) (Luma, error) {
 	in, err := localFile(path)
 	if err != nil {
 		return Luma{}, err
 	}
 
 	var (
-		sum    Luma
-		frames int
-		failed error
+		sum, zoomed Luma
+		frames      int
+		failed      error
 	)
 
-	third := lumaThirdRows * lumaWidth
+	window := lumaZoomRect(zoom)
 
 	for _, at := range moments {
 		plane, err := r.lumaPlane(ctx, in, at, toneMap)
@@ -218,9 +301,11 @@ func (r *Runner) MeanLuma(ctx context.Context, path string, moments []float64, t
 			continue
 		}
 
-		sum.Mean += meanByte(plane)
-		sum.Top += meanByte(plane[:third])
-		sum.Bottom += meanByte(plane[len(plane)-third:])
+		sum = sum.plus(planeLuma(plane, lumaRect{bottom: lumaHeight, right: lumaWidth}))
+		if window != nil {
+			zoomed = zoomed.plus(planeLuma(plane, *window))
+		}
+
 		frames++
 	}
 
@@ -229,8 +314,74 @@ func (r *Runner) MeanLuma(ctx context.Context, path string, moments []float64, t
 	}
 
 	n := float64(frames)
+	out := sum.scaled(1 / n)
 
-	return Luma{Mean: sum.Mean / n, Top: sum.Top / n, Bottom: sum.Bottom / n}, nil
+	if window != nil {
+		out.Zoomed = new(zoomed.scaled(1 / n))
+	}
+
+	return out, nil
+}
+
+// plus is the sum of the means and thirds of two pictures (Zoomed is dropped).
+func (l Luma) plus(o Luma) Luma {
+	return Luma{Mean: l.Mean + o.Mean, Top: l.Top + o.Top, Bottom: l.Bottom + o.Bottom}
+}
+
+// scaled is the means and thirds times k (Zoomed is dropped).
+func (l Luma) scaled(k float64) Luma {
+	return Luma{Mean: l.Mean * k, Top: l.Top * k, Bottom: l.Bottom * k}
+}
+
+// lumaRect is a window of the small frame of MeanLuma: the rows [top, bottom) and the columns [left, right).
+type lumaRect struct {
+	top, bottom, left, right int
+}
+
+// lumaZoomRect is the window of the zoom of the factor on the small frame (zoomWindow: the middle across, its fixed
+// point zoomAnchorY down); nil without a zoom.
+func lumaZoomRect(factor float64) *lumaRect {
+	if math.IsNaN(factor) || factor <= 1 {
+		return nil
+	}
+
+	h, w := float64(lumaHeight)/factor, float64(lumaWidth)/factor
+	y, x := (float64(lumaHeight)-h)*zoomAnchorY, (float64(lumaWidth)-w)/2
+
+	return &lumaRect{
+		top: int(math.Round(y)), bottom: int(math.Round(y + h)), left: int(math.Round(x)), right: int(math.Round(x + w)),
+	}
+}
+
+// planeLuma is the luma of the window of the luma plane: its mean and the means of its upper and lower thirds (the
+// whole small frame: 37 rows each).
+func planeLuma(plane []byte, r lumaRect) Luma {
+	third := int(math.Round(float64(r.bottom-r.top) * frameThird))
+
+	return Luma{
+		Mean:   rectMean(plane, r),
+		Top:    rectMean(plane, lumaRect{top: r.top, bottom: r.top + third, left: r.left, right: r.right}),
+		Bottom: rectMean(plane, lumaRect{top: r.bottom - third, bottom: r.bottom, left: r.left, right: r.right}),
+	}
+}
+
+// rectMean is the mean of the window of the luma plane (lumaWidth wide).
+func rectMean(plane []byte, r lumaRect) float64 {
+	sum, count := 0, 0
+
+	for row := r.top; row < r.bottom; row++ {
+		for _, v := range plane[row*lumaWidth+r.left : row*lumaWidth+r.right] {
+			sum += int(v)
+		}
+
+		count += r.right - r.left
+	}
+
+	if count == 0 {
+		return 0
+	}
+
+	return float64(sum) / float64(count)
 }
 
 // lumaPlane is the luma plane (lumaWidth×lumaHeight) of the key frame at or before at; nil if none was decoded.
@@ -257,14 +408,4 @@ func (r *Runner) lumaPlane(ctx context.Context, in string, at float64, toneMap b
 	}
 
 	return []byte(out[:lumaWidth*lumaHeight]), nil
-}
-
-func meanByte(b []byte) float64 {
-	sum := 0
-
-	for _, v := range b {
-		sum += int(v)
-	}
-
-	return float64(sum) / float64(len(b))
 }

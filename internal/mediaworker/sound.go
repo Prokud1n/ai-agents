@@ -114,15 +114,24 @@ func (s *soundSettings) cut(plan *roughcut.Result, measured *ffmpeg.Loudness, li
 	cut := &ffmpeg.Cut{Segments: plan.Segments(), Options: opts}
 	if s.zoom > 0 && talk {
 		cut.Zoom = &ffmpeg.Zoom{
-			Factor: 1 + s.zoom/percent, MinSegment: minZoomSegment, Every: zoomEvery, Must: sectionStarts(plan.ScreenNotes),
+			Factor: s.zoomFactor(), MinSegment: minZoomSegment, Every: zoomEvery, Must: sectionStarts(plan.ScreenNotes),
 		}
 	}
 
 	if s.grade.on && talk {
-		cut.Grade = s.grade.forSource(light)
+		cut.Grade = s.grade.forSource(light, cut.ZoomShare())
 	}
 
 	return cut
+}
+
+// zoomFactor is the factor of the jump-cut zoom (ffmpeg.Zoom.Factor); 0 — off.
+func (s *soundSettings) zoomFactor() float64 {
+	if s.zoom <= 0 {
+		return 0
+	}
+
+	return 1 + s.zoom/percent
 }
 
 // sectionStarts are the moments of the reel where its sections start: the framing changes there, on the question.
@@ -152,7 +161,7 @@ func (s *soundSettings) notes(
 
 	return []string{
 		s.loudnessNote(cut, measured, report), s.denoiseNote(cut, workout), s.zoomNote(cut, workout),
-		s.grade.note(cut.Grade, workout, light),
+		s.grade.note(cut.Grade, workout, light, cut.ZoomShare()),
 	}
 }
 

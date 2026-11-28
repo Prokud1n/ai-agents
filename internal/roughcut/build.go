@@ -398,6 +398,10 @@ func (b *intervalBuilder) addWord(i int, reasons []CutReason) {
 
 		start := min(max(w.Start-b.settings.PadBefore, from, 0), w.Start)
 		if b.grid != nil {
+			if len(b.pending) > 0 {
+				from = b.grid.levels.removedBorder(from, w.Start, forward)
+			}
+
 			start = min(b.grid.lead(w.Start, from), w.Start)
 		}
 
@@ -471,6 +475,10 @@ func (b *intervalBuilder) finish(duration float64, reasons []CutReason) {
 	}
 
 	if b.grid != nil {
+		if len(b.pending) > 0 {
+			to = max(b.grid.levels.removedBorder(to, prev.End, backward), prev.End)
+		}
+
 		end = b.grid.tail(prev.End, to)
 	}
 

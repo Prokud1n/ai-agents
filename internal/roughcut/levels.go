@@ -30,6 +30,8 @@ const (
 	maxQuietEnding = 0.15
 	// speechHole: a quieter stretch this short inside the sound (the closure of a stop: «т», «к», «п») does not end it.
 	speechHole = 0.12
+	// minBorderQuiet: windows of a quiet stretch between removed and kept words (removedBorder); one is a dip.
+	minBorderQuiet = 2
 	// breathPause is the silence a pause is compressed to (the tail of one phrase and the lead of the next), so the
 	// phrases do not run together: 0.15 s, ± half a frame of the grid the cut points stand on (0.13–0.17 s at 30 fps).
 	breathPause = 0.15
@@ -352,13 +354,21 @@ func (g *cutGrid) pause(prev, w transcription.Word, maxPause float64) (end, next
 // a hole of 1.3 s at the joint of a cut retake). When more than MaxPause of silence would be heard, the edges are
 // looked for down to minWordSound of each word and the cut may pass its middle in the silence (trimSilentEdges keeps
 // the word in the subtitles).
+//
+// The removed words end where their sound ends (removedBorder), not where Whisper says (T3.30): a removed word whose
+// sound starts before its time leaves no piece of itself in the tail, one whose sound goes on after its end none at
+// the start of the next piece.
 func (g *cutGrid) around(prev, w transcription.Word, removedStart, removedEnd float64, s Settings) (end, next float64) {
-	j := jointAround{prev: prev, w: w, removedStart: removedStart, removedEnd: removedEnd}
+	j := jointAround{
+		prev: prev, w: w,
+		removedStart: g.levels.removedBorder(removedStart, prev.End, backward),
+		removedEnd:   g.levels.removedBorder(removedEnd, w.Start, forward),
+	}
 
 	end, next = g.aroundBy(&j, s, innerEnd(prev), innerStart(w), wordMiddle(prev), wordMiddle(w))
 
-	soundEnd := g.levels.cutSpeechEnd(prev.End, prev.Start+minWordSound, min(prev.End+s.PadAfter, removedStart))
-	soundStart := g.levels.cutSpeechStart(w.Start, w.End-minWordSound, max(w.Start-s.PadBefore, removedEnd))
+	soundEnd := g.levels.cutSpeechEnd(prev.End, prev.Start+minWordSound, min(prev.End+s.PadAfter, j.removedStart))
+	soundStart := g.levels.cutSpeechStart(w.Start, w.End-minWordSound, max(w.Start-s.PadBefore, j.removedEnd))
 
 	if (end-soundEnd)+(soundStart-next) <= s.MaxPause+gridEpsilon {
 		return end, next
@@ -399,6 +409,62 @@ func (g *cutGrid) aroundBy(
 	}
 
 	return end, next
+}
+
+// removedBorder is where the sound of removed words really stops on the side of a kept word (T3.30). edge is Whisper's
+// edge of the removed words (the start of the first, the end of the last), limit Whisper's edge of the kept word next
+// to them, d the direction from the removed words to it (backward: the kept word is before them). Whisper is off by
+// tens of milliseconds: a removed word may sound up to 0.1 s before its start (live checks 4 and 5: a cut piece of the
+// next phrase at the end of a piece) or after its end (20 ms of its sound at the start of the next piece), and the
+// sound of the joint is then taken for the kept word's. The border is the edge when the window past it is quiet (at or
+// under the threshold of speech); otherwise the removed side of the first quiet stretch longer than speechHole (the
+// closure of a stop inside the removed word does not end it), failing that of the quiet stretch of at least
+// minBorderQuiet nearest to the removed words (a farther one may be the closure of a stop in the kept word's ending),
+// failing that — the sound unbroken to the kept word — the middle of its quietest window. It is never past limit: the
+// kept word keeps all Whisper gives it.
+func (s *speechLevels) removedBorder(edge, limit, d float64) float64 {
+	half := d * s.window / 2
+	if d*(limit-edge) <= 0 || s.at(edge+half) <= s.threshold {
+		return edge
+	}
+
+	var (
+		runStart, run        float64
+		nearest              = math.NaN()
+		quietest, quietestAt = math.Inf(1), edge
+	)
+
+	for t := edge; d*(limit-t) > gridEpsilon; t += d * s.window {
+		level := s.at(t + half)
+		if level > s.threshold {
+			if level < quietest {
+				quietest, quietestAt = level, d*min(d*(t+half), d*limit)
+			}
+
+			run = 0
+
+			continue
+		}
+
+		if run == 0 {
+			runStart = t
+		}
+
+		run += s.window
+		if run > speechHole+gridEpsilon {
+			return runStart
+		}
+
+		if math.IsNaN(nearest) && run > minBorderQuiet*s.window-gridEpsilon {
+			nearest = runStart
+		}
+	}
+
+	if !math.IsNaN(nearest) {
+		return nearest
+	}
+
+	return quietestAt
 }
 
 // lead is the start of the reel before a word starting at start, not before from (a removed word or the source start).
