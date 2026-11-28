@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Selection reliability (T3.29): a screen note whose start the editor cut is moved onto the first kept word after it
+  when the media worker would show it there anyway; otherwise the check tells the model which note («раздел «ошибка
+  2»»), on which word and time it stands, which words around it are cut (and by which field), the nearest kept word and
+  what to do (after the other checks, so the model sees them first). When the last attempt fails only by such notes,
+  the selection is accepted: a section is put on the first kept word after it (the question of its point), the other
+  notes are left out («Плашку «…» не поставил: место, где она начиналась, не вошло в ролик. Если она нужна — напишите
+  в правке, к какой фразе её поставить.», a line in `decisions.log`) instead of the automatic cut of the whole source.
+  The hints (the cut end of a sentence, the ending) are given on the last attempt too (they never take one; the calls
+  of submit_edit are bounded); when the correction after a hint fails the last attempt, the decision the hint was
+  given on stands. New hints, once each: a selection or a revision for the length that keeps
+  the announced number of points («три правила») but cuts some of the numbered points («первое / второе / и
+  третье»), and a revision that leaves a word or two of a sentence it cut. The corrected subtitle words are one line
+  right after the hook and the screen notes («Исправил в субтитрах: «…» → «…», …»), never folded into «И ещё
+  изменений». The editor's prompt: keep all the numbered points of an announced number or cut the announcement too,
+  cut a sentence to its last word, put a section read twice on the last reading.
 - Light with the zoom and clean joints (T3.30). The brightness of the source is measured in the window of the 1.3×
   zoom too (the same key frames, the same pass), and the zoomed pieces get a shadow of the top of their own: under the
   shadow of the frame their thirds came out equal (88 / 88, almost half of the reel zoomed: −6 over the reel against

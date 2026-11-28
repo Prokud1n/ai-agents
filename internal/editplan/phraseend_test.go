@@ -161,11 +161,19 @@ func TestSubmitTailHint(t *testing.T) {
 		toolErrors int
 		detail     bool
 	}{
-		{name: "the same decision after the hint", inputs: []string{tailCut, tailCut}, toolErrors: 1, detail: true},
+		{name: sameAfterHint, inputs: []string{tailCut, tailCut}, toolErrors: 1, detail: true},
 		{name: "the end brought back after the hint", inputs: []string{tailCut, linkCut}, toolErrors: 1},
 		{name: "the link only", inputs: []string{linkCut}},
 		{name: "the hint takes no attempt", inputs: []string{tailCut, broken, linkCut}, toolErrors: 2},
-		{name: "no hint on the last attempt", inputs: []string{broken, tailCut}, toolErrors: 1, detail: true},
+		{
+			name: "a hint on the last attempt, the same decision accepted", inputs: []string{broken, tailCut, tailCut},
+			toolErrors: 2, detail: true,
+		},
+		{name: "a hint on the last attempt, the end brought back", inputs: []string{broken, tailCut, linkCut}, toolErrors: 2},
+		{
+			name:   "the correction after the hint fails the last attempt: the hinted decision stands",
+			inputs: []string{broken, tailCut, broken}, toolErrors: 2, detail: true,
+		},
 	}
 
 	for _, tt := range tests {

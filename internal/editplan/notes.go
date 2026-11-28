@@ -158,27 +158,12 @@ func nextScreenNotes(req *Request, in *Input, previous *roughcut.Edit) []roughcu
 	return notes
 }
 
-// checkNotesShown: every note the decision set is seen in the reel built with the edit — it starts in a kept piece, or
-// moves to the next one within its reach (roughcut.NoteShown) shortened by roughcut.NoteCheckSlack: this plan is cut by
-// the margins, the worker's by the sound, so a note near the edge is moved by the model, not lost by the worker — and
-// no section lands at one place with another note. The notes of the previous versions are not checked: a revision
-// that cuts the words of one drops it from the reel.
-func checkNotesShown(in *Input, edit *roughcut.Edit, plan *roughcut.Plan) error {
+// checkNotesApart: no section of the decision lands at one place with another note in the reel built with the edit.
+// The notes the reel would not show are placed or refused before (placeNotes). The notes of the previous versions are
+// not checked: a revision that cuts the words of one drops it from the reel.
+func checkNotesApart(in *Input, edit *roughcut.Edit, plan *roughcut.Plan) error {
 	if in.ScreenNotes == nil {
 		return nil
-	}
-
-	hidden := 0
-
-	for _, n := range edit.ScreenNotes {
-		if !roughcut.NoteShown(n, plan.Keep, roughcut.NoteCheckSlack) {
-			hidden++
-		}
-	}
-
-	if hidden > 0 {
-		return checkFailedf("элементов на экране не видно в ролике: %d (их начало вырезано) — поставь их на слова, "+
-			"которые остались в ролике (раздел — на первое слово вопроса или тезиса раздела)", hidden)
 	}
 
 	// A section and another note closer than this in this reel may be at one place in the worker's: its pieces start
@@ -201,8 +186,10 @@ func checkNotesShown(in *Input, edit *roughcut.Edit, plan *roughcut.Plan) error 
 }
 
 // screenNotesLines: «На экране: 3 пункта и 2 выноски.» when the decision sets the notes (a first version with them, a
-// revision that changes them), «Убрал пункты и цифры с экрана.» when it removes them (or makes the reel a workout).
-func screenNotesLines(req *Request, in *Input, previous *roughcut.Edit) []string {
+// revision that changes them), «Убрал пункты и цифры с экрана.» when it removes them (or makes the reel a workout);
+// then the line about the notes left out on the last attempt (hiddenNotesLine). The notes are the edit's (sel.notes):
+// placed as the reel shows them.
+func screenNotesLines(req *Request, in *Input, previous *roughcut.Edit, sel *selection) []string {
 	if nextMode(req, in) == roughcut.WorkoutMode {
 		// A workout has no notes: a revision to a workout removes them.
 		if len(previous.ScreenNotes) > 0 {
@@ -216,15 +203,16 @@ func screenNotesLines(req *Request, in *Input, previous *roughcut.Edit) []string
 		return nil
 	}
 
-	notes := nextScreenNotes(req, in, previous)
+	notes, hidden := sel.notes, hiddenNotesLine(sel.hidden)
 
 	switch {
-	case slices.Equal(notes, previous.ScreenNotes):
-		return nil
+	case slices.Equal(notes, previous.ScreenNotes) || slices.Equal(sel.source, previous.ScreenNotes):
+		// The same notes, maybe only placed otherwise (placeNotes): nothing to tell.
+		return hidden
 	case len(notes) == 0:
-		return []string{notesRemovedLine}
+		return append([]string{notesRemovedLine}, hidden...)
 	default:
-		return []string{notesLine(notes)}
+		return append([]string{notesLine(notes)}, hidden...)
 	}
 }
 
@@ -329,7 +317,8 @@ func writeScreenNotes(b *strings.Builder, req *Request) {
 // readingsCut: the spoken heading of a section goes from the sound, the plate replaces it (T3.22).
 const readingsCut = " Произнесённое чтение заголовка раздела («ошибка номер два», «пункт первый») вырежи через " +
 	"remove_words (не cleanup_words: это не брак), а вопрос или тезис раздела оставь: раздел покажется с того места, " +
-	"где продолжается речь."
+	"где продолжается речь. Если чтение сказано несколько раз (дубль), ставь раздел на последнее чтение — прямо перед " +
+	"вопросом раздела, — а не на ранний дубль: от него до продолжения речи слишком далеко, и раздела не будет видно."
 
 // notePlace is where the note starts in the current reel.
 func notePlace(n roughcut.ScreenNote, keep []roughcut.Interval) string {

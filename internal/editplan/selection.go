@@ -43,6 +43,10 @@ type selection struct {
 	cleaned  cleaning
 	// notes are the screen notes of the edit: a range cut from a section heading is its reading, replaced by the plate.
 	notes []roughcut.ScreenNote
+	// hidden are the notes of the decision left out on its last attempt: the reel would not show them; source are the
+	// notes as the decision set them, before placeNotes moved them.
+	hidden []hiddenNote
+	source []roughcut.ScreenNote
 }
 
 // newSelection is the selection of a decision with the plan it builds: on only when the reel got shorter.
@@ -269,7 +273,7 @@ func selectionLines(req *Request, in *Input, sel *selection) []string {
 		lines = append(lines, "Оставил главное: «"+joinIndexed(words, kept)+"».")
 	}
 
-	dropped := droppedRanges(words, in.Remove, sel.notes)
+	dropped := droppedRanges(words, in.Remove, slices.Concat(sel.notes, sel.source))
 	if len(dropped) == 0 {
 		return lines
 	}
@@ -288,7 +292,8 @@ func selectionLines(req *Request, in *Input, sel *selection) []string {
 }
 
 // droppedRanges are the ranges the selection cut that the trainer is told did not make it into the reel: not the
-// readings of the section headings (a range starting where a section stands, or right before the word it stands on),
+// readings of the section headings (a range starting where a section stands, or right before the word it stands on —
+// as the decision set it or as placeNotes moved it),
 // the plate replaces them. A reading is short (maxReadingWords: «ошибка номер два», «пункт первый»); a longer range
 // there is speech that did not make it.
 func droppedRanges(

@@ -42,9 +42,11 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 	lines := make([]string, 0, maxChangeLines)
 	previous := previousEdit(req.Plan)
 
-	// The hook and the screen notes first: the description never folds them into «И ещё изменений».
+	// The hook, the screen notes and the corrected words first: the description never folds them into «И ещё
+	// изменений».
 	lines = append(lines, hookLines(req, &previous, in)...)
-	lines = append(lines, screenNotesLines(req, in, &previous)...)
+	lines = append(lines, screenNotesLines(req, in, &previous, sel)...)
+	lines = append(lines, fixLines(req, in.FixWords)...)
 
 	if sel.on {
 		lines = append(lines, selectionLines(req, in, sel)...)
@@ -60,11 +62,6 @@ func describeChanges(req *Request, in *Input, trimmed *trim, placed *placedTitle
 
 	if req.IsRevision() {
 		lines = append(lines, takeLines(req.Plan, in.Candidates)...)
-	}
-
-	for _, f := range in.FixWords {
-		lines = append(lines, fmt.Sprintf("Исправил в субтитрах: «%s» → «%s».",
-			currentWord(req, f.Index), strings.TrimSpace(f.Text)))
 	}
 
 	for _, r := range in.Hide {
@@ -245,4 +242,33 @@ func durationText(seconds float64) string {
 	rounded := max(math.Round(seconds*tenths)/tenths, 1.0/tenths)
 
 	return strings.Replace(strconv.FormatFloat(rounded, 'f', -1, float64Bits), ".", ",", 1) + " с"
+}
+
+// maxFixQuotes corrected words named in the line about them; maxFixRunes of each word quoted.
+const (
+	maxFixQuotes = 4
+	maxFixRunes  = 24
+)
+
+// fixLines: «Исправил в субтитрах: «Новосибе» → «Новосибирске», «пресс» → «пресс-рол».» — one line for all the corrected
+// words (maxFixQuotes named, the rest counted), so the trainer sees them and the line is never folded.
+func fixLines(req *Request, fixes []FixInput) []string {
+	if len(fixes) == 0 {
+		return nil
+	}
+
+	named := fixes[:min(len(fixes), maxFixQuotes)]
+	parts := make([]string, 0, len(named))
+
+	for _, f := range named {
+		parts = append(parts, fmt.Sprintf("«%s» → «%s»", truncate(currentWord(req, f.Index), maxFixRunes),
+			truncate(strings.TrimSpace(f.Text), maxFixRunes)))
+	}
+
+	line := "Исправил в субтитрах: " + strings.Join(parts, ", ")
+	if rest := len(fixes) - len(named); rest > 0 {
+		line += fmt.Sprintf(" и ещё %d", rest)
+	}
+
+	return []string{line + "."}
 }

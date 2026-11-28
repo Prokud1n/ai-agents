@@ -216,6 +216,7 @@ func TestApplyRevision(t *testing.T) {
 			input: Input{Decision: EditDecision, TrimEnd: 1.5},
 			expectedEdit: roughcut.Edit{
 				Remove: []roughcut.WordRange{{From: 8, To: 10}}, Notes: []string{noReasonNote},
+				Details: []string{"Обрывок фразы в правке: слово 7 «делаем»"}, // T3.29: the filler before it is cut
 			},
 			expectedChanges: []string{"Обрезал конец: убрал последние 1,4 с."},
 		},
@@ -257,9 +258,8 @@ func TestApplyRevision(t *testing.T) {
 				},
 			},
 			expectedChanges: []string{
+				"Исправил в субтитрах: «на» → «по», «десять» → «10».",
 				"Оставил второй дубль фразы «держим спину ровно».",
-				"Исправил в субтитрах: «на» → «по».",
-				"Исправил в субтитрах: «десять» → «10».",
 			},
 		},
 	}
@@ -280,6 +280,8 @@ func TestApplyRevision(t *testing.T) {
 	}
 }
 
+// TestDescribeChangesLimit: the lines past maxChangeLines are counted, the corrected words are one line that is never
+// folded (T3.29).
 func TestDescribeChangesLimit(t *testing.T) {
 	t.Parallel()
 
@@ -288,12 +290,15 @@ func TestDescribeChangesLimit(t *testing.T) {
 
 	for i := range 8 {
 		in.FixWords = append(in.FixWords, FixInput{Index: i, Text: "слово"})
+		in.Restore = append(in.Restore, roughcut.WordRange{From: i, To: i})
 	}
 
 	lines := describeChanges(req, in, &trim{}, &placedTitles{newTitles: &newTitles{}}, &selection{})
 
 	assert.Len(t, lines, maxChangeLines)
-	assert.Equal(t, "И ещё изменений: 3.", lines[maxChangeLines-1])
+	assert.Equal(t, "Исправил в субтитрах: «держим» → «слово», «спину» → «слово», «ровно» → «слово», «держим» → "+
+		"«слово» и ещё 4.", lines[0], "first, one line")
+	assert.Equal(t, "И ещё изменений: 4.", lines[maxChangeLines-1])
 }
 
 func TestSecondsText(t *testing.T) {

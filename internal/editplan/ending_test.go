@@ -68,7 +68,7 @@ func TestSubmitEndingHint(t *testing.T) {
 		kind       OutcomeKind
 		detail     bool
 	}{
-		{name: "the same decision after the hint", inputs: []string{proofCut, proofCut}, toolErrors: 1, kind: EditOutcome, detail: true},
+		{name: sameAfterHint, inputs: []string{proofCut, proofCut}, toolErrors: 1, kind: EditOutcome, detail: true},
 		{name: "the introduction cut after the hint", inputs: []string{proofCut, bothCut}, toolErrors: 1, kind: EditOutcome},
 		{name: "the introduction cut at once", inputs: []string{bothCut}, kind: EditOutcome},
 		{name: "the proof kept", inputs: []string{endingInput(`{"from": 3, "to": 5}`)}, kind: EditOutcome},
@@ -76,7 +76,10 @@ func TestSubmitEndingHint(t *testing.T) {
 			name: "the hint takes no attempt", inputs: []string{proofCut, broken, bothCut}, toolErrors: 2,
 			kind: EditOutcome,
 		},
-		{name: "a failed check first: accepted with the line", inputs: []string{broken, proofCut}, toolErrors: 1, kind: EditOutcome, detail: true},
+		{
+			name:   "a failed check first: the hint still given, the same decision accepted with the line",
+			inputs: []string{broken, proofCut, proofCut}, toolErrors: 2, kind: EditOutcome, detail: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -98,6 +101,9 @@ func TestSubmitEndingHint(t *testing.T) {
 		})
 	}
 }
+
+// sameAfterHint is the case of the same decision submitted again after a hint.
+const sameAfterHint = "the same decision after the hint"
 
 // submitAll submits the inputs in the session one by one and counts the tool errors.
 func submitAll(t *testing.T, session *Session, inputs []string) int {

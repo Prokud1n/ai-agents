@@ -582,7 +582,7 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   последнего пункта, не резать) → вопрос зрителю и призыв → следующая часть», самопрезентация и «подписывайся» после
   призыва вырезаются, если тренер не просит; связки и реакции отдельной репликой — в `cleanup_words`; чтение заголовка
   раздела («ошибка номер два») — из звука через `remove_words` (не брак, не `cleanup_words`), раздел на нём допустим
-  (`checkNotesShown` → `roughcut.NoteShown` с запасом `NoteCheckSlack`); имена, искажённые распознаванием, —
+  (`placeNotes` → `roughcut.NoteShown` с запасом `NoteCheckSlack`, T3.29); имена, искажённые распознаванием, —
   `fix_words`. Строка чистки — `CleanupLinePrefix` «Почистил ролик — неудачные дубли, подготовка к съёмке и лишние
   вставки» при `cleaning.takes`, иначе `cleanupPrepPrefix` без «неудачных дублей»; чтения заголовков (`remove_words` ≤ 5 слов
   на разделе или перед словом раздела) в «Не вошло» не называются (`droppedRanges`), в `Details` — да; «неудачные дубли» в заголовке — `Result.Retakes`, вырезанный спорный повтор или `Outcome.CleanedTakes`
@@ -601,7 +601,7 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
 - Отбор и склейка (T3.26). `editplan.checkPhraseEnds` (`phraseend.go`, первая версия при `CleansTakes`): `cleanup_words`
   вырезали конец предложения (до знака `roughcut.SentenceEnds`, паузы > `phraseGap` или конца речи), чьё начало
   осталось, — строка «Конец фразы в чистке: …» в `Edit.Details` и `Outcome.tailHint` (`Session.hint`: каждая подсказка
-  — `endingHint`, `tailHint` — один раз, без траты попытки и не на последней попытке; две сразу — одна общая фраза
+  — `endingHint`, `tailHint` — один раз, без траты попытки, с T3.29 и на последней; две сразу — одна общая фраза
   «отправь то же решение»); предложение целиком (связка, реакция), повтор подряд в конце и слова дубля (`takeWords`) —
   не подсказка. `cleanupFloor` (`checkCleanupFloor`): план меряется с возвращёнными словами дублей (`takes.go`,
   `takeWords` по плану после чистки: ранняя фраза пары `similarPairs` в пределах `maxTakeGap` 20 с, если поздняя
@@ -615,6 +615,31 @@ ffmpeg разбирает недоверенные файлы, а `app` держ
   заметка на растянутом слове), `TestSilentEdgeQuietEnding`, `TestPauseKeepsQuietEndings`, `TestCutGridAroundQuietWord`,
   `editplan.TestCheckPhraseEnds`, `TestCheckPhraseEndsFailedTake`, `TestSubmitTailHint`,
   `TestApplyCleanupFloorWithoutTakes`.
+- Надёжность отбора (T3.29, `internal/editplan`). `placeNotes` (`notesplace.go`, сразу после `buildSized`): элемент
+  решения, который проверка app прячет (`NoteShown` с `NoteCheckSlack`), но воркер своим допуском показал бы
+  (`NoteShown(…, 0)`), переносится на первое оставленное слово после него (`moveNote`: обе стороны видят его на
+  оставленном слове — расхождения app/воркер нет); дальше допуска не переносится (ранний дубль чтения, вырезанный
+  пункт). Остальные проверки (`cleanupOf`, подписи, `checkNotesApart`, `checkChanged`) идут на ролике без невидимых
+  элементов, и только потом `checkPlaced` отдаёт `hiddenNotesError` (`CheckError.hiddenNotes`; правка, чьим
+  единственным изменением были они, — тоже она): по ≤ 3 элементам вид и текст, слово и время, вырезанные слова
+  (`cleanup_words`/`remove_words`), ближайшее оставленное слово (описание ≤ 250 символов) и действие (не режется).
+  Последняя попытка, не прошедшая только из-за них, — `Session.withoutHidden` (`Input.dropHidden`, `settleHidden`):
+  раздел ставится на первое оставленное слово после него (`sectionPlace`: между ними не начинается другой элемент,
+  там нет раздела, `checkNotesApart` проходит; строка в `Details`), остальное выбрасывается со строкой
+  `hiddenNotesLine` в описании и `hiddenNotesDetails`; иначе причина отказа — настоящая ошибка этой проверки.
+  `Session.hint`: подсказки по разу (`hintKinds`: ending, tail, count, fragment; `softRetryHint`) и на последней
+  попытке, ходов ≤ `maxSubmits`; решение, на которое выдана подсказка, запоминается (`hintedOutcome`): если
+  исправление не прошло последнюю попытку, принимается оно («Принято прежнее решение…»), а не запасной вариант.
+  `checkCounts` (`counts.go`, при `sel.on`): оставленное число 2–10 (не перед `measureWords` — целые формы: раз,
+  недели, месяцы…), в исходнике после него (≤ 120 с) все порядковые 1…N в начале предложения (`ordinalWords`,
+  допускается ведущее «и/а/ну/так/итак»), в ролике — меньше → `countHint` и строка «Структура: …». `checkFragments`
+  (`fragments.go`, только правки): от предложения прошлой версии осталось 1–2 слова, вырезано ≥ 3 → `fragmentHint` и
+  «Обрывок фразы в правке: …». `fixLines`: исправления слов — одна строка сразу после хука и пунктов, ≤ 4 пар и «и
+  ещё N», не сворачивается. «Не вошло» не называет чтение раздела и по месту, где его поставила модель
+  (`selection.source`); один перенос элементов не даёт строки «На экране». Проверка — `TestApplyPlacesNotes`,
+  `TestSubmitSettlesHiddenNotes`, `TestSubmitHiddenNotesOnlyChange`, `TestApplyHiddenAfterOtherChecks`,
+  `TestCheckCounts`, `TestAnnounced`, `TestCheckFragments`, `TestSubmitFragmentHint`, `TestSubmitTailHint`,
+  `TestDescribeChangesLimit`.
 - Черновик-видео: `teamchat.Notifier` скачивает рилс из S3 в `TELEGRAM_OUTBOX_DIR`, шлёт `sendVideo` от бота
   Монтажёра в «Продакшн» (ссылка на исходник вместо реплая между топиками), удаляет файл. Отправка видео прерывается
   стопом (аренда доставки 20 мин).

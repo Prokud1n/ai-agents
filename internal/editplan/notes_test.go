@@ -95,8 +95,8 @@ func TestApplyScreenNotes(t *testing.T) {
 		},
 		{name: "in a workout", notes: testNotes(), mode: roughcut.WorkoutMode, err: "только в разговорном"},
 		{
-			name: "on a cut word", err: "не видно в ролике",
-			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: "эээ", Word: new(6)}},
+			name: "in a long cut pause", err: "не видно в ролике",
+			notes: []NoteInput{{Kind: roughcut.CalloutNote, Text: noteYears, Start: new(4.0)}},
 		},
 	}
 
